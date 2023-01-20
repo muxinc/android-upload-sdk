@@ -1,12 +1,17 @@
+import org.gradle.api.initialization.resolve.RepositoriesMode
+
 pluginManagement {
   repositories {
     gradlePluginPortal()
     google()
     mavenCentral()
+    maven { url 'https://muxinc.jfrog.io/artifactory/default-maven-release-local' }
+    maven { url 'https://muxinc.jfrog.io/artifactory/default-maven-local' }
+    mavenLocal()
   }
 }
 dependencyResolutionManagement {
-  repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+  repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS) // TODO: Must add a Settings Plugin for artifactory
   repositories {
     google()
     mavenCentral()
