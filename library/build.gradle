@@ -31,6 +31,23 @@ android {
   }
 }
 
+muxDistribution {
+  devVersion versionFromCommitHash('dev-')
+  releaseVersion versionFromTag()
+  artifactIds just("vod-upload")
+  groupIds just("com.mux.video")
+  publicReleaseIf releaseOnTag()
+
+  packageJavadocs = releaseOnTag().call()
+  packageSources = true
+  publishIf { it.containsIgnoreCase("release") }
+  artifactoryConfig {
+    contextUrl = "https://muxinc.jfrog.io/artifactory/"
+    releaseRepoKey = 'default-maven-release-local'
+    devRepoKey = 'default-maven-local'
+  }
+}
+
 dependencies {
 
   implementation 'androidx.core:core-ktx:1.9.0'
