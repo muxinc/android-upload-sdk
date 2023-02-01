@@ -2,8 +2,7 @@ package com.mux.video.vod.demo
 
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
-import com.mux.video.vod_ingest.api.MuxVodUpload
-import com.mux.video.vod_ingest.api.MuxVodUploadManager
+import com.mux.video.upload.api.MuxVodUploadManager
 
 class PlaceholderActivity : AppCompatActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {

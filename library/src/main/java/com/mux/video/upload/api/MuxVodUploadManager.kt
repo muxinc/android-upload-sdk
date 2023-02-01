@@ -1,7 +1,7 @@
-package com.mux.video.vod_ingest.api
+package com.mux.video.upload.api
 
 import androidx.annotation.MainThread
-import com.mux.video.vod_ingest.internal.assertMainThread
+import com.mux.video.upload.internal.assertMainThread
 import java.util.Collections.addAll
 
 object MuxVodUploadManager {

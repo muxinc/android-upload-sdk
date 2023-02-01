@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-  namespace 'com.mux.video.vod_ingest'
+  namespace 'com.mux.video.upload'
   compileSdk 33
 
   defaultConfig {
@@ -34,7 +34,7 @@ android {
 muxDistribution {
   devVersion versionFromCommitHash('dev-')
   releaseVersion versionFromTag()
-  artifactIds just("vod-upload")
+  artifactIds just("upload")
   groupIds just("com.mux.video")
   publicReleaseIf releaseOnTag()
 
@@ -54,6 +54,7 @@ dependencies {
   implementation 'androidx.activity:activity-ktx:1.6.1'
   implementation "androidx.fragment:fragment-ktx:1.5.5"
 
+  implementation("com.squareup.okhttp3:okhttp:4.10.0")
   implementation "com.mux:utils-kt:0.7.2"
 
   testImplementation 'junit:junit:4.13.2'

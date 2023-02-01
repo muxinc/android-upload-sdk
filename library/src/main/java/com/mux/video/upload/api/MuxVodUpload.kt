@@ -1,4 +1,4 @@
-package com.mux.video.vod_ingest.api
+package com.mux.video.upload.api
 
 import android.net.Uri
 import androidx.annotation.MainThread
@@ -22,9 +22,9 @@ class MuxVodUpload private constructor(
   private val retriesPerChunk: Int,
 ) {
 
-  private val successCallbacks: MutableList<Callback<UploadState>> = mutableListOf()
+  private val successCallbacks: MutableList<Callback<State>> = mutableListOf()
   private val failureCallbacks: MutableList<Callback<Exception>> = mutableListOf()
-  private val progressCallbacks: MutableList<Callback<UploadState>> = mutableListOf()
+  private val progressCallbacks: MutableList<Callback<State>> = mutableListOf()
 
   /**
    * Starts this Upload. The Upload will continue in the background *even if this object is
@@ -51,12 +51,12 @@ class MuxVodUpload private constructor(
   }
 
   @MainThread
-  fun addSuccessCallback(cb: Callback<UploadState>) {
+  fun addSuccessCallback(cb: Callback<State>) {
     successCallbacks += cb
   }
 
   @MainThread
-  fun removeSuccessCallback(cb: Callback<UploadState>) {
+  fun removeSuccessCallback(cb: Callback<State>) {
     successCallbacks -= cb
   }
 
@@ -71,16 +71,16 @@ class MuxVodUpload private constructor(
   }
 
   @MainThread
-  fun addProgressCallback(cb: Callback<UploadState>) {
+  fun addProgressCallback(cb: Callback<State>) {
     progressCallbacks += cb
   }
 
   @MainThread
-  fun removeProgressCallback(cb: Callback<UploadState>) {
+  fun removeProgressCallback(cb: Callback<State>) {
     progressCallbacks -= cb
   }
 
-  data class UploadState(
+  data class State(
     val bytesUploaded: Long,
     val totalBytes: Long,
   )
