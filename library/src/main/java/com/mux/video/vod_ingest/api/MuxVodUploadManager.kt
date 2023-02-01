@@ -27,13 +27,26 @@ object MuxVodUploadManager {
   @JvmSynthetic
   @MainThread
   internal fun jobStarted(upload: MuxVodUpload) {
+    // TODO: Don't use MuxVodUpload directly for this
+    // TODO: Return/track a Job (or something) for callers to track this progress themselves.
     assertMainThread()
     _currentUploads += upload
   }
 
   @JvmSynthetic
   @MainThread
+  internal fun jobCanceled(upload: MuxVodUpload) {
+    // TODO: Return/track a Job (or something) for callers to track this progress themselves.
+    // TODO: Don't use MuxVodUpload directly for this
+    assertMainThread()
+    _currentUploads -= upload
+  }
+
+  @JvmSynthetic
+  @MainThread
   internal fun jobFinished(upload: MuxVodUpload) {
+    // TODO: Return/track a Job (or something) for callers to track this progress themselves.
+    // TODO: Don't use MuxVodUpload directly for this
     assertMainThread()
     _currentUploads -= upload
   }

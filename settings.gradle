@@ -11,10 +11,13 @@ pluginManagement {
   }
 }
 dependencyResolutionManagement {
-  repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS) // TODO: Must add a Settings Plugin for artifactory
+  repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
   repositories {
     google()
     mavenCentral()
+    mavenLocal()
+    maven { url 'https://muxinc.jfrog.io/artifactory/default-maven-release-local' }
+    maven { url 'https://muxinc.jfrog.io/artifactory/default-maven-local' }
   }
 }
 rootProject.name = "Mux Video VOD Upload SDK"
