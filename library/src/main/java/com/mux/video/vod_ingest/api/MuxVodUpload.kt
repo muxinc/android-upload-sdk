@@ -1,6 +1,7 @@
 package com.mux.video.vod_ingest.api
 
 import android.net.Uri
+import com.mux.video.vod_ingest.MuxVodUploadSdk
 import java.io.File
 
 /**
@@ -13,7 +14,12 @@ import java.io.File
  *
  * Create an instance of this class with the [Builder]
  */
-class MuxVodUpload private constructor() {
+class MuxVodUpload private constructor(
+  private val putUri: Uri,
+  private val srcFile: File,
+  private val chunkSizeBytes: Int,
+  private val retriesPerChunk: Int,
+) {
 
   /**
    * Builds instances of this object
@@ -21,6 +27,22 @@ class MuxVodUpload private constructor() {
    * @param uploadUri the URL obtained from the Direct video up
    */
   class Builder constructor(val uploadUri: Uri, val videoFile: File) {
+
     constructor(uploadUri: String, videoFile: File) : this(Uri.parse(uploadUri), videoFile)
+
+    fun chunkSize(sizeBytes: Int) {
+
+    }
+
+    fun retriesPerChunk(retries: Int) {
+
+    }
+
+    fun build() = MuxVodUpload(
+      putUri = uploadUri,
+      srcFile = videoFile,
+      chunkSizeBytes = 0/*TODO*/,
+      retriesPerChunk = 0/*TODO*/
+    )
   }
 }

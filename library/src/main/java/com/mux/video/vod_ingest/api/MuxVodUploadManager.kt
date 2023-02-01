@@ -20,7 +20,9 @@ object MuxVodUploadManager {
   // TODO: Methods for: accessing failed uploads, retrying uploads
 
   /**
-   * Adds a new job to this manager. If it's not started, it will
+   * Adds a new job to this manager.
+   * If it's not started, it will be started
+   * If it is started, it will be restarted with new parameters
    */
   @JvmSynthetic
   @MainThread
