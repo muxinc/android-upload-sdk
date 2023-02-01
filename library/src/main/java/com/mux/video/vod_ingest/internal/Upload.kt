@@ -8,6 +8,7 @@ import kotlinx.coroutines.*
  */
 @JvmSynthetic
 internal fun createUploadJob(upload: MuxVodUpload): Job {
+  // TODO: Callback delivers state data
   return UploadJobFactory.createUploadJob(CoroutineScope(Dispatchers.Default))
 }
 
@@ -17,10 +18,12 @@ internal fun createUploadJob(upload: MuxVodUpload): Job {
 private object UploadJobFactory {
   // TODO: Result class for type param
   fun createUploadJob(outerScope: CoroutineScope): Deferred<String> = outerScope.async {
-    // supervisor scopes can crash without crashing parent scope
+    // TODO: Callback for delivering state data
+    // supervisor scopes can crash without affecting parent scope
     supervisorScope {
       // TODO: Prepare upload (Maybe by launch()ing coroutines on main thread to update the mgr etc)
       val httpResponse = withContext(Dispatchers.IO) {
+        // TODO: Http
         "dummy object"
       }
       httpResponse // TODO: Wrap in Result object
