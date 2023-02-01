@@ -17,7 +17,10 @@ internal data class MuxUploadInfo(
   val chunkSize: Long,
   val retriesPerChunk: Int,
   val retryBaseTimeMs: Long,
-  @JvmSynthetic internal val uploadJob: Deferred<MuxVodUpload.State>?
+  @JvmSynthetic internal val uploadJob: Deferred<MuxVodUpload.State>?,
+  @JvmSynthetic internal val successCallback: ((MuxVodUpload.State) -> Unit)?,
+  @JvmSynthetic internal val progressCallback: ((MuxVodUpload.State) -> Unit)?,
+  @JvmSynthetic internal val errorCallback: ((Exception) -> Unit)?,
 )
 
 @JvmSynthetic
@@ -28,7 +31,10 @@ internal fun MuxUploadInfo.update(
   chunkSize: Long = this.chunkSize,
   retriesPerChunk: Int = this.retriesPerChunk,
   retryBaseTimeMs: Long = this.retryBaseTimeMs,
-  uploadJob: Deferred<MuxVodUpload.State>? = this.uploadJob
+  uploadJob: Deferred<MuxVodUpload.State>? = this.uploadJob,
+  successCallback: ((MuxVodUpload.State) -> Unit)? = null,
+  progressCallback: ((MuxVodUpload.State) -> Unit)? = null,
+  errorCallback: ((Exception) -> Unit)?,
 ) = MuxUploadInfo(
   remoteUri,
   file,
@@ -36,5 +42,8 @@ internal fun MuxUploadInfo.update(
   chunkSize,
   retriesPerChunk,
   retryBaseTimeMs,
-  uploadJob
+  uploadJob,
+  successCallback,
+  progressCallback,
+  errorCallback
 )

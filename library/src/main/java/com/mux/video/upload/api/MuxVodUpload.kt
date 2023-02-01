@@ -86,7 +86,7 @@ class MuxVodUpload private constructor(private val uploadInfo: MuxUploadInfo) {
    * Represents Callbacks from this object.
    */
   interface Callback<T> {
-    // We could use blocks instead, but blocks are baroque on Java 1.6 b/c there's no lambdas
+    // We could use blocks instead, but blocks are baroque on Java 1.6 with no lambdas
     /**
      * Implement to handle the callback.
      */
