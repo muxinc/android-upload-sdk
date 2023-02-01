@@ -1,4 +1,4 @@
-package com.example.muxvideovoduploadsdk
+package com.mux.video.vod.demo
 
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle

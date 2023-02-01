@@ -1,4 +1,4 @@
-package com.example.muxvideovoduploadsdk
+package com.mux.video.vod_ingest
 
 import org.junit.Test
 

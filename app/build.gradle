@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-  namespace 'com.example.muxvideovoduploadsdk'
+  namespace "com.mux.video.vod.demo"
   compileSdk 33
 
   defaultConfig {
