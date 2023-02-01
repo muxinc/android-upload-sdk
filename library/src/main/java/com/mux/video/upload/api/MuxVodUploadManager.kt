@@ -2,6 +2,7 @@ package com.mux.video.upload.api
 
 import androidx.annotation.MainThread
 import com.mux.video.upload.internal.assertMainThread
+import java.io.File
 import java.util.Collections.addAll
 
 object MuxVodUploadManager {
@@ -18,6 +19,7 @@ object MuxVodUploadManager {
   // TODO: internal disk-based cache for storing download state after process death
   //  For this prototype, use shared prefs and just store the state as PAUSED|UPLOADING|ERROR|DONE
   // TODO: Methods for: accessing failed uploads, retrying uploads
+
 
   /**
    * Adds a new job to this manager.

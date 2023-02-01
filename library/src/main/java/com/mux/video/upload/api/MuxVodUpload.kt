@@ -3,7 +3,10 @@ package com.mux.video.upload.api
 import android.net.Uri
 import androidx.annotation.MainThread
 import com.mux.android.util.weak
+import com.mux.video.upload.internal.MuxUploadInfo
+import com.mux.video.upload.internal.update
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 /**
  * Represents a task that does a single direct upload to a Mux Video asset previously created.
@@ -15,13 +18,7 @@ import java.io.File
  *
  * Create an instance of this class with the [Builder]
  */
-class MuxVodUpload private constructor(
-  private val putUri: Uri,
-  private val srcFile: File,
-  private val chunkSizeBytes: Int,
-  private val retriesPerChunk: Int,
-) {
-
+class MuxVodUpload private constructor(private val uploadInfo: MuxUploadInfo) {
   private val successCallbacks: MutableList<Callback<State>> = mutableListOf()
   private val failureCallbacks: MutableList<Callback<Exception>> = mutableListOf()
   private val progressCallbacks: MutableList<Callback<State>> = mutableListOf()
@@ -103,23 +100,35 @@ class MuxVodUpload private constructor(
    * @param uploadUri the URL obtained from the Direct video up
    */
   class Builder constructor(val uploadUri: Uri, val videoFile: File) {
-
     constructor(uploadUri: String, videoFile: File) : this(Uri.parse(uploadUri), videoFile)
 
-    fun chunkSize(sizeBytes: Int) {
-
-    }
-
-    fun retriesPerChunk(retries: Int) {
-
-    }
-
-    fun build() = MuxVodUpload(
-      putUri = uploadUri,
-      srcFile = videoFile,
-      chunkSizeBytes = 0/*TODO*/,
-      retriesPerChunk = 0/*TODO*/
+    private var uploadInfo: MuxUploadInfo = MuxUploadInfo(
+      // Default values
+      remoteUri = uploadUri,
+      file = videoFile,
+      lastKnownState = null,
+      chunkSize = 32000 * 1024, //30M
+      retriesPerChunk = 3,
+      retryBaseTimeMs = 500,
+      uploadJob = null
     )
+
+    fun chunkSize(sizeBytes: Long): Builder {
+      uploadInfo.update(chunkSize = sizeBytes)
+      return this
+    }
+
+    fun retriesPerChunk(retries: Int): Builder {
+      uploadInfo.update(retriesPerChunk = retries)
+      return this
+    }
+
+    fun backoffBaseTime(backoffTimeMillis: Long): Builder {
+      uploadInfo.update(retryBaseTimeMs = backoffTimeMillis)
+      return this
+    }
+
+    fun build() = MuxVodUpload(uploadInfo)
   }
 }
 
@@ -127,6 +136,7 @@ class MuxVodUpload private constructor(
 // something else will be holding a reference, so it'll stay valid as long as the caller cares
 private class WeakCallback<T>(cb: MuxVodUpload.Callback<T>) : MuxVodUpload.Callback<T> {
   private val weakCb by weak(cb)
+
   @Throws
   override fun invoke(t: T) = weakCb?.invoke(t) ?: Unit
 }
