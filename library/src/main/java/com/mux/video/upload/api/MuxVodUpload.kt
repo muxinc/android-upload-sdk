@@ -51,7 +51,7 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
   @JvmOverloads
   fun start(forceRestart: Boolean = false) {
     // TODO: Need to observe the job's stuff (this is for the case where the upload isn't in progress)
-    MuxVodUploadManager.startJob(uploadInfo)
+    MuxVodUploadManager.startJob(uploadInfo, forceRestart)
   }
 
   suspend fun awaitSuccess() = uploadInfo.uploadJob?.await()
