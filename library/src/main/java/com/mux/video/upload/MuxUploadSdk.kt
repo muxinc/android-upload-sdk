@@ -39,7 +39,7 @@ object MuxUploadSdk {
 
     httpClient = OkHttpClient.Builder()
       .addInterceptor(HttpLoggingInterceptor {
-        Log.v("MuxUploadHttp", it)
+        MuxUploadSdk.logger.v("MuxUploadHttp", it)
       }.apply { setLevel(HttpLoggingInterceptor.Level.BODY) })
       .build()
   }
