@@ -78,8 +78,6 @@ internal class UploadJobFactory private constructor() {
           .build()
 
         val httpResponse = withContext(Dispatchers.IO) { httpClient.newCall(request).execute() }
-        MuxUploadSdk.logger.v("UploadWorker", "With Response: $httpResponse")
-
         MuxUpload.State(fileSize, fileSize)
       } // supervisorScope
     } // suspend fun doUpload
