@@ -1,33 +1,11 @@
 package com.mux.video.upload.internal
 
-import android.net.Uri
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.network.asCountingFileBody
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import okhttp3.Request
-import java.io.File
-
-/**
- * This object is the SDK's internal representation of an upload that is in-progress. The public
- * object is [MuxUpload], which is backed by an instance of this object.
- *
- * This object is immutable. To create an updated version use [update]. The Upload Manager can
- * update the internal state of its jobs based on the content of this object
- */
-internal data class UploadInfo(
-  val remoteUri: Uri,
-  val file: File,
-  val videoMimeType: String,
-  val chunkSize: Long,
-  val retriesPerChunk: Int,
-  val retryBaseTimeMs: Long,
-  @JvmSynthetic internal val uploadJob: Deferred<Result<MuxUpload.State>>?,
-  @JvmSynthetic internal val successChannel: Channel<MuxUpload.State>?,
-  @JvmSynthetic internal val progressChannel: Channel<MuxUpload.State>?,
-  @JvmSynthetic internal val errorChannel: Channel<Exception>?,
-)
 
 /**
  * Creates a new Upload Job for this
@@ -101,32 +79,3 @@ private object UploadJobFactory {
     } // suspend fun doUpload
   } // class Worker
 } // class UploadJobFactory
-
-/**
- * Return a new [UploadInfo] with the given data overwritten. Any argument not provided will be
- * copied from the original object.
- */
-@JvmSynthetic
-internal fun UploadInfo.update(
-  remoteUri: Uri = this.remoteUri,
-  file: File = this.file,
-  videoMimeType: String = this.videoMimeType,
-  chunkSize: Long = this.chunkSize,
-  retriesPerChunk: Int = this.retriesPerChunk,
-  retryBaseTimeMs: Long = this.retryBaseTimeMs,
-  uploadJob: Deferred<Result<MuxUpload.State>>? = this.uploadJob,
-  successChannel: Channel<MuxUpload.State>? = this.successChannel,
-  progressChannel: Channel<MuxUpload.State>? = this.progressChannel,
-  errorChannel: Channel<Exception>? = this.errorChannel,
-) = UploadInfo(
-  remoteUri,
-  file,
-  videoMimeType,
-  chunkSize,
-  retriesPerChunk,
-  retryBaseTimeMs,
-  uploadJob,
-  successChannel,
-  progressChannel,
-  errorChannel
-)
