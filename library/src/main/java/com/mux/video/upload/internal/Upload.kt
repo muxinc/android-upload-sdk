@@ -13,14 +13,20 @@ import okhttp3.Request
  */
 @JvmSynthetic
 internal fun createUploadJob(upload: UploadInfo): UploadInfo {
-  return UploadJobFactory.createUploadJob(upload, CoroutineScope(Dispatchers.Default))
+  return MuxUploadSdk.uploadJobFactory().createUploadJob(upload, CoroutineScope(Dispatchers.Default))
 }
+
 
 /**
  * Creates upload coroutine jobs, which handle uploading a single file and reporting/delegating
  * the state of the upload. To cancel, just call [Deferred.cancel]
  */
-internal object UploadJobFactory {
+internal class UploadJobFactory private constructor() {
+  companion object {
+    @JvmSynthetic
+    internal fun create() = UploadJobFactory()
+  }
+
   fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope): UploadInfo {
     val successChannel = callbackChannel<MuxUpload.State>()
     val progressChannel = callbackChannel<MuxUpload.State>()

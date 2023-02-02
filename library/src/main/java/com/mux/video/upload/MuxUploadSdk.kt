@@ -2,6 +2,7 @@ package com.mux.video.upload
 
 import android.content.Context
 import android.util.Log
+import com.mux.video.upload.internal.UploadJobFactory
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 
@@ -29,6 +30,7 @@ object MuxUploadSdk {
 
   private var internalLogger: Logger // Mutable internally only
   private var httpClient: OkHttpClient
+  private val uploadJobFactory by lazy { UploadJobFactory.create() }
 
   init {
     // BuildConfig is *our* build, not the client's
@@ -89,7 +91,10 @@ object MuxUploadSdk {
   fun noLogger(): Logger = NoLogger()
 
   @JvmSynthetic
-  internal fun httpClient(): OkHttpClient = httpClient
+  internal fun httpClient() = httpClient
+
+  @JvmSynthetic
+  internal fun uploadJobFactory() = uploadJobFactory
 
   /**
    * Logs events from this SDK. This interface roughly matches the interface of [Log].
