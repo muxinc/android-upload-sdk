@@ -54,6 +54,7 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
     MuxVodUploadManager.startJob(uploadInfo, forceRestart)
   }
 
+  // TODO: Start the job, hm actually
   suspend fun awaitSuccess() = uploadInfo.uploadJob?.await()
 
   fun pause() {
