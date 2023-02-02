@@ -12,6 +12,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView.OnItemTouchListener
+import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.databinding.ActivityVideoListBinding
 import com.mux.video.vod.demo.mediastore.model.MediaStoreVideo
@@ -59,7 +60,8 @@ class MediaStoreVideosActivity : AppCompatActivity() {
   private fun handleListUpdate(list: List<MediaStoreVideo>) {
     // TODO: Use AsyncListDiffer to make this look nice
     listAdapter = MediaStoreVideosAdapter(list) { selectedVideo ->
-      // TODO: Upload this
+      val videoUpload = MuxUpload.Builder(PUT_URL, selectedVideo.file).build()
+      videoUpload.start()
     }
     binding.videoListList.includeRecyclerView.adapter = listAdapter
   }

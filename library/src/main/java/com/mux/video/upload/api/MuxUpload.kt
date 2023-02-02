@@ -30,7 +30,8 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
   private val failureCallbacks: MutableList<Callback<Exception>> = mutableListOf()
   private val progressCallbacks: MutableList<Callback<State>> = mutableListOf()
 
-  private var mainScope: CoroutineScope = MainScope()
+  private val mainScope: CoroutineScope = MainScope()
+  private val logger get() = MuxUploadSdk.logger
 
   init {
     this.uploadInfo = uploadInfo
@@ -50,6 +51,7 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
   fun start(forceRestart: Boolean = false) {
     // We may or may not get a fresh worker, depends on if the upload is already going
     uploadInfo = MuxUploadManager.startJob(uploadInfo, forceRestart)
+    logger.i("MuxUpload", "started upload: ${uploadInfo.file}")
 
     uploadInfo.successChannel?.let { consumeChannel(it, successCallbacks) }
     uploadInfo.progressChannel?.let { consumeChannel(it, progressCallbacks) }
@@ -108,9 +110,8 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
   // Consumes a channel until it closes, or until mainScope is canceled
   private fun <T> consumeChannel(channel: Channel<T>, callbacks: List<Callback<T>>) {
     mainScope.launch {
-      //channel.receiveAsFlow().collect { t -> callbacks.forEach { it.invoke(t) } }
       channel.receiveAsFlow().collect { t ->
-        MuxUploadSdk.logger.d(tag = "FLOW", "Flow: Updated $t")
+        logger.d("MuxUpload", "Flow: Updated $t")
         callbacks.forEach { it.invoke(t) }
       }
     }
@@ -178,13 +179,4 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
     @JvmSynthetic
     internal fun create(uploadInfo: UploadInfo) = MuxUpload(uploadInfo)
   }
-}
-
-// Callback that doesn't hold strong references to the outer context. If the Context is valid,
-// something else will be holding a reference, so it'll stay valid as long as the caller cares
-private class WeakCallback<T>(cb: MuxUpload.Callback<T>) : MuxUpload.Callback<T> {
-  private val weakCb by weak(cb)
-
-  @Throws
-  override fun invoke(t: T) = weakCb?.invoke(t) ?: Unit
 }
