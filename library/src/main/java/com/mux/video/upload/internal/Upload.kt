@@ -1,10 +1,13 @@
 package com.mux.video.upload.internal
 
 import android.net.Uri
+import android.util.Log
 import com.mux.video.upload.MuxVodUploadSdk
 import com.mux.video.upload.api.MuxVodUpload
+import com.mux.video.upload.network.asCountingFileBody
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import okhttp3.Request
 import java.io.File
 
 /**
@@ -76,18 +79,25 @@ private object UploadJobFactory {
    * state/errors. Owning objects handle errors, delegate
    */
   private class Worker(val uploadInfo: UploadInfo) {
+
     @Throws
     suspend fun doUpload(): MuxVodUpload.State {
       return supervisorScope {
-        // TODO: Prepare upload (Maybe by launch()ing coroutines on main thread to update the mgr etc)
-        val httpResponse = withContext(Dispatchers.IO) {
-          val httpClient = MuxVodUploadSdk.httpClient()
-          // TODO: Http
-          "dummy object"
-        } // withContext(Dispatchers.IO)
+        val fileSize = uploadInfo.file.length()
+        val httpClient = MuxVodUploadSdk.httpClient()
+        val fileBody = uploadInfo.file.asCountingFileBody("application/mp4") { bytes ->
+          val state = MuxVodUpload.State(bytes, fileSize)
+          launch(Dispatchers.Main) { uploadInfo.progressChannel?.send(state) }
+        }
+        val request = Request.Builder()
+          .url(uploadInfo.remoteUri.toString())
+          .put(fileBody)
+          .build()
 
-        val finalState = MuxVodUpload.State(0, 0)
-        finalState
+        val httpResponse = withContext(Dispatchers.IO) { httpClient.newCall(request).execute() }
+        MuxVodUploadSdk.logger.v("UploadWorker", "With Response: $httpResponse")
+
+        MuxVodUpload.State(fileSize, fileSize)
       } // supervisorScope
     }
   }

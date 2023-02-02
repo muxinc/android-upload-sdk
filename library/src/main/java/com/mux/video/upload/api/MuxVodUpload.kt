@@ -25,7 +25,7 @@ import java.io.File
  * Create an instance of this class with the [Builder]
  */
 class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
-  private val uploadInfo: UploadInfo
+  private var uploadInfo: UploadInfo
   private val successCallbacks: MutableList<Callback<State>> = mutableListOf()
   private val failureCallbacks: MutableList<Callback<Exception>> = mutableListOf()
   private val progressCallbacks: MutableList<Callback<State>> = mutableListOf()
@@ -33,12 +33,10 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
   private var mainScope: CoroutineScope = MainScope()
 
   init {
-    this.uploadInfo = uploadInfo // TODO: Add callbacks
-    uploadInfo.successChannel?.let { consumeChannel(uploadInfo.successChannel, successCallbacks) }
-    uploadInfo.progressChannel?.let {
-      consumeChannel(uploadInfo.progressChannel, progressCallbacks)
-    }
-    uploadInfo.errorChannel?.let { consumeChannel(uploadInfo.errorChannel, failureCallbacks) }
+    this.uploadInfo = uploadInfo
+    uploadInfo.successChannel?.let { consumeChannel(it, successCallbacks) }
+    uploadInfo.progressChannel?.let { consumeChannel(it, progressCallbacks) }
+    uploadInfo.errorChannel?.let { consumeChannel(it, failureCallbacks) }
   }
 
   /**
@@ -50,12 +48,22 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
    */
   @JvmOverloads
   fun start(forceRestart: Boolean = false) {
-    // TODO: Need to observe the job's stuff (this is for the case where the upload isn't in progress)
-    MuxVodUploadManager.startJob(uploadInfo, forceRestart)
+    // We may or may not get a fresh worker, depends on if the upload is already going
+    uploadInfo = MuxVodUploadManager.startJob(uploadInfo, forceRestart)
+
+    uploadInfo.successChannel?.let { consumeChannel(it, successCallbacks) }
+    uploadInfo.progressChannel?.let { consumeChannel(it, progressCallbacks) }
+    uploadInfo.errorChannel?.let { consumeChannel(it, failureCallbacks) }
   }
 
-  // TODO: Start the job, hm actually
-  suspend fun awaitSuccess() = uploadInfo.uploadJob?.await()
+  @Throws
+  suspend fun awaitSuccess(): State  {
+    return uploadInfo.uploadJob?.let { job ->
+      val result = job.await()
+      result.exceptionOrNull()?.let { throw it }
+      result.getOrThrow()
+    } ?: State(0, uploadInfo.file.length())
+  }
 
   fun pause() {
     MuxVodUploadSdk.logger.w("MuxUpload", "pause() is not implemented yet")
@@ -101,7 +109,7 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
     mainScope.launch {
       //channel.receiveAsFlow().collect { t -> callbacks.forEach { it.invoke(t) } }
       channel.receiveAsFlow().collect { t ->
-        MuxVodUploadSdk.logger.d(tag="FLOW", "Flow: Updated $t")
+        MuxVodUploadSdk.logger.d(tag = "FLOW", "Flow: Updated $t")
         callbacks.forEach { it.invoke(t) }
       }
     }

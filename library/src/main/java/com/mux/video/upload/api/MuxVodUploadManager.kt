@@ -25,9 +25,9 @@ object MuxVodUploadManager {
    */
   @JvmSynthetic
   @MainThread
-  internal fun startJob(upload: UploadInfo, restart: Boolean = false) {
+  internal fun startJob(upload: UploadInfo, restart: Boolean = false): UploadInfo {
     assertMainThread()
-    upsertUpload(upload, restart)
+    return upsertUpload(upload, restart)
   }
 
   @JvmSynthetic
@@ -49,19 +49,19 @@ object MuxVodUploadManager {
     upload.uploadJob?.cancel()
   }
 
-  private fun upsertUpload(upload: UploadInfo, restart: Boolean) {
+  private fun upsertUpload(upload: UploadInfo, restart: Boolean): UploadInfo {
     val filename = upload.file.absolutePath
-    var existingUpload = uploadsByFilename[filename]
+    var finalUpload = uploadsByFilename[filename]
     // Use the old job if possible (unless requested otherwise)
-    if (existingUpload?.uploadJob == null) {
-      existingUpload = createUploadJob(upload)
+    if (finalUpload?.uploadJob == null) {
+      finalUpload = createUploadJob(upload)
     } else {
       if (restart) {
         cancelJobInner(upload)
-        existingUpload = createUploadJob(upload)
+        finalUpload = createUploadJob(upload)
       }
     }
-
-    uploadsByFilename += upload.file.absolutePath to existingUpload
+    uploadsByFilename += upload.file.absolutePath to finalUpload
+    return finalUpload
   }
 }
