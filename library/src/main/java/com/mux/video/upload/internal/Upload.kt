@@ -56,7 +56,7 @@ private object UploadJobFactory {
         val finalState = worker.doUpload()
         Result.success(finalState)
       } catch (e: Exception) {
-        MuxVodUploadSdk.logger.e(msg = "Upload of ${uploadInfo.file} failed");
+        MuxVodUploadSdk.logger.e(msg = "Upload of ${uploadInfo.file} failed")
         Result.failure(e)
       }
     }
