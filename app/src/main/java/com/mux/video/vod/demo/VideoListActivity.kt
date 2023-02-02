@@ -1,20 +1,18 @@
 package com.mux.video.vod.demo
 
 import android.os.Bundle
-import com.google.android.material.appbar.CollapsingToolbarLayout
-import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.snackbar.Snackbar
 import androidx.appcompat.app.AppCompatActivity
-import com.mux.video.vod.demo.databinding.ActivityScrollingBinding
+import com.mux.video.vod.demo.databinding.ActivityVideoListBinding
 
-class ScrollingActivity : AppCompatActivity() {
+class VideoListActivity : AppCompatActivity() {
 
-  private lateinit var binding: ActivityScrollingBinding
+  private lateinit var binding: ActivityVideoListBinding
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
 
-    binding = ActivityScrollingBinding.inflate(layoutInflater)
+    binding = ActivityVideoListBinding.inflate(layoutInflater)
     setContentView(binding.root)
 
     setSupportActionBar(findViewById(R.id.toolbar))
