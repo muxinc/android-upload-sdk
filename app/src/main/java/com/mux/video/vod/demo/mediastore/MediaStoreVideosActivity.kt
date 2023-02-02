@@ -17,6 +17,11 @@ import com.mux.video.vod.demo.mediastore.model.MediaStoreVideo
 
 class MediaStoreVideosActivity : AppCompatActivity() {
 
+  companion object {
+    // For now, you have to PUT to this
+    const val PUT_URL= ""
+  }
+
   private lateinit var binding: ActivityVideoListBinding
   private lateinit var listAdapter: MediaStoreVideosAdapter
   private val viewModel by viewModels<MediaStoreVideosViewModel>()
@@ -38,13 +43,6 @@ class MediaStoreVideosActivity : AppCompatActivity() {
     binding.videoListList.includeRecyclerView.layoutManager = LinearLayoutManager(this)
     setContentView(binding.root)
 
-    viewModel.videoList.observe(this) { list ->
-      list.forEach { item ->
-        Log.v(javaClass.simpleName, "Video item $item")
-      }
-    }
-    viewModel.refresh()
-
     setSupportActionBar(findViewById(R.id.toolbar))
     binding.toolbarLayout.title = title
     binding.fab.setOnClickListener { view ->
@@ -53,6 +51,7 @@ class MediaStoreVideosActivity : AppCompatActivity() {
     }
 
     maybeRequestPermissions()
+    viewModel.refresh()
     viewModel.videoList.observe(this) { handleListUpdate(it) }
   }
 
