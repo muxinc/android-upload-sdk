@@ -4,6 +4,7 @@ import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.network.asCountingFileBody
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import okhttp3.Request
 
@@ -19,13 +20,11 @@ internal fun createUploadJob(upload: UploadInfo): UploadInfo {
  * Creates upload coroutine jobs, which handle uploading a single file and reporting/delegating
  * the state of the upload. To cancel, just call [Deferred.cancel]
  */
-private object UploadJobFactory {
+internal object UploadJobFactory {
   fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope): UploadInfo {
-    val successChannel =
-      Channel<MuxUpload.State>(capacity = Channel.UNLIMITED) { logOrphanChannelMsg(it) }
-    val progressChannel =
-      Channel<MuxUpload.State>(capacity = Channel.UNLIMITED) { logOrphanChannelMsg(it) }
-    val errorChannel = Channel<Exception>(capacity = Channel.UNLIMITED) { logOrphanChannelMsg(it) }
+    val successChannel = callbackChannel<MuxUpload.State>()
+    val progressChannel = callbackChannel<MuxUpload.State>()
+    val errorChannel = callbackChannel<Exception>()
     val worker = Worker(uploadInfo)
 
     val uploadJob = outerScope.async {
@@ -33,7 +32,7 @@ private object UploadJobFactory {
         val finalState = worker.doUpload()
         Result.success(finalState)
       } catch (e: Exception) {
-        MuxUploadSdk.logger.e(msg = "Upload of ${uploadInfo.file} failed")
+        MuxUploadSdk.logger.e(msg = "Upload of ${uploadInfo.file} failed", e = e)
         Result.failure(e)
       }
     }
@@ -46,16 +45,17 @@ private object UploadJobFactory {
     )
   }
 
-  private fun <T> logOrphanChannelMsg(t: T) {
-    MuxUploadSdk.logger.v(msg = "Undelivered state msg $t")
-  }
+  private fun <T> callbackChannel() =
+    Channel<T>(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST) {
+      MuxUploadSdk.logger.v(msg = "Undelivered state msg $it")
+    }
 
   /**
    * Uploads one single file, reporting progress as it goes, and returning the final state when the
    * upload completes. The worker is only responsible for doing the upload and accurately reporting
    * state/errors. Owning objects handle errors, delegate
    */
-  private class Worker(val uploadInfo: UploadInfo) {
+  internal class Worker(val uploadInfo: UploadInfo) {
 
     @Throws
     suspend fun doUpload(): MuxUpload.State {
@@ -78,4 +78,4 @@ private object UploadJobFactory {
       } // supervisorScope
     } // suspend fun doUpload
   } // class Worker
-} // class UploadJobFactory
+}
