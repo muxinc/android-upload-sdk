@@ -37,8 +37,6 @@ internal fun createUploadJob(upload: UploadInfo): UploadInfo {
   return UploadJobFactory.createUploadJob(upload, CoroutineScope(Dispatchers.Default))
 }
 
-fun adkjh() {}
-
 /**
  * Creates upload coroutine jobs, which handle uploading a single file and reporting/delegating
  * the state of the upload. To cancel, just call [Deferred.cancel]
