@@ -5,6 +5,7 @@ import android.database.Cursor
 import android.os.Build
 import android.provider.MediaStore
 import android.provider.MediaStore.Video.VideoColumns
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -42,32 +43,37 @@ class DeviceStoreVideosViewModel(private val app: Application) : AndroidViewMode
       }
     }
 
-    val cursor = withContext(Dispatchers.IO) {
+    withContext(Dispatchers.IO) {
       app.contentResolver.query(
-        MediaStore.Video.Media.INTERNAL_CONTENT_URI,
-        /* projection = */ null,
+        MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+        /* projection = */null,
         /* selection = */ null,
         /* selectionArgs = */ null,
         /* sortOrder = */ MediaStore.Video.VideoColumns.DISPLAY_NAME + " DESC"
       )!!
+    }.use { cursor ->
+      if (cursor.count <= 0) {
+        Log.w(javaClass.simpleName, "No videos found")
+        return listOf()
+      }
+
+      val videos = mutableListOf<DeviceStoreVideo>()
+      cursor.moveToFirst()
+      do {
+        val title = cursor.getString(VideoColumns.DISPLAY_NAME) ?: "[no name]"
+        val file = cursor.getString(VideoColumns.DATA) ?: continue
+        val fromApp = ownerPackageName(cursor)
+
+        val vid = DeviceStoreVideo(
+          title = title,
+          file = File(file),
+          fromApp = fromApp,
+        )
+        videos += vid
+      } while (cursor.moveToNext())
+
+      return videos
     }
-
-    val videos = mutableListOf<DeviceStoreVideo>()
-    cursor.moveToFirst()
-    do {
-      val title = cursor.getString(VideoColumns.DISPLAY_NAME) ?: "[no name]"
-      val file = cursor.getString(VideoColumns.DATA) ?: continue
-      val fromApp = ownerPackageName(cursor)
-
-      val vid = DeviceStoreVideo(
-        title = title,
-        file = File(file),
-        fromApp = fromApp,
-      )
-      videos += vid
-    } while (cursor.moveToNext())
-
-    return videos
   }
 
   private fun Cursor.getString(columnName: String): String? {
