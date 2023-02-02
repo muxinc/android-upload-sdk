@@ -9,7 +9,8 @@ import com.mux.video.vod.demo.databinding.ListItemMediastoreVideoBinding
 import com.mux.video.vod.demo.mediastore.model.MediaStoreVideo
 
 class MediaStoreVideosAdapter(
-  private var items: List<MediaStoreVideo>
+  private var items: List<MediaStoreVideo>,
+  private var onItemClicked: (MediaStoreVideo) -> Unit,
 ) : RecyclerView.Adapter<MediaStoreVideoViewHolder>() {
 
   override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MediaStoreVideoViewHolder {
@@ -27,6 +28,8 @@ class MediaStoreVideosAdapter(
     holder.viewBinding.mediastoreVideoFilesize.text = "${fileSize} bytes"
     holder.viewBinding.mediastoreVideoTitle.text = listItem.title
     holder.viewBinding.mediastoreVideoDate.text = listItem.date
+
+    holder.itemView.setOnClickListener { onItemClicked(listItem) }
   }
 }
 

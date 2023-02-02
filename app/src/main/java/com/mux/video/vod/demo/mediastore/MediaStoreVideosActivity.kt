@@ -11,6 +11,7 @@ import com.google.android.material.snackbar.Snackbar
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView.OnItemTouchListener
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.databinding.ActivityVideoListBinding
 import com.mux.video.vod.demo.mediastore.model.MediaStoreVideo
@@ -19,7 +20,7 @@ class MediaStoreVideosActivity : AppCompatActivity() {
 
   companion object {
     // For now, you have to PUT to this
-    const val PUT_URL= ""
+    const val PUT_URL = ""
   }
 
   private lateinit var binding: ActivityVideoListBinding
@@ -40,8 +41,8 @@ class MediaStoreVideosActivity : AppCompatActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     binding = ActivityVideoListBinding.inflate(layoutInflater)
-    binding.videoListList.includeRecyclerView.layoutManager = LinearLayoutManager(this)
     setContentView(binding.root)
+    binding.videoListList.includeRecyclerView.layoutManager = LinearLayoutManager(this)
 
     setSupportActionBar(findViewById(R.id.toolbar))
     binding.toolbarLayout.title = title
@@ -57,7 +58,9 @@ class MediaStoreVideosActivity : AppCompatActivity() {
 
   private fun handleListUpdate(list: List<MediaStoreVideo>) {
     // TODO: Use AsyncListDiffer to make this look nice
-    listAdapter = MediaStoreVideosAdapter(list)
+    listAdapter = MediaStoreVideosAdapter(list) { selectedVideo ->
+      // TODO: Upload this
+    }
     binding.videoListList.includeRecyclerView.adapter = listAdapter
   }
 
