@@ -10,12 +10,15 @@ import androidx.activity.viewModels
 import com.google.android.material.snackbar.Snackbar
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import androidx.recyclerview.widget.LinearLayoutManager
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.databinding.ActivityVideoListBinding
+import com.mux.video.vod.demo.mediastore.model.MediaStoreVideo
 
 class MediaStoreVideosActivity : AppCompatActivity() {
 
   private lateinit var binding: ActivityVideoListBinding
+  private lateinit var listAdapter: MediaStoreVideosAdapter
   private val viewModel by viewModels<MediaStoreVideosViewModel>()
   private val requestPermissions =
     registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions())
@@ -32,6 +35,7 @@ class MediaStoreVideosActivity : AppCompatActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     binding = ActivityVideoListBinding.inflate(layoutInflater)
+    binding.videoListList.includeRecyclerView.layoutManager = LinearLayoutManager(this)
     setContentView(binding.root)
 
     viewModel.videoList.observe(this) { list ->
@@ -49,10 +53,17 @@ class MediaStoreVideosActivity : AppCompatActivity() {
     }
 
     maybeRequestPermissions()
+    viewModel.videoList.observe(this) { handleListUpdate(it) }
+  }
+
+  private fun handleListUpdate(list: List<MediaStoreVideo>) {
+    // TODO: Use AsyncListDiffer to make this look nice
+    listAdapter = MediaStoreVideosAdapter(list)
+    binding.videoListList.includeRecyclerView.adapter = listAdapter
   }
 
   private fun maybeRequestPermissions() {
-    if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       maybeRequestPermissionsApi33()
     } else {
       maybeRequestPermissionsOld()
