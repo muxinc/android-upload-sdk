@@ -54,6 +54,8 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
     MuxVodUploadManager.startJob(uploadInfo)
   }
 
+  suspend fun awaitSuccess() = uploadInfo.uploadJob?.await()
+
   fun pause() {
     MuxVodUploadSdk.logger.w("MuxUpload", "pause() is not implemented yet")
   }
