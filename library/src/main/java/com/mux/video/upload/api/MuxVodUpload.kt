@@ -3,7 +3,7 @@ package com.mux.video.upload.api
 import android.net.Uri
 import androidx.annotation.MainThread
 import com.mux.android.util.weak
-import com.mux.video.upload.internal.MuxUploadInfo
+import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.update
 import java.io.File
 
@@ -17,8 +17,8 @@ import java.io.File
  *
  * Create an instance of this class with the [Builder]
  */
-class MuxVodUpload private constructor(uploadInfo: MuxUploadInfo) {
-  private val uploadInfo: MuxUploadInfo
+class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
+  private val uploadInfo: UploadInfo
   private val successCallbacks: MutableList<Callback<State>> = mutableListOf()
   private val failureCallbacks: MutableList<Callback<Exception>> = mutableListOf()
   private val progressCallbacks: MutableList<Callback<State>> = mutableListOf()
@@ -107,7 +107,7 @@ class MuxVodUpload private constructor(uploadInfo: MuxUploadInfo) {
   class Builder constructor(val uploadUri: Uri, val videoFile: File) {
     constructor(uploadUri: String, videoFile: File) : this(Uri.parse(uploadUri), videoFile)
 
-    private var uploadInfo: MuxUploadInfo = MuxUploadInfo(
+    private var uploadInfo: UploadInfo = UploadInfo(
       // Default values
       remoteUri = uploadUri,
       file = videoFile,
@@ -116,9 +116,9 @@ class MuxVodUpload private constructor(uploadInfo: MuxUploadInfo) {
       retriesPerChunk = 3,
       retryBaseTimeMs = 500,
       uploadJob = null,
-      successCallback = null,
-      progressCallback = null,
-      errorCallback = null
+      successChannel = null,
+      progressChannel = null,
+      errorChannel = null
     )
 
     fun chunkSize(sizeBytes: Long): Builder {
@@ -140,7 +140,7 @@ class MuxVodUpload private constructor(uploadInfo: MuxUploadInfo) {
   }
 
   companion object {
-    @JvmSynthetic internal fun create(uploadInfo: MuxUploadInfo) = MuxVodUpload(uploadInfo)
+    @JvmSynthetic internal fun create(uploadInfo: UploadInfo) = MuxVodUpload(uploadInfo)
   }
 }
 
