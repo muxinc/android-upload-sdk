@@ -10,11 +10,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import java.io.File
-import java.lang.ref.WeakReference
 
 /**
  * Represents a task that does a single direct upload to a Mux Video asset previously created.
@@ -52,9 +50,7 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
    */
   @JvmOverloads
   fun start(forceRestart: Boolean = false) {
-    // TODO: Return/track a Job (or something) for callers to track this progress themselves.
-    MuxVodUploadManager.registerJob(uploadInfo)
-    // TODO: Add a WeakCallback that delegates to our callbacks here
+    MuxVodUploadManager.startJob(uploadInfo)
   }
 
   fun pause() {

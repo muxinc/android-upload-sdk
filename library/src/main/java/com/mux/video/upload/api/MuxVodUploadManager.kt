@@ -3,6 +3,7 @@ package com.mux.video.upload.api
 import androidx.annotation.MainThread
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.assertMainThread
+import com.mux.video.upload.internal.createUploadJob
 import java.io.File
 
 object MuxVodUploadManager {
@@ -24,15 +25,16 @@ object MuxVodUploadManager {
    */
   @JvmSynthetic
   @MainThread
-  internal fun registerJob(upload: UploadInfo) {
+  internal fun startJob(upload: UploadInfo, restart: Boolean = false) {
     assertMainThread()
-    upsertUpload(upload)
+    upsertUpload(upload, restart)
   }
 
   @JvmSynthetic
   @MainThread
   internal fun cancelJob(upload: UploadInfo) {
     assertMainThread()
+    uploadsByFilename[upload.file.absolutePath]?.let { cancelJobInner(it) }
     uploadsByFilename -= upload.file.absolutePath
   }
 
@@ -43,8 +45,26 @@ object MuxVodUploadManager {
     uploadsByFilename -= upload.file.absolutePath
   }
 
-  private fun upsertUpload(upload: UploadInfo) {
-    val filename = upload.file.absoluteFile
-    uploadsByFilename += upload.file.absolutePath to upload
+  private fun createJob() {}
+
+  private fun cancelJobInner(upload: UploadInfo) {
+    upload.uploadJob?.cancel()
+  }
+
+  private fun upsertUpload(upload: UploadInfo, restart: Boolean) {
+    val filename = upload.file.absolutePath
+    var existingUpload = uploadsByFilename[filename]
+    // Use the old job if possible (unless requested otherwise)
+    if (existingUpload?.uploadJob == null) {
+      existingUpload = createUploadJob(upload)
+    } else {
+      if (restart) {
+        cancelJobInner(upload)
+        existingUpload = createUploadJob(upload)
+      }
+    }
+
+    // TODO: New UploadInfo with job (or same old one)
+    uploadsByFilename += upload.file.absolutePath to existingUpload
   }
 }
