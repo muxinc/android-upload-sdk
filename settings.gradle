@@ -20,6 +20,6 @@ dependencyResolutionManagement {
     maven { url 'https://muxinc.jfrog.io/artifactory/default-maven-local' }
   }
 }
-rootProject.name = "Mux Upload SDK"
+rootProject.name = "Mux Upload SDK for Android"
 include ':app'
 include ':library'
