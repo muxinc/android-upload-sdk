@@ -1,6 +1,8 @@
 package com.mux.video.upload
 
 import android.util.Log
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
 
 /**
  * Uploads videos to Mux Video.
@@ -22,19 +24,34 @@ object MuxVodUploadSdk {
    * ```
    * If you're using another logging library, you can always implement your own [Logger]
    */
-  val logger by this::_logger
-  private var _logger: Logger
+  val logger by this::internalLogger
+
+  private var internalLogger: Logger // Mutable internally only
+  private var httpClient: OkHttpClient
 
   init {
-    // BuildConfig is *our* build, not the clients
-    _logger = if (BuildConfig.DEBUG) {
+    // BuildConfig is *our* build, not the client's
+    internalLogger = if (BuildConfig.DEBUG) {
       LogcatLogger()
     } else {
       NoLogger()
     }
+
+    httpClient = OkHttpClient.Builder()
+      .addInterceptor(HttpLoggingInterceptor {
+        Log.v("MuxUploadHttp", it)
+      }.apply { setLevel(HttpLoggingInterceptor.Level.BODY) })
+      .build()
   }
 
   // TODO: Client-facing init() method where they provide a Context (for metrics)
+
+  /**
+   * Use the specified [OkHttpClient] instead of the default internal okhttp client
+   */
+  fun useOkHttpClient(okHttpClient: OkHttpClient) {
+    httpClient = okHttpClient
+  }
 
   /**
    * Use the specified logger for logging events in this SDK. This SDK produces no logs by default.
@@ -43,24 +60,27 @@ object MuxVodUploadSdk {
    */
   @Synchronized
   fun useLogger(logger: Logger) {
-    _logger = logger
+    internalLogger = logger
   }
 
   /**
    * Creates a new [Logger] that logs to android logcat
    */
+  @Suppress("MemberVisibilityCanBePrivate")
   fun logcatLogger(): Logger = LogcatLogger()
 
   /**
    * Creates a new [Logger] that logs to System.out. Useful for unit test environments, where [Log]
    * doesn't work
    */
+  @Suppress("MemberVisibilityCanBePrivate")
   fun systemOutLogger(): Logger = SystemOutLogger()
 
   /**
    * Creates a new [Logger] that produces *no* output. It does nothing and discards all input. This
    * is the default logger.
    */
+  @Suppress("MemberVisibilityCanBePrivate")
   fun noLogger(): Logger = NoLogger()
 
   /**
@@ -98,7 +118,7 @@ private class LogcatLogger : MuxVodUploadSdk.Logger {
 }
 
 // For unit tests
-private class SystemOutLogger: MuxVodUploadSdk.Logger {
+private class SystemOutLogger : MuxVodUploadSdk.Logger {
   override fun e(tag: String, msg: String, e: Exception?) {
     print("E", tag, msg, e)
   }
@@ -119,16 +139,16 @@ private class SystemOutLogger: MuxVodUploadSdk.Logger {
     print("V", tag, msg, e)
   }
 
-  private fun print(pri: String, tag: String, msg: String, e:Exception?) {
+  private fun print(pri: String, tag: String, msg: String, e: Exception?) {
     println("$pri // $tag: $msg\n${e ?: ""}")
   }
 }
 
 // For prod
-private class NoLogger: MuxVodUploadSdk.Logger {
-  override fun e(tag: String, msg: String, e: Exception?) { }
-  override fun w(tag: String, msg: String, e: Exception?) { }
-  override fun d(tag: String, msg: String, e: Exception?) { }
-  override fun i(tag: String, msg: String, e: Exception?) { }
-  override fun v(tag: String, msg: String, e: Exception?) { }
+private class NoLogger : MuxVodUploadSdk.Logger {
+  override fun e(tag: String, msg: String, e: Exception?) {}
+  override fun w(tag: String, msg: String, e: Exception?) {}
+  override fun d(tag: String, msg: String, e: Exception?) {}
+  override fun i(tag: String, msg: String, e: Exception?) {}
+  override fun v(tag: String, msg: String, e: Exception?) {}
 }
