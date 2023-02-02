@@ -21,7 +21,7 @@
         android:theme="@style/Theme.MuxVideoVODUploadSDK"
         tools:targetApi="31">
         <activity
-            android:name=".VideoListActivity"
+            android:name=".DeviceStoreVideosActivity"
             android:exported="true"
             android:label="@string/title_activity_scrolling"
             android:theme="@style/Theme.MuxVideoVODUploadSDK.NoActionBar">

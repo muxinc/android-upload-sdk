@@ -5,7 +5,7 @@ import com.google.android.material.snackbar.Snackbar
 import androidx.appcompat.app.AppCompatActivity
 import com.mux.video.vod.demo.databinding.ActivityVideoListBinding
 
-class VideoListActivity : AppCompatActivity() {
+class DeviceStoreVideosActivity : AppCompatActivity() {
 
   private lateinit var binding: ActivityVideoListBinding
 
