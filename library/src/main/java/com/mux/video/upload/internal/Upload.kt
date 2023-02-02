@@ -6,6 +6,27 @@ import kotlinx.coroutines.*
 import java.io.File
 
 /**
+ * Represents a Mux Video direct upload, which may be in-progress, paused, finished, or not yet
+ * started. The state (as reported at the time the object was created) can be read from
+ * [lastKnownState], but it may be stale.
+ *
+ * This object is the SDK's internal representation of an upload that is in-progress. The public
+ * object is [MuxVodUpload], which is backed by an instance of this object
+ */
+internal data class MuxUploadInfo(
+  val remoteUri: Uri,
+  val file: File,
+  val lastKnownState: MuxVodUpload.State?,
+  val chunkSize: Long,
+  val retriesPerChunk: Int,
+  val retryBaseTimeMs: Long,
+  @JvmSynthetic internal val uploadJob: Deferred<MuxVodUpload.State>?,
+  @JvmSynthetic internal val successCallback: ((MuxVodUpload.State) -> Unit)?,
+  @JvmSynthetic internal val progressCallback: ((MuxVodUpload.State) -> Unit)?,
+  @JvmSynthetic internal val errorCallback: ((Exception) -> Unit)?,
+)
+
+/**
  * Creates a new Upload Job for this
  */
 @JvmSynthetic
@@ -14,9 +35,6 @@ internal fun createUploadJob(upload: MuxVodUpload): Deferred<MuxVodUpload.State>
   return UploadJobFactory.createUploadJob(CoroutineScope(Dispatchers.Default))
 }
 
-/**
- * TODO: Doc
- */
 /**
  * Creates upload coroutine jobs, which handle uploading a single file and reporting/delegating
  * the state of the upload. To cancel, just call [Deferred.cancel]
@@ -62,3 +80,32 @@ private object UploadJobFactory {
     }
   }
 }
+
+/**
+ * Return a new [MuxUploadInfo] with the given data overwritten. Any argument not provided will be
+ * copied from the original object.
+ */
+@JvmSynthetic
+internal fun MuxUploadInfo.update(
+  remoteUri: Uri = this.remoteUri,
+  file: File = this.file,
+  lastKnownState: MuxVodUpload.State? = this.lastKnownState,
+  chunkSize: Long = this.chunkSize,
+  retriesPerChunk: Int = this.retriesPerChunk,
+  retryBaseTimeMs: Long = this.retryBaseTimeMs,
+  uploadJob: Deferred<MuxVodUpload.State>? = this.uploadJob,
+  successCallback: ((MuxVodUpload.State) -> Unit)? = null,
+  progressCallback: ((MuxVodUpload.State) -> Unit)? = null,
+  errorCallback: ((Exception) -> Unit)? = null,
+) = MuxUploadInfo(
+  remoteUri,
+  file,
+  lastKnownState,
+  chunkSize,
+  retriesPerChunk,
+  retryBaseTimeMs,
+  uploadJob,
+  successCallback,
+  progressCallback,
+  errorCallback
+)

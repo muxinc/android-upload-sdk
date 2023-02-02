@@ -1,25 +1,21 @@
 package com.mux.video.upload.api
 
 import androidx.annotation.MainThread
+import com.mux.video.upload.internal.MuxUploadInfo
 import com.mux.video.upload.internal.assertMainThread
 import java.io.File
-import java.util.Collections.addAll
 
 object MuxVodUploadManager {
 
+  // TODO: The production version will keep a persistent cache of
+  private val uploadsByFilename: MutableMap<String, MuxUploadInfo> = mutableMapOf()
+
   /**
-   * TODO: Add doc symbols
-   * The list of uploads currently in-progress in the app. This list doesn't contain uploads that
-   * are paused, only ones that are either uploading or queued to be uploaded
+   * Finds an in-progress (or recently-failed) upload and returns an object to track it, if it was
+   * in progress
    */
-  val uploadsInProgress: List<MuxVodUpload>
-    get() = listOf<MuxVodUpload>().apply { addAll( _currentUploads) }
-  private val _currentUploads: MutableList<MuxVodUpload> = mutableListOf()
-
-  // TODO: internal disk-based cache for storing download state after process death
-  //  For this prototype, use shared prefs and just store the state as PAUSED|UPLOADING|ERROR|DONE
-  // TODO: Methods for: accessing failed uploads, retrying uploads
-
+  fun findUploadByFile(videoFile: File): MuxVodUpload? =
+    uploadsByFilename[videoFile.absolutePath]?.let { MuxVodUpload.create(it) }
 
   /**
    * Adds a new job to this manager.
@@ -28,28 +24,27 @@ object MuxVodUploadManager {
    */
   @JvmSynthetic
   @MainThread
-  internal fun jobStarted(upload: MuxVodUpload) {
-    // TODO: Don't use MuxVodUpload directly for this
-    // TODO: Return/track a Job (or something) for callers to track this progress themselves.
+  internal fun registerJob(upload: MuxUploadInfo) {
     assertMainThread()
-    _currentUploads += upload
+    upsertUpload(upload)
   }
 
   @JvmSynthetic
   @MainThread
-  internal fun jobCanceled(upload: MuxVodUpload) {
-    // TODO: Return/track a Job (or something) for callers to track this progress themselves.
-    // TODO: Don't use MuxVodUpload directly for this
+  internal fun cancelJob(upload: MuxUploadInfo) {
     assertMainThread()
-    _currentUploads -= upload
+    uploadsByFilename -= upload.file.absolutePath
   }
 
   @JvmSynthetic
   @MainThread
-  internal fun jobFinished(upload: MuxVodUpload) {
-    // TODO: Return/track a Job (or something) for callers to track this progress themselves.
-    // TODO: Don't use MuxVodUpload directly for this
+  internal fun jobFinished(upload: MuxUploadInfo) {
     assertMainThread()
-    _currentUploads -= upload
+    uploadsByFilename -= upload.file.absolutePath
+  }
+
+  private fun upsertUpload(upload: MuxUploadInfo) {
+    val filename = upload.file.absoluteFile
+    uploadsByFilename += upload.file.absolutePath to upload
   }
 }

@@ -34,6 +34,8 @@ object MuxVodUploadSdk {
     }
   }
 
+  // TODO: Client-facing init() method where they provide a Context (for metrics)
+
   /**
    * Use the specified logger for logging events in this SDK. This SDK produces no logs by default.
    * If you need to debug your integration, you can add a [logcatLogger] or [systemOutLogger] or

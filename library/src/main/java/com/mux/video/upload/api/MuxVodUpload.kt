@@ -6,7 +6,6 @@ import com.mux.android.util.weak
 import com.mux.video.upload.internal.MuxUploadInfo
 import com.mux.video.upload.internal.update
 import java.io.File
-import java.util.concurrent.TimeUnit
 
 /**
  * Represents a task that does a single direct upload to a Mux Video asset previously created.
@@ -18,10 +17,15 @@ import java.util.concurrent.TimeUnit
  *
  * Create an instance of this class with the [Builder]
  */
-class MuxVodUpload private constructor(private val uploadInfo: MuxUploadInfo) {
+class MuxVodUpload private constructor(uploadInfo: MuxUploadInfo) {
+  private val uploadInfo: MuxUploadInfo
   private val successCallbacks: MutableList<Callback<State>> = mutableListOf()
   private val failureCallbacks: MutableList<Callback<Exception>> = mutableListOf()
   private val progressCallbacks: MutableList<Callback<State>> = mutableListOf()
+
+  init {
+    this.uploadInfo = uploadInfo // TODO: Add callbacks
+  }
 
   /**
    * Starts this Upload. The Upload will continue in the background *even if this object is
@@ -33,18 +37,18 @@ class MuxVodUpload private constructor(private val uploadInfo: MuxUploadInfo) {
   @JvmOverloads
   fun start(forceRestart: Boolean = false) {
     // TODO: Return/track a Job (or something) for callers to track this progress themselves.
-    MuxVodUploadManager.jobStarted(this)
+    MuxVodUploadManager.registerJob(uploadInfo)
     // TODO: Add a WeakCallback that delegates to our callbacks here
   }
 
   fun pause() {
     // TODO: Return/track a Job (or something) for callers to track this progress themselves.
-    MuxVodUploadManager.jobFinished(this)
+    MuxVodUploadManager.jobFinished(uploadInfo)
   }
 
   fun cancel() {
     // TODO: Return/track a Job (or something) for callers to track this progress themselves.
-    MuxVodUploadManager.jobCanceled(this)
+    MuxVodUploadManager.cancelJob(uploadInfo)
   }
 
   @MainThread
@@ -99,6 +103,7 @@ class MuxVodUpload private constructor(private val uploadInfo: MuxUploadInfo) {
    *
    * @param uploadUri the URL obtained from the Direct video up
    */
+  @Suppress("MemberVisibilityCanBePrivate")
   class Builder constructor(val uploadUri: Uri, val videoFile: File) {
     constructor(uploadUri: String, videoFile: File) : this(Uri.parse(uploadUri), videoFile)
 
@@ -107,10 +112,13 @@ class MuxVodUpload private constructor(private val uploadInfo: MuxUploadInfo) {
       remoteUri = uploadUri,
       file = videoFile,
       lastKnownState = null,
-      chunkSize = 32000 * 1024, //30M
+      chunkSize = 32000 * 1024, //32M or so
       retriesPerChunk = 3,
       retryBaseTimeMs = 500,
-      uploadJob = null
+      uploadJob = null,
+      successCallback = null,
+      progressCallback = null,
+      errorCallback = null
     )
 
     fun chunkSize(sizeBytes: Long): Builder {
@@ -129,6 +137,10 @@ class MuxVodUpload private constructor(private val uploadInfo: MuxUploadInfo) {
     }
 
     fun build() = MuxVodUpload(uploadInfo)
+  }
+
+  companion object {
+    @JvmSynthetic internal fun create(uploadInfo: MuxUploadInfo) = MuxVodUpload(uploadInfo)
   }
 }
 
