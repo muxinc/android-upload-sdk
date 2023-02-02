@@ -42,10 +42,10 @@ internal fun createUploadJob(upload: UploadInfo): UploadInfo {
 private object UploadJobFactory {
   fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope): UploadInfo {
     val successChannel =
-      Channel<MuxVodUpload.State>(capacity = Channel.UNLIMITED) { undelivered(it) }
+      Channel<MuxVodUpload.State>(capacity = Channel.UNLIMITED) { logOrphanChannelMsg(it) }
     val progressChannel =
-      Channel<MuxVodUpload.State>(capacity = Channel.UNLIMITED) { undelivered(it) }
-    val errorChannel = Channel<Exception>(capacity = Channel.UNLIMITED) { undelivered(it) }
+      Channel<MuxVodUpload.State>(capacity = Channel.UNLIMITED) { logOrphanChannelMsg(it) }
+    val errorChannel = Channel<Exception>(capacity = Channel.UNLIMITED) { logOrphanChannelMsg(it) }
     val worker = Worker(uploadInfo)
 
     // Put them all together
@@ -67,8 +67,8 @@ private object UploadJobFactory {
     )
   }
 
-  private fun <T> undelivered(t: T) {
-    MuxVodUploadSdk.logger.w(msg = "Undelivered state msg $t")
+  private fun <T> logOrphanChannelMsg(t: T) {
+    MuxVodUploadSdk.logger.v(msg = "Undelivered state msg $t")
   }
 
   /**
