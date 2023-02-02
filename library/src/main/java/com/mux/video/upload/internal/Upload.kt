@@ -1,7 +1,6 @@
 package com.mux.video.upload.internal
 
 import android.net.Uri
-import android.util.Log
 import com.mux.video.upload.MuxVodUploadSdk
 import com.mux.video.upload.api.MuxVodUpload
 import com.mux.video.upload.network.asCountingFileBody
@@ -20,6 +19,7 @@ import java.io.File
 internal data class UploadInfo(
   val remoteUri: Uri,
   val file: File,
+  val videoMimeType: String,
   val chunkSize: Long,
   val retriesPerChunk: Int,
   val retryBaseTimeMs: Long,
@@ -72,36 +72,36 @@ private object UploadJobFactory {
   private fun <T> logOrphanChannelMsg(t: T) {
     MuxVodUploadSdk.logger.v(msg = "Undelivered state msg $t")
   }
-
-  /**
-   * Uploads one single file, reporting progress as it goes, and returning the final state when the
-   * upload completes. The worker is only responsible for doing the upload and accurately reporting
-   * state/errors. Owning objects handle errors, delegate
-   */
-  private class Worker(val uploadInfo: UploadInfo) {
-
-    @Throws
-    suspend fun doUpload(): MuxVodUpload.State {
-      return supervisorScope {
-        val fileSize = uploadInfo.file.length()
-        val httpClient = MuxVodUploadSdk.httpClient()
-        val fileBody = uploadInfo.file.asCountingFileBody("application/mp4") { bytes ->
-          val state = MuxVodUpload.State(bytes, fileSize)
-          launch(Dispatchers.Main) { uploadInfo.progressChannel?.send(state) }
-        }
-        val request = Request.Builder()
-          .url(uploadInfo.remoteUri.toString())
-          .put(fileBody)
-          .build()
-
-        val httpResponse = withContext(Dispatchers.IO) { httpClient.newCall(request).execute() }
-        MuxVodUploadSdk.logger.v("UploadWorker", "With Response: $httpResponse")
-
-        MuxVodUpload.State(fileSize, fileSize)
-      } // supervisorScope
-    }
-  }
 }
+
+/**
+ * Uploads one single file, reporting progress as it goes, and returning the final state when the
+ * upload completes. The worker is only responsible for doing the upload and accurately reporting
+ * state/errors. Owning objects handle errors, delegate
+ */
+private class Worker(val uploadInfo: UploadInfo) {
+
+  @Throws
+  suspend fun doUpload(): MuxVodUpload.State {
+    return supervisorScope {
+      val fileSize = uploadInfo.file.length()
+      val httpClient = MuxVodUploadSdk.httpClient()
+      val fileBody = uploadInfo.file.asCountingFileBody(uploadInfo.videoMimeType) { bytes ->
+        val state = MuxVodUpload.State(bytes, fileSize)
+        launch(Dispatchers.Main) { uploadInfo.progressChannel?.send(state) }
+      }
+      val request = Request.Builder()
+        .url(uploadInfo.remoteUri.toString())
+        .put(fileBody)
+        .build()
+
+      val httpResponse = withContext(Dispatchers.IO) { httpClient.newCall(request).execute() }
+      MuxVodUploadSdk.logger.v("UploadWorker", "With Response: $httpResponse")
+
+      MuxVodUpload.State(fileSize, fileSize)
+    } // supervisorScope
+  } // suspend fun doUpload
+} // class Worker
 
 /**
  * Return a new [UploadInfo] with the given data overwritten. Any argument not provided will be
@@ -111,6 +111,7 @@ private object UploadJobFactory {
 internal fun UploadInfo.update(
   remoteUri: Uri = this.remoteUri,
   file: File = this.file,
+  videoMimeType: String = this.videoMimeType,
   chunkSize: Long = this.chunkSize,
   retriesPerChunk: Int = this.retriesPerChunk,
   retryBaseTimeMs: Long = this.retryBaseTimeMs,
@@ -121,6 +122,7 @@ internal fun UploadInfo.update(
 ) = UploadInfo(
   remoteUri,
   file,
+  videoMimeType,
   chunkSize,
   retriesPerChunk,
   retryBaseTimeMs,
