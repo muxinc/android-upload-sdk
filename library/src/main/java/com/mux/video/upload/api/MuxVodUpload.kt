@@ -50,16 +50,17 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
    */
   @JvmOverloads
   fun start(forceRestart: Boolean = false) {
+    // TODO: This creates the job and everything
     MuxVodUploadManager.startJob(uploadInfo)
   }
 
   fun pause() {
-    // TODO: Return/track a Job (or something) for callers to track this progress themselves.
+    // TODO: This creates the job and everything
     MuxVodUploadManager.jobFinished(uploadInfo)
   }
 
   fun cancel() {
-    // TODO: Return/track a Job (or something) for callers to track this progress themselves.
+    // TODO: This creates the job and everything
     MuxVodUploadManager.cancelJob(uploadInfo)
     mainScope.cancel("user requested cancel")
   }
