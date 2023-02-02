@@ -88,7 +88,7 @@ private class Worker(val uploadInfo: UploadInfo) {
       val httpClient = MuxVodUploadSdk.httpClient()
       val fileBody = uploadInfo.file.asCountingFileBody(uploadInfo.videoMimeType) { bytes ->
         val state = MuxVodUpload.State(bytes, fileSize)
-        launch(Dispatchers.Main) { uploadInfo.progressChannel?.send(state) }
+        uploadInfo.progressChannel?.let { launch { it.trySend(state) } }
       }
       val request = Request.Builder()
         .url(uploadInfo.remoteUri.toString())
