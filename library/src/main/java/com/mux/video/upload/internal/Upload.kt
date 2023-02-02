@@ -32,7 +32,6 @@ internal data class UploadInfo(
  */
 @JvmSynthetic
 internal fun createUploadJob(upload: UploadInfo): UploadInfo {
-  // TODO: Callback delivers state data
   return UploadJobFactory.createUploadJob(upload, CoroutineScope(Dispatchers.Default))
 }
 
@@ -83,6 +82,7 @@ private object UploadJobFactory {
       return supervisorScope {
         // TODO: Prepare upload (Maybe by launch()ing coroutines on main thread to update the mgr etc)
         val httpResponse = withContext(Dispatchers.IO) {
+          val httpClient = MuxVodUploadSdk.httpClient()
           // TODO: Http
           "dummy object"
         } // withContext(Dispatchers.IO)

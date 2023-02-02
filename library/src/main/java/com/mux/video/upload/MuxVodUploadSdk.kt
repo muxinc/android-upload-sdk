@@ -83,6 +83,9 @@ object MuxVodUploadSdk {
   @Suppress("MemberVisibilityCanBePrivate")
   fun noLogger(): Logger = NoLogger()
 
+  @JvmSynthetic
+  internal fun httpClient(): OkHttpClient = httpClient
+
   /**
    * Logs events from this SDK. This interface roughly matches the interface of [Log].
    */

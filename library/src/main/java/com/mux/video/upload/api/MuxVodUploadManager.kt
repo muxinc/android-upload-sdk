@@ -45,8 +45,6 @@ object MuxVodUploadManager {
     uploadsByFilename -= upload.file.absolutePath
   }
 
-  private fun createJob() {}
-
   private fun cancelJobInner(upload: UploadInfo) {
     upload.uploadJob?.cancel()
   }
