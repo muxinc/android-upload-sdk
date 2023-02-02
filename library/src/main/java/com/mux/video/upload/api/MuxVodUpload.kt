@@ -25,6 +25,7 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
 
   init {
     this.uploadInfo = uploadInfo // TODO: Add callbacks
+    // TODO: Register the upload immediately, don't start it until caller calls
   }
 
   /**
