@@ -2,9 +2,6 @@ package com.mux.video.upload
 
 import android.content.Context
 import android.util.Log
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 
@@ -29,14 +26,6 @@ object MuxUploadSdk {
    * If you're using another logging library, you can always implement your own [Logger]
    */
   val logger by this::internalLogger
-
-  /**
-   * Returns the [CoroutineScope] for all this SDK's coroutines. Uploads managed by the SDK will
-   * execute in this context
-   */
-  internal val sdkCoroutineScope: CoroutineScope by lazy {
-    CoroutineScope(SupervisorJob() + Dispatchers.Default)
-  }
 
   private var internalLogger: Logger // Mutable internally only
   private var httpClient: OkHttpClient
