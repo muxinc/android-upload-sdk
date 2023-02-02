@@ -5,6 +5,7 @@ import androidx.annotation.MainThread
 import com.mux.android.util.weak
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.UploadInfo
+import com.mux.video.upload.internal.UploadJobFactory
 import com.mux.video.upload.internal.update
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
@@ -24,8 +25,11 @@ import java.io.File
  *
  * Create an instance of this class with the [Builder]
  */
-class MuxUpload private constructor(uploadInfo: UploadInfo) {
-  private var uploadInfo: UploadInfo
+class MuxUpload private constructor(
+  private var uploadInfo: UploadInfo,
+  private val autoManage: Boolean = true,
+  private val uploaderScope: CoroutineScope
+) {
   private val successCallbacks: MutableList<Callback<State>> = mutableListOf()
   private val failureCallbacks: MutableList<Callback<Exception>> = mutableListOf()
   private val progressCallbacks: MutableList<Callback<State>> = mutableListOf()
@@ -33,7 +37,6 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
   private var mainScope: CoroutineScope = MainScope()
 
   init {
-    this.uploadInfo = uploadInfo
     uploadInfo.successChannel?.let { consumeChannel(it, successCallbacks) }
     uploadInfo.progressChannel?.let { consumeChannel(it, progressCallbacks) }
     uploadInfo.errorChannel?.let { consumeChannel(it, failureCallbacks) }
@@ -49,7 +52,15 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
   @JvmOverloads
   fun start(forceRestart: Boolean = false) {
     // We may or may not get a fresh worker, depends on if the upload is already going
-    uploadInfo = MuxUploadManager.startJob(uploadInfo, forceRestart)
+    uploadInfo = if (autoManage) {
+      MuxUploadManager.startJob(uploadInfo, forceRestart)
+    } else {
+      if(forceRestart || uploadInfo.uploadJob == null) {
+        UploadJobFactory.createUploadJob(uploadInfo, uploaderScope)
+      } else {
+        uploadInfo
+      }
+    }
 
     uploadInfo.successChannel?.let { consumeChannel(it, successCallbacks) }
     uploadInfo.progressChannel?.let { consumeChannel(it, progressCallbacks) }
@@ -57,7 +68,7 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
   }
 
   @Throws
-  suspend fun awaitSuccess(): State  {
+  suspend fun awaitSuccess(): State {
     start()
     return uploadInfo.uploadJob?.let { job ->
       val result = job.await()
@@ -142,6 +153,8 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
   class Builder constructor(val uploadUri: Uri, val videoFile: File) {
     constructor(uploadUri: String, videoFile: File) : this(Uri.parse(uploadUri), videoFile)
 
+    private var autoManage = true
+    private var coroutineScope: CoroutineScope = MuxUploadSdk.sdkCoroutineScope
     private var uploadInfo: UploadInfo = UploadInfo(
       // Default values
       remoteUri = uploadUri,
@@ -166,17 +179,29 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
       return this
     }
 
+    fun autoManageUploadWorker(autoManage: Boolean) {
+      this.autoManage = autoManage
+    }
+
+    fun coroutineScope(coroutineScope: CoroutineScope) {
+      this.coroutineScope = coroutineScope
+    }
+
     fun backoffBaseTime(backoffTimeMillis: Long): Builder {
       uploadInfo.update(retryBaseTimeMs = backoffTimeMillis)
       return this
     }
 
-    fun build() = MuxUpload(uploadInfo)
+    fun build() = MuxUpload(uploadInfo, autoManage, coroutineScope)
   }
 
   companion object {
     @JvmSynthetic
-    internal fun create(uploadInfo: UploadInfo) = MuxUpload(uploadInfo)
+    internal fun create(
+      uploadInfo: UploadInfo,
+      autoManage: Boolean = true,
+      coroutineScope: CoroutineScope = MuxUploadSdk.sdkCoroutineScope
+    ) = MuxUpload(uploadInfo, autoManage, coroutineScope)
   }
 }
 
