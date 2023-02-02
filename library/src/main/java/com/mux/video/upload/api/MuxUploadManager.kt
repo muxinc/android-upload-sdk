@@ -6,7 +6,7 @@ import com.mux.video.upload.internal.assertMainThread
 import com.mux.video.upload.internal.createUploadJob
 import java.io.File
 
-object MuxVodUploadManager {
+object MuxUploadManager {
 
   // TODO: The production version will keep a persistent cache of
   private val uploadsByFilename: MutableMap<String, UploadInfo> = mutableMapOf()
@@ -15,8 +15,8 @@ object MuxVodUploadManager {
    * Finds an in-progress (or recently-failed) upload and returns an object to track it, if it was
    * in progress
    */
-  fun findUploadByFile(videoFile: File): MuxVodUpload? =
-    uploadsByFilename[videoFile.absolutePath]?.let { MuxVodUpload.create(it) }
+  fun findUploadByFile(videoFile: File): MuxUpload? =
+    uploadsByFilename[videoFile.absolutePath]?.let { MuxUpload.create(it) }
 
   /**
    * Adds a new job to this manager.

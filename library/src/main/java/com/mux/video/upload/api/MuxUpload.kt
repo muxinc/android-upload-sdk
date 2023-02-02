@@ -3,7 +3,7 @@ package com.mux.video.upload.api
 import android.net.Uri
 import androidx.annotation.MainThread
 import com.mux.android.util.weak
-import com.mux.video.upload.MuxVodUploadSdk
+import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.update
 import kotlinx.coroutines.CoroutineScope
@@ -24,7 +24,7 @@ import java.io.File
  *
  * Create an instance of this class with the [Builder]
  */
-class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
+class MuxUpload private constructor(uploadInfo: UploadInfo) {
   private var uploadInfo: UploadInfo
   private val successCallbacks: MutableList<Callback<State>> = mutableListOf()
   private val failureCallbacks: MutableList<Callback<Exception>> = mutableListOf()
@@ -49,7 +49,7 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
   @JvmOverloads
   fun start(forceRestart: Boolean = false) {
     // We may or may not get a fresh worker, depends on if the upload is already going
-    uploadInfo = MuxVodUploadManager.startJob(uploadInfo, forceRestart)
+    uploadInfo = MuxUploadManager.startJob(uploadInfo, forceRestart)
 
     uploadInfo.successChannel?.let { consumeChannel(it, successCallbacks) }
     uploadInfo.progressChannel?.let { consumeChannel(it, progressCallbacks) }
@@ -67,11 +67,11 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
   }
 
   fun pause() {
-    MuxVodUploadSdk.logger.w("MuxUpload", "pause() is not implemented yet")
+    MuxUploadSdk.logger.w("MuxUpload", "pause() is not implemented yet")
   }
 
   fun cancel() {
-    MuxVodUploadManager.cancelJob(uploadInfo)
+    MuxUploadManager.cancelJob(uploadInfo)
     mainScope.cancel("user requested cancel")
   }
 
@@ -110,7 +110,7 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
     mainScope.launch {
       //channel.receiveAsFlow().collect { t -> callbacks.forEach { it.invoke(t) } }
       channel.receiveAsFlow().collect { t ->
-        MuxVodUploadSdk.logger.d(tag = "FLOW", "Flow: Updated $t")
+        MuxUploadSdk.logger.d(tag = "FLOW", "Flow: Updated $t")
         callbacks.forEach { it.invoke(t) }
       }
     }
@@ -146,6 +146,7 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
       // Default values
       remoteUri = uploadUri,
       file = videoFile,
+      videoMimeType = "application/mp4",
       chunkSize = 32000 * 1024, //32M or so
       retriesPerChunk = 3,
       retryBaseTimeMs = 500,
@@ -170,18 +171,18 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
       return this
     }
 
-    fun build() = MuxVodUpload(uploadInfo)
+    fun build() = MuxUpload(uploadInfo)
   }
 
   companion object {
     @JvmSynthetic
-    internal fun create(uploadInfo: UploadInfo) = MuxVodUpload(uploadInfo)
+    internal fun create(uploadInfo: UploadInfo) = MuxUpload(uploadInfo)
   }
 }
 
 // Callback that doesn't hold strong references to the outer context. If the Context is valid,
 // something else will be holding a reference, so it'll stay valid as long as the caller cares
-private class WeakCallback<T>(cb: MuxVodUpload.Callback<T>) : MuxVodUpload.Callback<T> {
+private class WeakCallback<T>(cb: MuxUpload.Callback<T>) : MuxUpload.Callback<T> {
   private val weakCb by weak(cb)
 
   @Throws

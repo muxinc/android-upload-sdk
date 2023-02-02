@@ -9,7 +9,7 @@ import okhttp3.logging.HttpLoggingInterceptor
  *
  * TODO: This would be a good place to put usage
  */
-object MuxVodUploadSdk {
+object MuxUploadSdk {
   /**
    * The current version of this SDK. Release builds of this SDK strictly follow the rules of
    * semantic versioning (https://semver.org)
@@ -98,7 +98,7 @@ object MuxVodUploadSdk {
   }
 }
 
-private class LogcatLogger : MuxVodUploadSdk.Logger {
+private class LogcatLogger : MuxUploadSdk.Logger {
   override fun e(tag: String, msg: String, e: Exception?) {
     Log.e(tag, msg, e)
   }
@@ -121,7 +121,7 @@ private class LogcatLogger : MuxVodUploadSdk.Logger {
 }
 
 // For unit tests
-private class SystemOutLogger : MuxVodUploadSdk.Logger {
+private class SystemOutLogger : MuxUploadSdk.Logger {
   override fun e(tag: String, msg: String, e: Exception?) {
     print("E", tag, msg, e)
   }
@@ -148,7 +148,7 @@ private class SystemOutLogger : MuxVodUploadSdk.Logger {
 }
 
 // For prod
-private class NoLogger : MuxVodUploadSdk.Logger {
+private class NoLogger : MuxUploadSdk.Logger {
   override fun e(tag: String, msg: String, e: Exception?) {}
   override fun w(tag: String, msg: String, e: Exception?) {}
   override fun d(tag: String, msg: String, e: Exception?) {}
