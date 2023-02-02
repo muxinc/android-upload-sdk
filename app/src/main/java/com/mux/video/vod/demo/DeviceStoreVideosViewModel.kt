@@ -57,7 +57,7 @@ class DeviceStoreVideosViewModel(private val app: Application) : AndroidViewMode
     do {
       val title = cursor.getString(VideoColumns.DISPLAY_NAME) ?: "[no name]"
       val file = cursor.getString(VideoColumns.DATA) ?: continue
-      val fromApp = cursor.getString(VideoColumns.OWNER_PACKAGE_NAME) ?: "??"
+      val fromApp = ownerPackageName(cursor)
 
       val vid = DeviceStoreVideo(
         title = title,
