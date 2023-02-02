@@ -61,7 +61,6 @@ private object UploadJobFactory {
     val file: File,
     val retriesPerChunk: Int,
     val chunkSizeBytes: Int,
-    val progress: (MuxVodUpload.State) -> Unit
   ) {
     suspend fun doUpload() {
       // TODO: Callback for delivering state data
@@ -78,6 +77,10 @@ private object UploadJobFactory {
         finalState
       } // supervisorScope
     }
+
+    private fun progress(state: MuxVodUpload.State)  {
+    }
+
   }
 }
 
