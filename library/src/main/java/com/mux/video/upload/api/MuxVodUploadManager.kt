@@ -62,7 +62,6 @@ object MuxVodUploadManager {
       }
     }
 
-    // TODO: New UploadInfo with job (or same old one)
     uploadsByFilename += upload.file.absolutePath to existingUpload
   }
 }
