@@ -1,4 +1,4 @@
-package com.mux.video.vod.demo.model
+package com.mux.video.vod.demo.mediastore.model
 
 import android.net.Uri
 import android.os.ParcelFileDescriptor

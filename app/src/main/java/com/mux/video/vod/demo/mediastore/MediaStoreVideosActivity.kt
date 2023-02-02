@@ -1,4 +1,4 @@
-package com.mux.video.vod.demo
+package com.mux.video.vod.demo.mediastore
 
 import android.annotation.TargetApi
 import android.content.pm.PackageManager
@@ -10,12 +10,13 @@ import androidx.activity.viewModels
 import com.google.android.material.snackbar.Snackbar
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.databinding.ActivityVideoListBinding
 
-class DeviceStoreVideosActivity : AppCompatActivity() {
+class MediaStoreVideosActivity : AppCompatActivity() {
 
   private lateinit var binding: ActivityVideoListBinding
-  private val viewModel by viewModels<DeviceStoreVideosViewModel>()
+  private val viewModel by viewModels<MediaStoreVideosViewModel>()
   private val requestPermissions =
     registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions())
     { grantedPermissions ->

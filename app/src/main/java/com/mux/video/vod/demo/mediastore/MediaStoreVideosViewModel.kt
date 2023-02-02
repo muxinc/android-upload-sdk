@@ -1,17 +1,16 @@
-package com.mux.video.vod.demo
+package com.mux.video.vod.demo.mediastore
 
 import android.app.Application
 import android.database.Cursor
 import android.os.Build
 import android.provider.MediaStore
-import android.provider.MediaStore.Video
 import android.provider.MediaStore.Video.VideoColumns
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
-import com.mux.video.vod.demo.model.DeviceStoreVideo
+import com.mux.video.vod.demo.mediastore.model.DeviceStoreVideo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -20,7 +19,7 @@ import java.io.File
 /**
  * Queries the device's content provider for saved videos to upload
  */
-class DeviceStoreVideosViewModel(private val app: Application) : AndroidViewModel(app) {
+class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel(app) {
 
   val videoList: LiveData<List<DeviceStoreVideo>> by this::innerVideoList
   private val innerVideoList = MutableLiveData<List<DeviceStoreVideo>>()
@@ -50,7 +49,6 @@ class DeviceStoreVideosViewModel(private val app: Application) : AndroidViewMode
         arrayOf(VideoColumns.DISPLAY_NAME, VideoColumns.DATA)
       }
     }
-
 
     withContext(Dispatchers.IO) {
       app.contentResolver.query(
