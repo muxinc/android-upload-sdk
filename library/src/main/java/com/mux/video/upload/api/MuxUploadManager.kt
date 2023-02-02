@@ -15,8 +15,8 @@ object MuxUploadManager {
    * Finds an in-progress (or recently-failed) upload and returns an object to track it, if it was
    * in progress
    */
-  fun findUploadByFile(videoFile: File): MuxUpload? =
-    uploadsByFilename[videoFile.absolutePath]?.let { MuxUpload.create(it) }
+  fun findUploadByFile(videoFile: File): VideoUpload? =
+    uploadsByFilename[videoFile.absolutePath]?.let { VideoUpload.create(it) }
 
   /**
    * Adds a new job to this manager.

@@ -24,7 +24,7 @@ import java.io.File
  *
  * Create an instance of this class with the [Builder]
  */
-class MuxUpload private constructor(uploadInfo: UploadInfo) {
+class VideoUpload private constructor(uploadInfo: UploadInfo) {
   private var uploadInfo: UploadInfo
   private val successCallbacks: MutableList<Callback<State>> = mutableListOf()
   private val failureCallbacks: MutableList<Callback<Exception>> = mutableListOf()
@@ -171,18 +171,18 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
       return this
     }
 
-    fun build() = MuxUpload(uploadInfo)
+    fun build() = VideoUpload(uploadInfo)
   }
 
   companion object {
     @JvmSynthetic
-    internal fun create(uploadInfo: UploadInfo) = MuxUpload(uploadInfo)
+    internal fun create(uploadInfo: UploadInfo) = VideoUpload(uploadInfo)
   }
 }
 
 // Callback that doesn't hold strong references to the outer context. If the Context is valid,
 // something else will be holding a reference, so it'll stay valid as long as the caller cares
-private class WeakCallback<T>(cb: MuxUpload.Callback<T>) : MuxUpload.Callback<T> {
+private class WeakCallback<T>(cb: VideoUpload.Callback<T>) : VideoUpload.Callback<T> {
   private val weakCb by weak(cb)
 
   @Throws

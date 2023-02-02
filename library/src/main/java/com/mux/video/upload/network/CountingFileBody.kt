@@ -11,7 +11,7 @@ import java.io.File
  * RequestBody based on a file that reports the number of bytes written at regular intervals until
  * the file has been fully uploaded.
  */
-fun File.asCountingFileBody(
+internal fun File.asCountingFileBody(
   mediaType: MediaType?,
   callback: (Long) -> Unit
 ): RequestBody {
@@ -22,7 +22,7 @@ fun File.asCountingFileBody(
  * RequestBody based on a file that reports the number of bytes written at regular intervals until
  * the file has been fully uploaded.
  */
-fun File.asCountingFileBody(
+internal fun File.asCountingFileBody(
   contentType: String?,
   callback: (Long) -> Unit
 ): RequestBody =
@@ -40,7 +40,7 @@ private class CountingFileBody constructor(
   private var totalBytes: Long = 0
 
   companion object {
-    const val READ_LENGTH: Long = 2048
+    const val READ_LENGTH: Long = 256 * 1024
   }
 
   override fun contentLength(): Long {
