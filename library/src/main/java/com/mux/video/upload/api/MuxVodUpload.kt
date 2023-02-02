@@ -58,6 +58,7 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
 
   @Throws
   suspend fun awaitSuccess(): State  {
+    start()
     return uploadInfo.uploadJob?.let { job ->
       val result = job.await()
       result.exceptionOrNull()?.let { throw it }
