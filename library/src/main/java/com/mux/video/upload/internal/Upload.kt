@@ -17,7 +17,6 @@ import java.io.File
 internal data class UploadInfo(
   val remoteUri: Uri,
   val file: File,
-  val lastKnownState: MuxVodUpload.State?,
   val chunkSize: Long,
   val retriesPerChunk: Int,
   val retryBaseTimeMs: Long,
@@ -102,7 +101,6 @@ private object UploadJobFactory {
 internal fun UploadInfo.update(
   remoteUri: Uri = this.remoteUri,
   file: File = this.file,
-  lastKnownState: MuxVodUpload.State? = this.lastKnownState,
   chunkSize: Long = this.chunkSize,
   retriesPerChunk: Int = this.retriesPerChunk,
   retryBaseTimeMs: Long = this.retryBaseTimeMs,
@@ -113,7 +111,6 @@ internal fun UploadInfo.update(
 ) = UploadInfo(
   remoteUri,
   file,
-  lastKnownState,
   chunkSize,
   retriesPerChunk,
   retryBaseTimeMs,

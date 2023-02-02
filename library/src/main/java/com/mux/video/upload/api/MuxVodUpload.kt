@@ -50,17 +50,15 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
    */
   @JvmOverloads
   fun start(forceRestart: Boolean = false) {
-    // TODO: This creates the job and everything
+    // TODO: Need to observe the job's stuff (this is for the case where the upload isn't in progress)
     MuxVodUploadManager.startJob(uploadInfo)
   }
 
   fun pause() {
-    // TODO: This creates the job and everything
-    MuxVodUploadManager.jobFinished(uploadInfo)
+    MuxVodUploadSdk.logger.w("MuxUpload", "pause() is not implemented yet")
   }
 
   fun cancel() {
-    // TODO: This creates the job and everything
     MuxVodUploadManager.cancelJob(uploadInfo)
     mainScope.cancel("user requested cancel")
   }
@@ -136,7 +134,6 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
       // Default values
       remoteUri = uploadUri,
       file = videoFile,
-      lastKnownState = null,
       chunkSize = 32000 * 1024, //32M or so
       retriesPerChunk = 3,
       retryBaseTimeMs = 500,
