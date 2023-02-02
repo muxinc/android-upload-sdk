@@ -1,5 +1,6 @@
 package com.mux.video.upload
 
+import android.content.Context
 import android.util.Log
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -44,7 +45,11 @@ object MuxUploadSdk {
       .build()
   }
 
-  // TODO: Client-facing init() method where they provide a Context (for metrics)
+  fun initialize(appContext: Context) {
+    // TODO: Collect caller app metrics, get the cache directory, etc.
+    //  Also, try not to save the appContext. Context.applicationContext is safe to hold statically
+    //  but it makes compiler warnings
+  }
 
   /**
    * Use the specified [OkHttpClient] instead of the default internal okhttp client
