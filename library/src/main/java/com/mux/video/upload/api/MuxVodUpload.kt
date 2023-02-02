@@ -3,9 +3,18 @@ package com.mux.video.upload.api
 import android.net.Uri
 import androidx.annotation.MainThread
 import com.mux.android.util.weak
+import com.mux.video.upload.MuxVodUploadSdk
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.update
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.launch
 import java.io.File
+import java.lang.ref.WeakReference
 
 /**
  * Represents a task that does a single direct upload to a Mux Video asset previously created.
@@ -23,9 +32,15 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
   private val failureCallbacks: MutableList<Callback<Exception>> = mutableListOf()
   private val progressCallbacks: MutableList<Callback<State>> = mutableListOf()
 
+  private var mainScope: CoroutineScope = MainScope()
+
   init {
     this.uploadInfo = uploadInfo // TODO: Add callbacks
-    // TODO: Register the upload immediately, don't start it until caller calls
+    uploadInfo.successChannel?.let { consumeChannel(uploadInfo.successChannel, successCallbacks) }
+    uploadInfo.progressChannel?.let {
+      consumeChannel(uploadInfo.progressChannel, progressCallbacks)
+    }
+    uploadInfo.errorChannel?.let { consumeChannel(uploadInfo.errorChannel, failureCallbacks) }
   }
 
   /**
@@ -50,6 +65,7 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
   fun cancel() {
     // TODO: Return/track a Job (or something) for callers to track this progress themselves.
     MuxVodUploadManager.cancelJob(uploadInfo)
+    mainScope.cancel("user requested cancel")
   }
 
   @MainThread
@@ -80,6 +96,17 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
   @MainThread
   fun removeProgressCallback(cb: Callback<State>) {
     progressCallbacks -= cb
+  }
+
+  // Consumes a channel until it closes, or until mainScope is canceled
+  private fun <T> consumeChannel(channel: Channel<T>, callbacks: List<Callback<T>>) {
+    mainScope.launch {
+      //channel.receiveAsFlow().collect { t -> callbacks.forEach { it.invoke(t) } }
+      channel.receiveAsFlow().collect { t ->
+        MuxVodUploadSdk.logger.d(tag="FLOW", "Flow: Updated $t")
+        callbacks.forEach { it.invoke(t) }
+      }
+    }
   }
 
   data class State(
@@ -141,7 +168,8 @@ class MuxVodUpload private constructor(uploadInfo: UploadInfo) {
   }
 
   companion object {
-    @JvmSynthetic internal fun create(uploadInfo: UploadInfo) = MuxVodUpload(uploadInfo)
+    @JvmSynthetic
+    internal fun create(uploadInfo: UploadInfo) = MuxVodUpload(uploadInfo)
   }
 }
 
