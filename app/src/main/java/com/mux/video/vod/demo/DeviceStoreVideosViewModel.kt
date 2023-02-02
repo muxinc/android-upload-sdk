@@ -4,6 +4,7 @@ import android.app.Application
 import android.database.Cursor
 import android.os.Build
 import android.provider.MediaStore
+import android.provider.MediaStore.Video
 import android.provider.MediaStore.Video.VideoColumns
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -42,14 +43,22 @@ class DeviceStoreVideosViewModel(private val app: Application) : AndroidViewMode
         "??"
       }
     }
+    fun columns(): Array<String> {
+      return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        arrayOf(VideoColumns.DISPLAY_NAME, VideoColumns.DATA, VideoColumns.OWNER_PACKAGE_NAME)
+      } else {
+        arrayOf(VideoColumns.DISPLAY_NAME, VideoColumns.DATA)
+      }
+    }
+
 
     withContext(Dispatchers.IO) {
       app.contentResolver.query(
         MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-        /* projection = */null,
+        /* projection = */ columns(),
         /* selection = */ null,
         /* selectionArgs = */ null,
-        /* sortOrder = */ MediaStore.Video.VideoColumns.DISPLAY_NAME + " DESC"
+        /* sortOrder = */ null,
       )!!
     }.use { cursor ->
       if (cursor.count <= 0) {
