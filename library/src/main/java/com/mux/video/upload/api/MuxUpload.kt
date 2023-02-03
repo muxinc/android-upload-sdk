@@ -39,9 +39,7 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
 
   init {
     this.uploadInfo = uploadInfo
-    uploadInfo.successChannel?.let { it.forwardEvents(it, successConsumers) }
-    uploadInfo.progressChannel?.let { it.forwardEvents(it, progressConsumers) }
-    uploadInfo.errorChannel?.let { it.forwardEvents(it, failureConsumers) }
+    maybeObserveUpload(uploadInfo)
   }
 
   /**
@@ -57,9 +55,7 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
     uploadInfo = MuxUploadManager.startJob(uploadInfo, forceRestart)
     logger.i("MuxUpload", "started upload: ${uploadInfo.file}")
 
-    uploadInfo.successChannel?.let { it.forwardEvents(it, successConsumers) }
-    uploadInfo.progressChannel?.let { it.forwardEvents(it, progressConsumers) }
-    uploadInfo.errorChannel?.let { it.forwardEvents(it, failureConsumers) }
+    maybeObserveUpload(uploadInfo)
   }
 
   @Throws
@@ -111,8 +107,14 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
     progressConsumers -= cb
   }
 
-  private fun <T> Channel<T>.forwardEvents(channel: Channel<T>, Consumers: List<Consumer<T>>) {
+  private fun <T> Channel<T>.forwardEvents(Consumers: List<Consumer<T>>) {
     mainScope.launch { receiveAsFlow().collect { t -> Consumers.forEach { it.accept(t) } } }
+  }
+
+  private fun maybeObserveUpload(uploadInfo: UploadInfo) {
+    uploadInfo.successChannel?.forwardEvents(successConsumers)
+    uploadInfo.progressChannel?.forwardEvents( progressConsumers)
+    uploadInfo.errorChannel?.forwardEvents(failureConsumers)
   }
 
   data class State(
