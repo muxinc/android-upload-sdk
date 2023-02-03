@@ -144,7 +144,7 @@ class MuxUpload private constructor(
       remoteUri = uploadUri,
       file = videoFile,
       videoMimeType = "application/mp4",
-      chunkSize = 32000 * 1024, //32M or so
+      chunkSize = 32 * 1024 * 1024,
       retriesPerChunk = 3,
       retryBaseTimeMs = 500,
       uploadJob = null,
