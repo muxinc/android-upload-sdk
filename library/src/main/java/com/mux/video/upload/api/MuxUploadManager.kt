@@ -5,10 +5,12 @@ import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.assertMainThread
 import com.mux.video.upload.internal.createUploadJob
+import kotlinx.coroutines.MainScope
 import java.io.File
 
 object MuxUploadManager {
 
+  private val mainScope = MainScope()
   // TODO: The production version will keep a persistent cache of
   private val uploadsByFilename: MutableMap<String, UploadInfo> = mutableMapOf()
   private val logger get() = MuxUploadSdk.logger

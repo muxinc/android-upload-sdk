@@ -51,28 +51,39 @@ class MuxUpload private constructor(
    */
   @JvmOverloads
   fun start(forceRestart: Boolean = false) {
+    startInner(forceRestart = forceRestart)
+  }
+
+  // Starts in the given coroutine scope.
+  // Auto-managed jobs do not honor the coroutineScope param, they are always in the UploadManager's
+  //   context
+  private fun startInner(
+    forceRestart: Boolean = false,
+    coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Default)
+  ) {
     // Get an updated UploadInfo with a job & event channels
-    // We may or may not get a fresh worker, depends on if the upload is already going
     uploadInfo = if (autoManage) {
+      // We may or may not get a fresh worker, depends on if the upload is already going
       MuxUploadManager.startJob(uploadInfo, forceRestart)
     } else {
-      MuxUploadSdk.uploadJobFactory()
-        .createUploadJob(uploadInfo, CoroutineScope(Dispatchers.Default))
+      // If we're not managing the worker, the job is internal & can be started or awaited
+      MuxUploadSdk.uploadJobFactory().createUploadJob(uploadInfo, coroutineScope)
     }
 
     logger.i("MuxUpload", "started upload: ${uploadInfo.file}")
-
     maybeObserveUpload(uploadInfo)
   }
 
   @Throws
   suspend fun awaitSuccess(): State {
-    start()
-    return uploadInfo.uploadJob?.let { job ->
-      val result = job.await()
-      result.exceptionOrNull()?.let { throw it }
-      result.getOrThrow()
-    } ?: State(0, uploadInfo.file.length())
+    return coroutineScope {
+      startInner(coroutineScope = this)
+      uploadInfo.uploadJob?.let { job ->
+        val result = job.await()
+        result.exceptionOrNull()?.let { throw it }
+        result.getOrThrow()
+      } ?: State(0, uploadInfo.file.length())
+    }
   }
 
   fun pause() {
