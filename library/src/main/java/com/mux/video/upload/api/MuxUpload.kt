@@ -66,7 +66,7 @@ class MuxUpload private constructor(
       // We may or may not get a fresh worker, depends on if the upload is already going
       MuxUploadManager.startJob(uploadInfo, forceRestart)
     } else {
-      // If we're not managing the worker, the job is internal & can be started or awaited
+      // If we're not managing the worker, the job is purely internal to this object
       MuxUploadSdk.uploadJobFactory().createUploadJob(uploadInfo, coroutineScope)
     }
 
