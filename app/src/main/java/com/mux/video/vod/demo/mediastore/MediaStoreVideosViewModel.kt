@@ -60,10 +60,6 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
    * In order to upload a file from the device's media store, the file must be copied into the app's
    * temp directory. (Technically we could stream it from the source, but this prevents the other
    * app from modifying the file if we pause the upload for a long time (or whatever)
-   *
-   * TODO: Wait we don't really have to do this! Whoohoo!
-   * TODO<em>: Should the SDK do this? Most ugc apps won't need it, but any app that wants to
-   *  interact with the device Media Store (different from local flat files) needs to do this step
    */
   @Throws
   private suspend fun copyIntoTempFile(contentUri: Uri): File {
@@ -125,13 +121,9 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
     withContext(Dispatchers.IO) {
       app.contentResolver.query(
         MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-        /* projection = */
         columns(),
-        /* selection = */
         null,
-        /* selectionArgs = */
         null,
-        /* sortOrder = */
         null,
       )!!
     }.use { cursor ->
