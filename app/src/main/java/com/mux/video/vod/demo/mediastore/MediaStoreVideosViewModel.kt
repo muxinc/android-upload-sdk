@@ -2,6 +2,7 @@ package com.mux.video.vod.demo.mediastore
 
 import android.app.Application
 import android.database.Cursor
+import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.provider.MediaStore.Video.VideoColumns
@@ -10,6 +11,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
+import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.mediastore.model.MediaStoreVideo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -17,6 +19,8 @@ import kotlinx.coroutines.withContext
 import org.joda.time.DateTime
 import org.joda.time.DateTimeZone
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.util.*
 
 /**
@@ -35,6 +39,54 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
       val videos = fetchVideos()
       innerVideoList.postValue(videos)
     }
+  }
+
+  fun beginUpload(contentUri: Uri) {
+    viewModelScope.launch {
+      Log.d(javaClass.simpleName, "Beginning upload of uri $contentUri")
+      val copiedFile = copyIntoTempFile(contentUri)
+      Log.d(javaClass.simpleName, "Copied file to $copiedFile")
+
+      val upl = MuxUpload.Builder(MediaStoreVideosActivity.PUT_URL, copiedFile).build()
+      upl.start()
+    }
+  }
+
+  /**
+   * In order to upload a file from the device's media store, the file must be copied into the app's
+   * temp directory. (Technically we could stream it from the source, but this prevents the other
+   * app from modifying the file if we pause the upload for a long time (or whatever)
+   *
+   * TODO: Wait we don't really have to do this! Whoohoo!
+   * TODO<em>: Should the SDK do this? Most ugc apps won't need it, but any app that wants to
+   *  interact with the device Media Store (different from local flat files) needs to do this step
+   */
+  @Throws
+  private suspend fun copyIntoTempFile(contentUri: Uri): File {
+    val basename = contentUri.pathSegments.joinToString(separator = "-")
+    val cacheDir = File(app.cacheDir, "mux-upload")
+    cacheDir.mkdirs()
+    val destFile = File(cacheDir, basename)
+
+    withContext(Dispatchers.IO) {
+      val output = FileOutputStream(destFile).channel
+      val fileDescriptor = app.contentResolver.openFileDescriptor(contentUri, "r")
+      val input = FileInputStream(fileDescriptor!!.fileDescriptor).channel
+
+      try {
+        val fileSize = input.size()
+        var read = 0L
+        do {
+          read += input.transferTo(read, 10 * 1024, output)
+        } while (read < fileSize)
+      } finally {
+        input.close()
+        fileDescriptor.close()
+        output.close()
+      }
+    }
+
+    return destFile
   }
 
   private suspend fun fetchVideos(): List<MediaStoreVideo> {
@@ -91,7 +143,8 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
         val fromApp = ownerPackageName(cursor)
         val dateMillis = cursor.getLong(VideoColumns.DATE_ADDED)
         val dateTime =
-          DateTime.now().withMillis(dateMillis * 1000).withZoneRetainFields(DateTimeZone.getDefault())
+          DateTime.now().withMillis(dateMillis * 1000)
+            .withZoneRetainFields(DateTimeZone.getDefault())
 
         val vid = MediaStoreVideo(
           title = title,
