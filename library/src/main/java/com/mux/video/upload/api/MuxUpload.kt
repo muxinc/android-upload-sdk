@@ -2,7 +2,7 @@ package com.mux.video.upload.api
 
 import android.net.Uri
 import androidx.annotation.MainThread
-import com.mux.android.util.weak
+import androidx.core.util.Consumer
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.update
@@ -26,18 +26,18 @@ import java.io.File
  */
 class MuxUpload private constructor(uploadInfo: UploadInfo) {
   private var uploadInfo: UploadInfo
-  private val successCallbacks: MutableList<Callback<State>> = mutableListOf()
-  private val failureCallbacks: MutableList<Callback<Exception>> = mutableListOf()
-  private val progressCallbacks: MutableList<Callback<State>> = mutableListOf()
+  private val successConsumers: MutableList<Consumer<State>> = mutableListOf()
+  private val failureConsumers: MutableList<Consumer<Exception>> = mutableListOf()
+  private val progressConsumers: MutableList<Consumer<State>> = mutableListOf()
 
   private val mainScope: CoroutineScope = MainScope()
   private val logger get() = MuxUploadSdk.logger
 
   init {
     this.uploadInfo = uploadInfo
-    uploadInfo.successChannel?.let { consumeChannel(it, successCallbacks) }
-    uploadInfo.progressChannel?.let { consumeChannel(it, progressCallbacks) }
-    uploadInfo.errorChannel?.let { consumeChannel(it, failureCallbacks) }
+    uploadInfo.successChannel?.let { it.forwardEvents(it, successConsumers) }
+    uploadInfo.progressChannel?.let { it.forwardEvents(it, progressConsumers) }
+    uploadInfo.errorChannel?.let { it.forwardEvents(it, failureConsumers) }
   }
 
   /**
@@ -52,14 +52,16 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
     // We may or may not get a fresh worker, depends on if the upload is already going
     uploadInfo = MuxUploadManager.startJob(uploadInfo, forceRestart)
     logger.i("MuxUpload", "started upload: ${uploadInfo.file}")
+    logger.i("MuxUpload", "started upload: ${uploadInfo.uploadJob}")
+    logger.i("MuxUpload", "started upload: ${uploadInfo.progressChannel}")
 
-    uploadInfo.successChannel?.let { consumeChannel(it, successCallbacks) }
-    uploadInfo.progressChannel?.let { consumeChannel(it, progressCallbacks) }
-    uploadInfo.errorChannel?.let { consumeChannel(it, failureCallbacks) }
+    uploadInfo.successChannel?.let { it.forwardEvents(it, successConsumers) }
+    uploadInfo.progressChannel?.let { it.forwardEvents(it, progressConsumers) }
+    uploadInfo.errorChannel?.let { it.forwardEvents(it, failureConsumers) }
   }
 
   @Throws
-  suspend fun awaitSuccess(): State  {
+  suspend fun awaitSuccess(): State {
     start()
     return uploadInfo.uploadJob?.let { job ->
       val result = job.await()
@@ -78,64 +80,43 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
   }
 
   @MainThread
-  fun addSuccessCallback(cb: Callback<State>) {
-    successCallbacks += cb
+  fun addSuccessConsumer(cb: Consumer<State>) {
+    successConsumers += cb
   }
 
   @MainThread
-  fun removeSuccessCallback(cb: Callback<State>) {
-    successCallbacks -= cb
+  fun removeSuccessConsumer(cb: Consumer<State>) {
+    successConsumers -= cb
   }
 
   @MainThread
-  fun addFailureCallback(cb: Callback<Exception>) {
-    failureCallbacks += cb
+  fun addFailureConsumer(cb: Consumer<Exception>) {
+    failureConsumers += cb
   }
 
   @MainThread
-  fun removeFailureCallback(cb: Callback<Exception>) {
-    failureCallbacks -= cb
+  fun removeFailureConsumer(cb: Consumer<Exception>) {
+    failureConsumers -= cb
   }
 
   @MainThread
-  fun addProgressCallback(cb: Callback<State>) {
-    progressCallbacks += cb
+  fun addProgressConsumer(cb: Consumer<State>) {
+    progressConsumers += cb
   }
 
   @MainThread
-  fun removeProgressCallback(cb: Callback<State>) {
-    progressCallbacks -= cb
+  fun removeProgressConsumer(cb: Consumer<State>) {
+    progressConsumers -= cb
   }
 
-  // Consumes a channel until it closes, or until mainScope is canceled
-  private fun <T> consumeChannel(channel: Channel<T>, callbacks: List<Callback<T>>) {
-    if(true) {
-      return
-    }
-    mainScope.launch {
-      channel.receiveAsFlow().collect { t ->
-        logger.d("MuxUpload", "Flow: Updated $t")
-        callbacks.forEach { it.invoke(t) }
-      }
-    }
+  private fun <T> Channel<T>.forwardEvents(channel: Channel<T>, Consumers: List<Consumer<T>>) {
+    mainScope.launch { receiveAsFlow().collect { t -> Consumers.forEach { it.accept(t) } } }
   }
 
   data class State(
     val bytesUploaded: Long,
     val totalBytes: Long,
   )
-
-  /**
-   * Represents Callbacks from this object.
-   */
-  interface Callback<T> {
-    // We could use blocks instead, but blocks are baroque on Java 1.6 with no lambdas
-    /**
-     * Implement to handle the callback.
-     */
-    @Throws
-    fun invoke(t: T)
-  }
 
   /**
    * Builds instances of this object

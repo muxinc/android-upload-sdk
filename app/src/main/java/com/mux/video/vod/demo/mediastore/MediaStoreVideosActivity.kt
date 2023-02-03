@@ -23,7 +23,7 @@ class MediaStoreVideosActivity : AppCompatActivity() {
   companion object {
     // For now, you have to PUT to this
     const val PUT_URL =
-      "https://storage.googleapis.com/video-storage-gcp-us-east4-vop1-uploads/ELboCathi7E59QlZ5fKcwH?Expires=1675385857&GoogleAccessId=uploads-gcp-us-east1-vop1%40mux-video-production.iam.gserviceaccount.com&Signature=XQGApo6mLOYNbgMlsherRRKwcj1CqWKMu9Nx6sJ6lwOQEMhpdT3YcL%2BJZ1NSv%2FF0eGB%2F9111ADofT%2FOGlm3q21tkmEblIdCtEPFQRk6nNANjfjT%2B7iknK4JCV1HogorUL5zoRYspaavaLHIQI2rmC9lo%2Feha856WRcLFbn2HDntGhTskr7VAufnZh3oW%2BpgmNJVTQX5KJtEiG5WgQv8C7drLSWI9hZSTEuvxCTZ1HnHMZtDjEFGCo02XbPfYYoz5aJ%2FbwS2u0dq5IM%2FdyphsqzyGrEyplG4CZ%2BzKwtFmCqdg0JW2VjGOxddwIt4e%2BrJEOdnEHl0jkWK7YLJnzJ50GQ%3D%3D&upload_id=ADPycduVPH2zLvVPjMA_tTvRV8zmcpLFCpoVp-zt3L2J-0JmoM4lrP65H8Hjdh4hBOAwPUK8Sxlul9Jw6gkrqc_7j6o3n45O6ws5"
+      "https://storage.googleapis.com/video-storage-gcp-us-east1-vop1-uploads/VtG45WABAbU11Nad23NjNA?Expires=1675390931&GoogleAccessId=uploads-gcp-us-east1-vop1%40mux-video-production.iam.gserviceaccount.com&Signature=0wDZ2KNhjZsJCpzqIPaefKDEHc%2FUlDa7MVoDFBUawovDPj%2ByUTsbs7sOTQBjgtvvUQa4LbzhWyUI4r2T5dq02i8QmP2KmKNNFqpfiPh3baZjSnK1VWYU%2BP43MN1GGAkdLns8Zt5r3g8ftczVHfWzt6mCyz6Jv8JEzoOyfnDQtjvbmHYXFQjgVIeXf3zrNc7j86J81fKAE5VCbDaxfWYUkpXbA43UjdWJGOg41XHh4udlQ3bFla3JSuRUJXX7lcJcEeRsZYbQleu3tqsI2L9vLqtPagCBQ89mFIWzD0aiRtmZyH7J8Y8odROu5bZYHEh17YBU8BySi2tuuH%2FYOKL0jQ%3D%3D&upload_id=ADPycduJgREakHKWEB7-3LBq2Yq8ypTHXnDiQxf7X4-aZjxHaLy5_gf-nCi5axLDjEigTLD4BWm3kp_YybGqaJh6tpZTmw"
   }
 
   private lateinit var binding: ActivityVideoListBinding

@@ -7,11 +7,14 @@ import android.os.Build
 import android.provider.MediaStore
 import android.provider.MediaStore.Video.VideoColumns
 import android.util.Log
+import android.widget.Toast
+import androidx.core.util.Consumer
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.mux.video.upload.api.MuxUpload
+import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.mediastore.model.MediaStoreVideo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -48,6 +51,12 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
       Log.d(javaClass.simpleName, "Copied file to $copiedFile")
 
       val upl = MuxUpload.Builder(MediaStoreVideosActivity.PUT_URL, copiedFile).build()
+      upl.addProgressConsumer(Consumer {
+        Log.v(javaClass.simpleName, "Upload progress: ${it.bytesUploaded} / ${it.totalBytes}")
+      })
+      upl.addSuccessConsumer(Consumer {
+        Log.w(javaClass.simpleName, "YAY! Uploaded the file: $contentUri")
+      })
       upl.start()
     }
   }
