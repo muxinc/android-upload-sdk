@@ -7,7 +7,6 @@ import android.os.Build
 import android.provider.MediaStore
 import android.provider.MediaStore.Video.VideoColumns
 import android.util.Log
-import android.widget.Toast
 import androidx.core.util.Consumer
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
@@ -15,8 +14,9 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.R
-import com.mux.video.vod.demo.mediastore.model.MediaStoreVideo
+import com.mux.video.vod.demo.mediastore.model.UploadingVideo
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.joda.time.DateTime
@@ -25,24 +25,16 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.*
+import kotlin.collections.ArrayList
 
 /**
  * Queries the device's content provider for saved videos to upload
  */
 class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel(app) {
 
-  val videoList: LiveData<List<MediaStoreVideo>> by this::innerVideoList
-  private val innerVideoList = MutableLiveData<List<MediaStoreVideo>>()
-
-  /**
-   * Refresh the video list by querying it again
-   */
-  fun refresh() {
-    viewModelScope.launch {
-      val videos = fetchVideos()
-      innerVideoList.postValue(videos)
-    }
-  }
+  val uploads: LiveData<List<MuxUpload>> by this::innerUploads
+  private val innerUploads = MutableLiveData<List<MuxUpload>>(listOf())
+  private val uploadList: MutableList<MuxUpload> = mutableListOf()
 
   fun beginUpload(contentUri: Uri) {
     viewModelScope.launch {
@@ -57,6 +49,9 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
       upl.addSuccessConsumer(Consumer {
         Log.w(javaClass.simpleName, "YAY! Uploaded the file: $contentUri")
       })
+      uploadList += upl
+      innerUploads.postValue(uploadList)
+
       upl.start()
     }
   }
@@ -98,7 +93,8 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
     return destFile
   }
 
-  private suspend fun fetchVideos(): List<MediaStoreVideo> {
+  // TODO: Don't need
+  private suspend fun fetchVideos(): List<UploadingVideo> {
     fun ownerPackageName(cursor: Cursor): String {
       return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         cursor.getString(VideoColumns.OWNER_PACKAGE_NAME) ?: "??"
@@ -144,7 +140,7 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
         return listOf()
       }
 
-      val videos = mutableListOf<MediaStoreVideo>()
+      val videos = mutableListOf<UploadingVideo>()
       cursor.moveToFirst()
       do {
         val title = cursor.getString(VideoColumns.DISPLAY_NAME) ?: "[no name]"
@@ -155,7 +151,7 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
           DateTime.now().withMillis(dateMillis * 1000)
             .withZoneRetainFields(DateTimeZone.getDefault())
 
-        val vid = MediaStoreVideo(
+        val vid = UploadingVideo(
           title = title,
           file = File(file),
           fromApp = fromApp,

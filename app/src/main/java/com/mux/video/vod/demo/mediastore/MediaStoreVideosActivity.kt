@@ -4,19 +4,16 @@ import android.annotation.TargetApi
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.provider.MediaStore
 import android.util.Log
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import com.google.android.material.snackbar.Snackbar
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView.OnItemTouchListener
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.databinding.ActivityVideoListBinding
-import com.mux.video.vod.demo.mediastore.model.MediaStoreVideo
+import com.mux.video.vod.demo.mediastore.model.UploadingVideo
 
 class MediaStoreVideosActivity : AppCompatActivity() {
 
@@ -36,8 +33,6 @@ class MediaStoreVideosActivity : AppCompatActivity() {
         || grantedPermissions.containsKey(android.Manifest.permission.READ_MEDIA_VIDEO)
       ) {
         maybeRequestPermissionsApi33()
-      } else {
-        viewModel.refresh()
       }
     }
   private val openDocument =
@@ -51,6 +46,7 @@ class MediaStoreVideosActivity : AppCompatActivity() {
     binding = ActivityVideoListBinding.inflate(layoutInflater)
     setContentView(binding.root)
     binding.videoListList.includeRecyclerView.layoutManager = LinearLayoutManager(this)
+    viewModel.uploads.observe(this) { handleListUpdate(it) }
 
     setSupportActionBar(findViewById(R.id.toolbar))
     binding.toolbarLayout.title = title
@@ -59,17 +55,11 @@ class MediaStoreVideosActivity : AppCompatActivity() {
     }
 
     maybeRequestPermissions()
-    viewModel.refresh()
-    //viewModel.videoList.observe(this) { handleListUpdate(it) }
   }
 
-
-  private fun handleListUpdate(list: List<MediaStoreVideo>) {
+  private fun handleListUpdate(list: List<MuxUpload>) {
     // TODO: Use AsyncListDiffer to make this look nice
-    listAdapter = MediaStoreVideosAdapter(list) { selectedVideo ->
-      val videoUpload = MuxUpload.Builder(PUT_URL, selectedVideo.file).build()
-      videoUpload.start()
-    }
+    listAdapter = MediaStoreVideosAdapter(list)
     binding.videoListList.includeRecyclerView.adapter = listAdapter
   }
 
