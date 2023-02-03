@@ -21,7 +21,7 @@ import com.mux.video.vod.demo.mediastore.model.MediaStoreVideo
 class MediaStoreVideosActivity : AppCompatActivity() {
 
   companion object {
-    // For now, you have to PUT to this
+    // For now, you have to paste this from the direct-upload response
     const val PUT_URL =
       "https://storage.googleapis.com/video-storage-gcp-us-east1-vop1-uploads/VtG45WABAbU11Nad23NjNA?Expires=1675390931&GoogleAccessId=uploads-gcp-us-east1-vop1%40mux-video-production.iam.gserviceaccount.com&Signature=0wDZ2KNhjZsJCpzqIPaefKDEHc%2FUlDa7MVoDFBUawovDPj%2ByUTsbs7sOTQBjgtvvUQa4LbzhWyUI4r2T5dq02i8QmP2KmKNNFqpfiPh3baZjSnK1VWYU%2BP43MN1GGAkdLns8Zt5r3g8ftczVHfWzt6mCyz6Jv8JEzoOyfnDQtjvbmHYXFQjgVIeXf3zrNc7j86J81fKAE5VCbDaxfWYUkpXbA43UjdWJGOg41XHh4udlQ3bFla3JSuRUJXX7lcJcEeRsZYbQleu3tqsI2L9vLqtPagCBQ89mFIWzD0aiRtmZyH7J8Y8odROu5bZYHEh17YBU8BySi2tuuH%2FYOKL0jQ%3D%3D&upload_id=ADPycduJgREakHKWEB7-3LBq2Yq8ypTHXnDiQxf7X4-aZjxHaLy5_gf-nCi5axLDjEigTLD4BWm3kp_YybGqaJh6tpZTmw"
   }
