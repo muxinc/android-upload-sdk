@@ -59,7 +59,8 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
   /**
    * In order to upload a file from the device's media store, the file must be copied into the app's
    * temp directory. (Technically we could stream it from the source, but this prevents the other
-   * app from modifying the file if we pause the upload for a long time (or whatever)
+   * app from modifying the file if we pause the upload for a long time or whatever)
+   * TODO<em> Is this something that should go in the SDK? This is a common workflow
    */
   @Throws
   private suspend fun copyIntoTempFile(contentUri: Uri): File {

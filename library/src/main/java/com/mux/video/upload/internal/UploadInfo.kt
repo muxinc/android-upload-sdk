@@ -13,7 +13,7 @@ import java.io.File
  * This object is immutable. To create an updated version use [update]. The Upload Manager can
  * update the internal state of its jobs based on the content of this object
  */
-data class UploadInfo(
+internal data class UploadInfo(
   val remoteUri: Uri,
   val file: File,
   val videoMimeType: String,
@@ -31,7 +31,7 @@ data class UploadInfo(
  * copied from the original object.
  */
 @JvmSynthetic
-fun UploadInfo.update(
+internal fun UploadInfo.update(
   remoteUri: Uri = this.remoteUri,
   file: File = this.file,
   videoMimeType: String = this.videoMimeType,

@@ -25,9 +25,11 @@ import java.io.File
  * Create an instance of this class with the [Builder]
  */
 class MuxUpload private constructor(uploadInfo: UploadInfo) {
-  val uploadInfo by this::innerUploadInfo
 
-  private var innerUploadInfo: UploadInfo
+  val videoFile: File get() = uploadInfo.file
+  // TODO: Add more (possibly all) properties read-only from UploadInfo
+
+  private var uploadInfo: UploadInfo
   private val successConsumers: MutableList<Consumer<State>> = mutableListOf()
   private val failureConsumers: MutableList<Consumer<Exception>> = mutableListOf()
   private val progressConsumers: MutableList<Consumer<State>> = mutableListOf()
@@ -36,7 +38,7 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
   private val logger get() = MuxUploadSdk.logger
 
   init {
-    this.innerUploadInfo = uploadInfo
+    this.uploadInfo = uploadInfo
     uploadInfo.successChannel?.let { it.forwardEvents(it, successConsumers) }
     uploadInfo.progressChannel?.let { it.forwardEvents(it, progressConsumers) }
     uploadInfo.errorChannel?.let { it.forwardEvents(it, failureConsumers) }
@@ -52,24 +54,22 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
   @JvmOverloads
   fun start(forceRestart: Boolean = false) {
     // We may or may not get a fresh worker, depends on if the upload is already going
-    innerUploadInfo = MuxUploadManager.startJob(innerUploadInfo, forceRestart)
-    logger.i("MuxUpload", "started upload: ${innerUploadInfo.file}")
-    logger.i("MuxUpload", "started upload: ${innerUploadInfo.uploadJob}")
-    logger.i("MuxUpload", "started upload: ${innerUploadInfo.progressChannel}")
+    uploadInfo = MuxUploadManager.startJob(uploadInfo, forceRestart)
+    logger.i("MuxUpload", "started upload: ${uploadInfo.file}")
 
-    innerUploadInfo.successChannel?.let { it.forwardEvents(it, successConsumers) }
-    innerUploadInfo.progressChannel?.let { it.forwardEvents(it, progressConsumers) }
-    innerUploadInfo.errorChannel?.let { it.forwardEvents(it, failureConsumers) }
+    uploadInfo.successChannel?.let { it.forwardEvents(it, successConsumers) }
+    uploadInfo.progressChannel?.let { it.forwardEvents(it, progressConsumers) }
+    uploadInfo.errorChannel?.let { it.forwardEvents(it, failureConsumers) }
   }
 
   @Throws
   suspend fun awaitSuccess(): State {
     start()
-    return innerUploadInfo.uploadJob?.let { job ->
+    return uploadInfo.uploadJob?.let { job ->
       val result = job.await()
       result.exceptionOrNull()?.let { throw it }
       result.getOrThrow()
-    } ?: State(0, innerUploadInfo.file.length())
+    } ?: State(0, uploadInfo.file.length())
   }
 
   fun pause() {
@@ -77,7 +77,7 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
   }
 
   fun cancel() {
-    MuxUploadManager.cancelJob(innerUploadInfo)
+    MuxUploadManager.cancelJob(uploadInfo)
     mainScope.cancel("user requested cancel")
   }
 

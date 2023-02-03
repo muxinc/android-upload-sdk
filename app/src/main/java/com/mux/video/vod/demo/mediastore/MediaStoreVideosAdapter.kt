@@ -24,8 +24,8 @@ class MediaStoreVideosAdapter(
 
   override fun onBindViewHolder(holder: MediaStoreVideoViewHolder, position: Int) {
     val listItem = items[position]
-    val fileSize = listItem.uploadInfo.file.length()
-    holder.viewBinding.mediastoreVideoFilename.text = listItem.uploadInfo.file.absolutePath
+    val fileSize = listItem.videoFile.length()
+    holder.viewBinding.mediastoreVideoFilename.text = listItem.videoFile.absolutePath
     holder.viewBinding.mediastoreVideoFilesize.text = "${fileSize} bytes"
 //    holder.viewBinding.mediastoreVideoTitle.text = listItem.uploadInfo.title
 //    holder.viewBinding.mediastoreVideoDate.text = listItem.uploadInfo.date
