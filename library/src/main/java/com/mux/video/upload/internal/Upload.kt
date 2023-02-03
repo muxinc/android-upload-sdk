@@ -2,6 +2,7 @@ package com.mux.video.upload.internal
 
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
+import com.mux.video.upload.api.MuxUploadManager
 import com.mux.video.upload.network.asCountingFileBody
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
@@ -13,21 +14,25 @@ import okhttp3.Request
  */
 @JvmSynthetic
 internal fun createUploadJob(upload: UploadInfo): UploadInfo {
-  return MuxUploadSdk.uploadJobFactory().createUploadJob(upload, CoroutineScope(Dispatchers.Default))
+  MuxUploadSdk.logger.d("MuxUpload", "Creating job for: $upload")
+  return MuxUploadSdk.uploadJobFactory()
+    .createUploadJob(upload, CoroutineScope(Dispatchers.Default))
 }
-
 
 /**
  * Creates upload coroutine jobs, which handle uploading a single file and reporting/delegating
  * the state of the upload. To cancel, just call [Deferred.cancel]
  */
 internal class UploadJobFactory private constructor() {
+  private val logger get() = MuxUploadSdk.logger
+
   companion object {
     @JvmSynthetic
     internal fun create() = UploadJobFactory()
   }
 
   fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope): UploadInfo {
+    logger
     val successChannel = callbackChannel<MuxUpload.State>()
     val progressChannel = callbackChannel<MuxUpload.State>()
     val errorChannel = callbackChannel<Exception>()
@@ -38,8 +43,10 @@ internal class UploadJobFactory private constructor() {
         val finalState = worker.doUpload()
         Result.success(finalState)
       } catch (e: Exception) {
-        MuxUploadSdk.logger.e(msg = "Upload of ${uploadInfo.file} failed", e = e)
+        MuxUploadSdk.logger.e("MuxUpload", "Upload of ${uploadInfo.file} failed", e)
         Result.failure(e)
+      } finally {
+        MainScope().launch { MuxUploadManager.jobFinished(uploadInfo) }
       }
     }
 
@@ -63,6 +70,8 @@ internal class UploadJobFactory private constructor() {
    */
   internal class Worker(val uploadInfo: UploadInfo) {
 
+    private val logger get() = MuxUploadSdk.logger
+
     @Throws
     suspend fun doUpload(): MuxUpload.State {
       return supervisorScope {
@@ -77,7 +86,9 @@ internal class UploadJobFactory private constructor() {
           .put(fileBody)
           .build()
 
+        logger.v("MuxUpload", "Uploading with request $request")
         val httpResponse = withContext(Dispatchers.IO) { httpClient.newCall(request).execute() }
+        logger.v("MuxUpload", "Uploaded $httpResponse")
         MuxUpload.State(fileSize, fileSize)
       } // supervisorScope
     } // suspend fun doUpload

@@ -69,7 +69,7 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
   }
 
   fun pause() {
-    MuxUploadSdk.logger.w("MuxUpload", "pause() is not implemented yet")
+    logger.w("MuxUpload", "pause() is not implemented yet")
   }
 
   fun cancel() {
@@ -109,6 +109,9 @@ class MuxUpload private constructor(uploadInfo: UploadInfo) {
 
   // Consumes a channel until it closes, or until mainScope is canceled
   private fun <T> consumeChannel(channel: Channel<T>, callbacks: List<Callback<T>>) {
+    if(true) {
+      return
+    }
     mainScope.launch {
       channel.receiveAsFlow().collect { t ->
         logger.d("MuxUpload", "Flow: Updated $t")

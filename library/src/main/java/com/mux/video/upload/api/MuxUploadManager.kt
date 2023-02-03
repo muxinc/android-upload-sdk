@@ -1,6 +1,7 @@
 package com.mux.video.upload.api
 
 import androidx.annotation.MainThread
+import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.assertMainThread
 import com.mux.video.upload.internal.createUploadJob
@@ -10,6 +11,7 @@ object MuxUploadManager {
 
   // TODO: The production version will keep a persistent cache of
   private val uploadsByFilename: MutableMap<String, UploadInfo> = mutableMapOf()
+  private val logger get() = MuxUploadSdk.logger
 
   /**
    * Finds an in-progress (or recently-failed) upload and returns an object to track it, if it was
