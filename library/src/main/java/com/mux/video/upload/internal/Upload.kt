@@ -99,6 +99,7 @@ internal class UploadJobFactory private constructor() {
         val httpClient = MuxUploadSdk.httpClient()
         val fileBody = videoFile.asCountingFileBody(videoMimeType) { bytes ->
           val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
+          // We update in a job with a delay() to debounce these events, which come very quickly
           val start = updateCallersJob.compareAndSet(
             null, newUpdateCallersJob(
               uploadedBytes = bytes,
@@ -111,7 +112,7 @@ internal class UploadJobFactory private constructor() {
           if (start) {
             updateCallersJob.get()?.start()
           }
-        }
+        } // countingFileBody callback
         val request = Request.Builder()
           .url(remoteUri.toString())
           .put(fileBody)
