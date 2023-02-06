@@ -32,16 +32,16 @@ class MediaStoreVideosAdapter(
     } else {
       "not done"
     }
+    val progressPercent =
+      (listItem.currentState.bytesUploaded / listItem.currentState.totalBytes.toDouble()) * 100.0
 
     holder.viewBinding.mediastoreVideoTitle.text = stateMsg
-    holder.viewBinding.mediastoreVideoProgress.progress =
-      (listItem.currentState.bytesUploaded / (1000 * 1000)).toInt()
-    holder.viewBinding.mediastoreVideoProgress.max =
-      (listItem.currentState.totalBytes / (1000 * 1000)).toInt()
+    holder.viewBinding.mediastoreVideoProgress.progress = progressPercent.toInt()
+    holder.viewBinding.mediastoreVideoProgress.max = 100
     holder.viewBinding.mediastoreVideoFilename.text = listItem.videoFile.absolutePath
     holder.viewBinding.mediastoreVideoDate.text =
       "${listItem.currentState.bytesUploaded} bytes in ${elapsedTime / 1000F} s elapsed "
-    holder.viewBinding.mediastoreVideoFilesize.text = "${bytesPerMs * 1000} Bytes/s"
+    holder.viewBinding.mediastoreVideoFilesize.text = "${bytesPerMs} KBytes/s"
   }
 }
 
