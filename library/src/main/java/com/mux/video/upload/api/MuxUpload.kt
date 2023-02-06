@@ -126,13 +126,13 @@ class MuxUpload private constructor(
   }
 
   private fun <T> Channel<T>.forwardEvents(
-    Consumers: List<Consumer<T>>,
+    consumers: List<Consumer<T>>,
     butFirst: ((T) -> Unit)? = null
   ) {
     mainScope.launch {
       receiveAsFlow().collect { t ->
         butFirst?.invoke(t)
-        Consumers.forEach { it.accept(t) }
+        consumers.forEach { it.accept(t) }
       }
     }
   }
