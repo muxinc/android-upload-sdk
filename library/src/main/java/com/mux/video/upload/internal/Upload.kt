@@ -85,7 +85,7 @@ internal class UploadJobFactory private constructor() {
   ) {
     companion object {
       // Progress updates are only sent once in this time frame. The latest event is always sent
-      const val EVENT_DEBOUNCE_DELAY_MS: Long = 300
+      const val EVENT_DEBOUNCE_DELAY_MS: Long = 100
     }
 
     private val logger get() = MuxUploadSdk.logger
