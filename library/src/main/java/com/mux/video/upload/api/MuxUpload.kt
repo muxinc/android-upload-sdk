@@ -23,16 +23,17 @@ import java.io.File
  * Create an instance of this class with the [Builder]
  */
 class MuxUpload private constructor(
-  private var uploadInfo: UploadInfo,
-  private val autoManage: Boolean = true
+  private var uploadInfo: UploadInfo, private val autoManage: Boolean = true
 ) {
 
   val videoFile: File get() = uploadInfo.file
+  val currentState: State get() = lastKnownState ?: State(totalBytes = videoFile.length())
   // TODO: Add more (possibly all) properties read-only from UploadInfo
 
   private val successConsumers: MutableList<Consumer<State>> = mutableListOf()
   private val failureConsumers: MutableList<Consumer<Exception>> = mutableListOf()
   private val progressConsumers: MutableList<Consumer<State>> = mutableListOf()
+  private var lastKnownState: State? = null
 
   private val mainScope: CoroutineScope = MainScope()
   private val logger get() = MuxUploadSdk.logger
@@ -125,19 +126,29 @@ class MuxUpload private constructor(
     progressConsumers -= cb
   }
 
-  private fun <T> Channel<T>.forwardEvents(Consumers: List<Consumer<T>>) {
-    mainScope.launch { receiveAsFlow().collect { t -> Consumers.forEach { it.accept(t) } } }
+  private fun <T> Channel<T>.forwardEvents(
+    Consumers: List<Consumer<T>>,
+    andAlso: ((T) -> Unit)? = null
+  ) {
+    mainScope.launch {
+      receiveAsFlow().collect { t ->
+        Consumers.forEach { it.accept(t) }
+        andAlso?.invoke(t)
+      }
+    }
   }
 
   private fun maybeObserveUpload(uploadInfo: UploadInfo) {
-    uploadInfo.successChannel?.forwardEvents(successConsumers)
-    uploadInfo.progressChannel?.forwardEvents(progressConsumers)
+    uploadInfo.successChannel?.forwardEvents(successConsumers) { lastKnownState = it }
+    uploadInfo.progressChannel?.forwardEvents(progressConsumers) { lastKnownState = it }
     uploadInfo.errorChannel?.forwardEvents(failureConsumers)
   }
 
   data class State(
-    val bytesUploaded: Long,
-    val totalBytes: Long,
+    val bytesUploaded: Long = 0,
+    val totalBytes: Long = 0,
+    val startTime: Long = 0,
+    val updatedTime: Long = 0,
   )
 
   /**

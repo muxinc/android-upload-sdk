@@ -38,9 +38,11 @@ private class CountingFileBody constructor(
 ) : RequestBody() {
 
   private var totalBytes: Long = 0
+  private var lastUpdateRealtime: Long = 0
 
   companion object {
     const val READ_LENGTH: Long = 256 * 1024
+    const val DEBOUNCE_PERIOD_MS: Long = 200L
   }
 
   override fun contentLength(): Long {

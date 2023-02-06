@@ -1,6 +1,7 @@
 package com.mux.video.upload.internal
 
 import android.net.Uri
+import android.os.SystemClock
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
@@ -68,9 +69,7 @@ internal class UploadJobFactory private constructor() {
   }
 
   private fun <T> callbackChannel() =
-    Channel<T>(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST) {
-      MuxUploadSdk.logger.v(msg = "Undelivered state msg $it")
-    }
+    Channel<T>(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST) { }
 
   /**
    * Uploads one single file, reporting progress as it goes, and returning the final state when the
@@ -83,16 +82,16 @@ internal class UploadJobFactory private constructor() {
     val remoteUri: Uri,
     val progressChannel: Channel<MuxUpload.State>,
   ) {
-
     private val logger get() = MuxUploadSdk.logger
 
     @Throws
     suspend fun doUpload(): MuxUpload.State {
+      val startTime = SystemClock.elapsedRealtime()
       return supervisorScope {
         val fileSize = videoFile.length()
         val httpClient = MuxUploadSdk.httpClient()
         val fileBody = videoFile.asCountingFileBody(videoMimeType) { bytes ->
-          val state = MuxUpload.State(bytes, fileSize)
+          val state = MuxUpload.State(bytes, fileSize, startTime, SystemClock.elapsedRealtime())
           launch { progressChannel.trySend(state) }
         }
         val request = Request.Builder()
@@ -103,7 +102,7 @@ internal class UploadJobFactory private constructor() {
         logger.v("MuxUpload", "Uploading with request $request")
         val httpResponse = withContext(Dispatchers.IO) { httpClient.newCall(request).execute() }
         logger.v("MuxUpload", "Uploaded $httpResponse")
-        MuxUpload.State(fileSize, fileSize)
+        MuxUpload.State(fileSize, fileSize, startTime, SystemClock.elapsedRealtime())
       } // supervisorScope
     } // suspend fun doUpload
   } // class Worker
