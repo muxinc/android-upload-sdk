@@ -137,12 +137,10 @@ internal class UploadJobFactory private constructor() {
     ): Job {
       return coroutineScope.launch(Dispatchers.Default, CoroutineStart.LAZY) {
         // Debounce the progress updates, as the file can be read quite quickly
-        launch {
-          delay(EVENT_DEBOUNCE_DELAY_MS)
-          val state = MuxUpload.State(uploadedBytes, totalBytes, startTime, endTime)
-          progressChannel.trySend(state)
-          updateCallersJob.set(null)
-        }
+        delay(EVENT_DEBOUNCE_DELAY_MS)
+        val state = MuxUpload.State(uploadedBytes, totalBytes, startTime, endTime)
+        progressChannel.trySend(state)
+        updateCallersJob.set(null)
       }
     }
   } // class Worker
