@@ -6,6 +6,7 @@ import okhttp3.RequestBody
 import okio.BufferedSink
 import okio.source
 import java.io.File
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * RequestBody based on a file that reports the number of bytes written at regular intervals until
@@ -36,13 +37,10 @@ private class CountingFileBody constructor(
   private val mediaType: MediaType?,
   private val callback: (Long) -> Unit,
 ) : RequestBody() {
-
-  private var totalBytes: Long = 0
-  private var lastUpdateRealtime: Long = 0
+  private var totalBytes = AtomicLong(0)
 
   companion object {
     const val READ_LENGTH: Long = 256 * 1024
-    const val DEBOUNCE_PERIOD_MS: Long = 200L
   }
 
   override fun contentLength(): Long {
@@ -57,9 +55,9 @@ private class CountingFileBody constructor(
       do {
         readBytes = it.read(sink.buffer, READ_LENGTH)
         if (readBytes >= 0) {
-          totalBytes += readBytes
+          val newTotal = totalBytes.addAndGet(readBytes)
           // TODO: Why double bytes??
-          callback(totalBytes / 2)
+          callback(newTotal / 2)
           sink.flush()
         }
       } while(readBytes >= 0)
