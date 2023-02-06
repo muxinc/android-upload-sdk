@@ -49,6 +49,7 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
       })
       upl.addSuccessConsumer(Consumer {
         Log.w(javaClass.simpleName, "YAY! Uploaded the file: $contentUri")
+        Log.i(javaClass.simpleName, "final state is $it")
         innerUploads.postValue(uploadList)
       })
       uploadList += upl

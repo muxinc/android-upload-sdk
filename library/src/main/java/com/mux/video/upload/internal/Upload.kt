@@ -11,6 +11,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import okhttp3.Request
 import java.io.File
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Creates a new Upload Job for this
@@ -82,7 +83,13 @@ internal class UploadJobFactory private constructor() {
     val remoteUri: Uri,
     val progressChannel: Channel<MuxUpload.State>,
   ) {
+    companion object {
+      // Progress updates are only sent once in this time frame. The latest event is always sent
+      const val EVENT_DEBOUNCE_DELAY_MS: Long = 300
+    }
+
     private val logger get() = MuxUploadSdk.logger
+    private val updateCallersJob: AtomicReference<Job?> = AtomicReference(null)
 
     @Throws
     suspend fun doUpload(): MuxUpload.State {
@@ -91,8 +98,19 @@ internal class UploadJobFactory private constructor() {
         val fileSize = videoFile.length()
         val httpClient = MuxUploadSdk.httpClient()
         val fileBody = videoFile.asCountingFileBody(videoMimeType) { bytes ->
-          val state = MuxUpload.State(bytes, fileSize, startTime, SystemClock.elapsedRealtime())
-          launch { progressChannel.trySend(state) }
+          val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
+          val start = updateCallersJob.compareAndSet(
+            null, newUpdateCallersJob(
+              uploadedBytes = bytes,
+              totalBytes = fileSize,
+              startTime = startTime,
+              endTime = elapsedRealtime,
+              coroutineScope = this
+            )
+          )
+          if (start) {
+            updateCallersJob.get()?.start()
+          }
         }
         val request = Request.Builder()
           .url(remoteUri.toString())
@@ -102,8 +120,30 @@ internal class UploadJobFactory private constructor() {
         logger.v("MuxUpload", "Uploading with request $request")
         val httpResponse = withContext(Dispatchers.IO) { httpClient.newCall(request).execute() }
         logger.v("MuxUpload", "Uploaded $httpResponse")
-        MuxUpload.State(fileSize, fileSize, startTime, SystemClock.elapsedRealtime())
+        val finalState =
+          MuxUpload.State(fileSize, fileSize, startTime, SystemClock.elapsedRealtime())
+        updateCallersJob.get()?.cancel()
+        progressChannel.send(finalState)
+        finalState
       } // supervisorScope
     } // suspend fun doUpload
+
+    private fun newUpdateCallersJob(
+      uploadedBytes: Long,
+      totalBytes: Long,
+      startTime: Long,
+      endTime: Long,
+      coroutineScope: CoroutineScope
+    ): Job {
+      return coroutineScope.launch(Dispatchers.Default, CoroutineStart.LAZY) {
+        // Debounce the progress updates, as the file can be read quite quickly
+        launch {
+          delay(EVENT_DEBOUNCE_DELAY_MS)
+          val state = MuxUpload.State(uploadedBytes, totalBytes, startTime, endTime)
+          progressChannel.trySend(state)
+          updateCallersJob.set(null)
+        }
+      }
+    }
   } // class Worker
 }

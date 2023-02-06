@@ -5,7 +5,6 @@ import androidx.annotation.MainThread
 import androidx.core.util.Consumer
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.UploadInfo
-import com.mux.video.upload.internal.UploadJobFactory
 import com.mux.video.upload.internal.update
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -128,12 +127,12 @@ class MuxUpload private constructor(
 
   private fun <T> Channel<T>.forwardEvents(
     Consumers: List<Consumer<T>>,
-    andAlso: ((T) -> Unit)? = null
+    butFirst: ((T) -> Unit)? = null
   ) {
     mainScope.launch {
       receiveAsFlow().collect { t ->
+        butFirst?.invoke(t)
         Consumers.forEach { it.accept(t) }
-        andAlso?.invoke(t)
       }
     }
   }
