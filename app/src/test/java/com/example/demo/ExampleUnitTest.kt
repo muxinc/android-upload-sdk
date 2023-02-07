@@ -1,4 +1,4 @@
-package com.mux.video.vod_upload
+package com.example.demo
 
 import org.junit.Test
 
