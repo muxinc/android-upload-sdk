@@ -31,7 +31,7 @@ object MuxUploadManager {
   @MainThread
   internal fun startJob(upload: UploadInfo, restart: Boolean = false): UploadInfo {
     assertMainThread()
-    return upsertUpload(upload, restart)
+    return insertOrUpdateUpload(upload, restart)
   }
 
   @JvmSynthetic
@@ -53,7 +53,7 @@ object MuxUploadManager {
     upload.uploadJob?.cancel()
   }
 
-  private fun upsertUpload(upload: UploadInfo, restart: Boolean): UploadInfo {
+  private fun insertOrUpdateUpload(upload: UploadInfo, restart: Boolean): UploadInfo {
     val filename = upload.file.absolutePath
     var finalUpload = uploadsByFilename[filename]
     // Use the old job if possible (unless requested otherwise)
