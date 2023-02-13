@@ -130,6 +130,9 @@ class MuxUpload private constructor(
     butFirst: ((T) -> Unit)? = null
   ) {
     mainScope.launch {
+      // This creates thread & memory isolation because our FlowCollector is only owned by *this*
+      //  CoroutineContext, and not the Channel or Flow derived form it (see ChannelFlow.collect())
+      //  and execution + reference scope is limited to this object after canceling mainScope
       receiveAsFlow().collect { t ->
         butFirst?.invoke(t)
         consumers.forEach { it.accept(t) }
