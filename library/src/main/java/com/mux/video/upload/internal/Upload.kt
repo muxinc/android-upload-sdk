@@ -9,7 +9,9 @@ import com.mux.video.upload.network.asCountingFileBody
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 
@@ -89,7 +91,7 @@ internal class UploadJobFactory private constructor() {
     }
 
     private val logger get() = MuxUploadSdk.logger
-    private val updateCallersJob: AtomicReference<Job?> = AtomicReference(null)
+    private val updateCallersJob: AtomicReference<Job> = AtomicReference(null)
 
     @Throws
     suspend fun doUpload(): MuxUpload.State {
@@ -116,6 +118,7 @@ internal class UploadJobFactory private constructor() {
         val request = Request.Builder()
           .url(remoteUri.toString())
           .put(fileBody)
+          //.put(videoFile.asRequestBody(videoMimeType.toMediaType()))
           .build()
 
         logger.v("MuxUpload", "Uploading with request $request")
