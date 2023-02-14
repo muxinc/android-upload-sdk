@@ -91,7 +91,11 @@ class MuxUpload private constructor(
   }
 
   fun cancel() {
-    MuxUploadManager.cancelJob(uploadInfo)
+    if (autoManage) {
+      MuxUploadManager.cancelJob(uploadInfo)
+    } else {
+      uploadInfo.uploadJob?.cancel("user requested cancel")
+    }
     mainScope.cancel("user requested cancel")
   }
 
