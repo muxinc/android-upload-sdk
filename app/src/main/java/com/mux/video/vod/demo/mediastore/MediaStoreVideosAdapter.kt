@@ -8,6 +8,8 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.RecyclerView.ViewHolder
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.databinding.ListItemUploadingVideoBinding
+import java.text.DecimalFormat
+import java.util.*
 
 class MediaStoreVideosAdapter(
   private var items: List<MuxUpload>,
@@ -34,6 +36,8 @@ class MediaStoreVideosAdapter(
     }
     val progressPercent =
       (listItem.currentState.bytesUploaded / listItem.currentState.totalBytes.toDouble()) * 100.0
+    val df = DecimalFormat("#.00")
+    val formattedRate = df.format(bytesPerMs)
 
     holder.viewBinding.mediastoreVideoTitle.text = stateMsg
     holder.viewBinding.mediastoreVideoProgress.progress = progressPercent.toInt()
@@ -41,7 +45,7 @@ class MediaStoreVideosAdapter(
     holder.viewBinding.mediastoreVideoFilename.text = listItem.videoFile.absolutePath
     holder.viewBinding.mediastoreVideoDate.text =
       "${listItem.currentState.bytesUploaded} bytes in ${elapsedTime / 1000F} s elapsed "
-    holder.viewBinding.mediastoreVideoFilesize.text = "${bytesPerMs} KBytes/s"
+    holder.viewBinding.mediastoreVideoFilesize.text = "${formattedRate} KBytes/s"
   }
 }
 
