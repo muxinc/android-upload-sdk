@@ -38,8 +38,10 @@ object MuxUploadManager {
   @MainThread
   internal fun cancelJob(upload: UploadInfo) {
     assertMainThread()
-    uploadsByFilename[upload.file.absolutePath]?.let { cancelJobInner(it) }
-    uploadsByFilename -= upload.file.absolutePath
+    uploadsByFilename[upload.file.absolutePath]?.let {
+      cancelJobInner(it)
+      uploadsByFilename -= it.file.absolutePath
+    }
   }
 
   @JvmSynthetic
