@@ -6,35 +6,38 @@ import okhttp3.RequestBody
 import okio.BufferedSink
 import okio.source
 import java.io.File
+import java.io.FileInputStream
+import java.io.InputStream
 import java.util.concurrent.atomic.AtomicLong
 
 /**
  * RequestBody based on a file that reports the number of bytes written at regular intervals until
  * the file has been fully uploaded.
  */
-internal fun File.asCountingFileBody(
+internal fun File.asCountingRequestBody(
   mediaType: MediaType?,
   callback: (Long) -> Unit
 ): RequestBody {
-  return CountingFileBody(this@asCountingFileBody, mediaType, callback)
+  return CountingRequestBody(FileInputStream(this), mediaType, length(), callback)
 }
 
 /**
  * RequestBody based on a file that reports the number of bytes written at regular intervals until
  * the file has been fully uploaded.
  */
-internal fun File.asCountingFileBody(
+internal fun File.asCountingRequestBody(
   contentType: String?,
   callback: (Long) -> Unit
 ): RequestBody =
-  asCountingFileBody(contentType?.toMediaType(), callback)
+  asCountingRequestBody(contentType?.toMediaType(), callback)
 
 /**
  * A RequestBody that reads its content from a file and reports its progress (in bytes) as it goes
  */
-private class CountingFileBody constructor(
-  private val file: File,
+private class CountingRequestBody constructor(
+  private val inputStream: InputStream,
   private val mediaType: MediaType?,
+  private val contentLength: Long,
   private val callback: (Long) -> Unit,
 ) : RequestBody() {
   private var totalBytes = AtomicLong(0)
@@ -43,24 +46,30 @@ private class CountingFileBody constructor(
     const val READ_LENGTH: Long = 256 * 1024
   }
 
-  override fun contentLength(): Long {
-    return file.length()
-  }
+  override fun contentLength(): Long = contentLength
 
   override fun contentType(): MediaType? = mediaType
 
   override fun writeTo(sink: BufferedSink) {
-    file.source().use {
+    // TODO: only read up until content-length
+    inputStream.source().use {
       var readBytes: Long
       do {
-        readBytes = it.read(sink.buffer, READ_LENGTH)
+        val totalBytesLocal = totalBytes.get()
+        val readLen: Long = if (totalBytesLocal + READ_LENGTH < contentLength) {
+          contentLength - totalBytesLocal
+        } else {
+          READ_LENGTH
+        }
+
+        readBytes = it.read(sink.buffer, readLen)
         if (readBytes >= 0) {
           val newTotal = totalBytes.addAndGet(readBytes)
           // TODO: Why double bytes??
           callback(newTotal / 2)
           sink.flush()
         }
-      } while(readBytes >= 0)
+      } while(readBytes >= 0 && totalBytesLocal < contentLength)
     }
   }
 }

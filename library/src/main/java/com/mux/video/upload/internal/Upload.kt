@@ -5,13 +5,11 @@ import android.os.SystemClock
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
-import com.mux.video.upload.network.asCountingFileBody
+import com.mux.video.upload.network.asCountingRequestBody
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.asRequestBody
 import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 
@@ -99,7 +97,7 @@ internal class UploadJobFactory private constructor() {
       return supervisorScope {
         val fileSize = videoFile.length()
         val httpClient = MuxUploadSdk.httpClient()
-        val fileBody = videoFile.asCountingFileBody(videoMimeType) { bytes ->
+        val fileBody = videoFile.asCountingRequestBody(videoMimeType) { bytes ->
           val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
           // We update in a job with a delay() to debounce these events, which come very quickly
           val start = updateCallersJob.compareAndSet(
