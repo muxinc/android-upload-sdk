@@ -1,5 +1,6 @@
 package com.mux.video.upload.network
 
+import android.renderscript.ScriptGroup.Input
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody
@@ -9,6 +10,17 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
 import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * RequestBody based on an InputStream that reports the number of bytes written until either
+ * [contentLength] bytes are transferred or the end of the input is reached. This RequestBody
+ * doesn't close
+ */
+internal fun InputStream.asCountingRequestBody(
+  mediaType: MediaType?,
+  contentLength: Long,
+  callback: (Long) -> Unit
+): RequestBody = CountingRequestBody(this, mediaType, contentLength, callback)
 
 /**
  * RequestBody based on a file that reports the number of bytes written at regular intervals until
@@ -40,6 +52,7 @@ private class CountingRequestBody constructor(
   private val contentLength: Long,
   private val callback: (Long) -> Unit,
 ) : RequestBody() {
+  // TODO <em>: this doesn't need to be atomic
   private var totalBytes = AtomicLong(0)
 
   companion object {
@@ -51,8 +64,7 @@ private class CountingRequestBody constructor(
   override fun contentType(): MediaType? = mediaType
 
   override fun writeTo(sink: BufferedSink) {
-    // TODO: only read up until content-length
-    inputStream.source().use {
+    inputStream.source().use { source ->
       var readBytes: Long
       do {
         val totalBytesLocal = totalBytes.get()
@@ -62,7 +74,7 @@ private class CountingRequestBody constructor(
           READ_LENGTH
         }
 
-        readBytes = it.read(sink.buffer, readLen)
+        readBytes = source.read(sink.buffer, readLen)
         if (readBytes >= 0) {
           val newTotal = totalBytes.addAndGet(readBytes)
           // TODO: Why double bytes??
