@@ -5,7 +5,7 @@ import android.os.SystemClock
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
-import com.mux.video.upload.network.asCountingRequestBody
+import com.mux.video.upload.internal.network.asCountingRequestBody
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel

@@ -1,4 +1,4 @@
-package com.mux.video.upload.network
+package com.mux.video.upload.internal.network
 
 import android.renderscript.ScriptGroup.Input
 import okhttp3.MediaType
