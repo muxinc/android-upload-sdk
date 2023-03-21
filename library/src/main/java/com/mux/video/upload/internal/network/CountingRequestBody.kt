@@ -47,6 +47,7 @@ internal fun File.asCountingRequestBody(
  * A RequestBody that reads its content from a file and reports its progress (in bytes) as it goes
  */
 private class CountingRequestBody constructor(
+
   private val inputStream: InputStream,
   private val mediaType: MediaType?,
   private val contentLength: Long,
@@ -67,21 +68,13 @@ private class CountingRequestBody constructor(
     inputStream.source().use { source ->
       var readBytes: Long
       do {
-        val totalBytesLocal = totalBytes.get()
-        val readLen: Long = if (totalBytesLocal + READ_LENGTH < contentLength) {
-          contentLength - totalBytesLocal
-        } else {
-          READ_LENGTH
-        }
-
-        readBytes = source.read(sink.buffer, readLen)
+        readBytes = source.read(sink.buffer, READ_LENGTH)
         if (readBytes >= 0) {
           val newTotal = totalBytes.addAndGet(readBytes)
-          // TODO: Why double bytes??
-          callback(newTotal / 2)
+          callback(newTotal)
           sink.flush()
         }
-      } while(readBytes >= 0 && totalBytesLocal < contentLength)
+      } while(readBytes >= 0)
     }
   }
 }
