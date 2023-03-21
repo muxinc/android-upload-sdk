@@ -6,6 +6,12 @@ import java.io.InputStream
 /**
  * InputStream that reads only a slice of the Stream that it decorates, starting from its current
  * read position. Reading, skipping, etc on this stream advances the stream that it decorates.
+ * The first byte of this stream is the current byte of the source stream, and the last is [length]
+ * bytes forward in the stream
+ *
+ * @param length The length of the slice to take. If longer than the backing data, all is consumed
+ * @param closeParentWhenClosed Closes the decorated InputStream if true. If false, the parent
+ *   stream will be left open at the end of the slice (ie, advanced by [length] bytes)
  */
 @JvmSynthetic
 internal fun InputStream.sliceOf(length: Int, closeParentWhenClosed: Boolean = true): InputStream {
@@ -17,7 +23,7 @@ internal fun InputStream.sliceOf(length: Int, closeParentWhenClosed: Boolean = t
  * read position. Reading, skipping, etc on this stream advances the stream that it decorates.
  */
 private class SlicedInputStream(
-  private val originalStream: InputStream?,
+  originalStream: InputStream?,
   private val closeParent: Boolean = true,
   private val sliceLen: Int
 ) : FilterInputStream(originalStream) {
