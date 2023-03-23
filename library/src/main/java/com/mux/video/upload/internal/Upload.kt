@@ -10,12 +10,13 @@ import com.mux.video.upload.internal.network.sliceOf
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
-import okhttp3.MediaType
+import kotlinx.coroutines.channels.consume
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
 import java.io.BufferedInputStream
 import java.io.FileInputStream
 import java.io.InputStream
+import java.util.*
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -46,18 +47,39 @@ internal class UploadJobFactory private constructor() {
     val progressChannel = callbackChannel<MuxUpload.State>()
     val errorChannel = callbackChannel<Exception>()
     val fileStream = BufferedInputStream(FileInputStream(uploadInfo.file))
+    val fileSize = uploadInfo.file.length()
 
     // TODO: This should be done from a factory method, taking a stream and a slice range
-    val chunkWorker = createWorkerForSlice(
-      fileStream = fileStream,
-      chunkSize = uploadInfo.chunkSize,
-      uploadInfo,
-      progressChannel
-    )
-
     val uploadJob = outerScope.async {
       try {
-        val finalState = chunkWorker.doUpload()
+        val startTime = Date().time
+        var bytesSent: Long = 0
+        do {
+          //progressChannel.consume {  } // TODO: Do something like this
+          val chunkResult = createWorkerForSlice(
+            fileStream = fileStream,
+            uploadInfo = uploadInfo,
+            chunkSize = uploadInfo.chunkSize,
+            progressChannel = Channel {} // TODO: Receive this
+          ).doUpload()
+
+          bytesSent += chunkResult.bytesUploaded
+          // TODO: Really we should listen to the chunk's progress and delegate to progressChannel
+          val intermediateProgress = MuxUpload.State(
+            bytesUploaded = bytesSent,
+            totalBytes = fileSize,
+            updatedTime = chunkResult.updatedTime,
+            startTime = startTime
+          )
+          progressChannel.send(intermediateProgress)
+        } while (bytesSent < fileSize)
+
+        val finalState = MuxUpload.State(
+          bytesUploaded = fileSize,
+          totalBytes = fileSize,
+          startTime = startTime,
+          updatedTime = Date().time
+        )
         successChannel.send(finalState)
         Result.success(finalState)
       } catch (e: Exception) {
@@ -90,7 +112,6 @@ internal class UploadJobFactory private constructor() {
     progressChannel = progressChannel,
   )
 
-
   private fun <T> callbackChannel() =
     Channel<T>(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST) { }
 
@@ -121,7 +142,10 @@ internal class UploadJobFactory private constructor() {
         val chunkSize = contentLength
         val httpClient = MuxUploadSdk.httpClient()
         val fileBody =
-          stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), contentLength.toLong()) { bytes ->
+          stream.asCountingRequestBody(
+            videoMimeType.toMediaTypeOrNull(),
+            contentLength.toLong()
+          ) { bytes ->
             val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
             // We update in a job with a delay() to debounce these events, which come very quickly
             val start = updateCallersJob.compareAndSet(
@@ -147,9 +171,17 @@ internal class UploadJobFactory private constructor() {
         val httpResponse = withContext(Dispatchers.IO) { httpClient.newCall(request).execute() }
         logger.v("MuxUpload", "Uploaded $httpResponse")
         val finalState =
-          MuxUpload.State(chunkSize.toLong(), chunkSize.toLong(), startTime, SystemClock.elapsedRealtime())
+          MuxUpload.State(
+            chunkSize.toLong(),
+            chunkSize.toLong(),
+            startTime,
+            SystemClock.elapsedRealtime()
+          )
+
+        // Cancel progress updates and make sure no one is stuck listening for more
         updateCallersJob.get()?.cancel()
         progressChannel.send(finalState)
+        progressChannel.close()
         finalState
       } // supervisorScope
     } // suspend fun doUpload

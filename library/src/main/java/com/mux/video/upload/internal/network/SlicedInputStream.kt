@@ -7,15 +7,16 @@ import java.io.InputStream
  * InputStream that reads only a slice of the Stream that it decorates, starting from its current
  * read position. Reading, skipping, etc on this stream advances the stream that it decorates.
  * The first byte of this stream is the current byte of the source stream, and the last is [length]
- * bytes forward in the stream
+ * bytes forward in the stream.
+ *
+ * If there is less available data than the [length] of the slice, all of the available data will
+ * be read and the stream will be advanced to the end
  *
  * @param length The length of the slice to take. If longer than the backing data, all is consumed
- * @param closeParentWhenClosed Closes the decorated InputStream if true. If false, the parent
- *   stream will be left open at the end of the slice (ie, advanced by [length] bytes)
  */
 @JvmSynthetic
-internal fun InputStream.sliceOf(length: Int, closeParentWhenClosed: Boolean = true): InputStream {
-  return SlicedInputStream(this, closeParentWhenClosed, length);
+internal fun InputStream.sliceOf(length: Int): InputStream {
+  return SlicedInputStream(this, false, length);
 }
 
 /**
