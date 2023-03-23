@@ -111,6 +111,5 @@ private class SlicedInputStream(
     }
   }
 
-  private fun atEnd(): Boolean = readPos >= sliceLen
-
+  private fun atEnd(): Boolean = readPos > sliceLen
 }

@@ -7,6 +7,7 @@ import android.os.Build
 import android.provider.MediaStore
 import android.provider.MediaStore.Video.VideoColumns
 import android.util.Log
+import androidx.core.text.htmlEncode
 import androidx.core.util.Consumer
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
@@ -67,7 +68,7 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
    */
   @Throws
   private suspend fun copyIntoTempFile(contentUri: Uri): File {
-    val basename = contentUri.pathSegments.joinToString(separator = "-")
+    val basename = contentUri.pathSegments.joinToString(separator = "-").htmlEncode()
     val cacheDir = File(app.cacheDir, "mux-upload")
     cacheDir.mkdirs()
     val destFile = File(cacheDir, basename)

@@ -57,15 +57,15 @@ internal class UploadJobFactory private constructor() {
           // The last chunk will almost definitely be smaller than a whole chunk
           val bytesLeft = fileSize - bytesSent
           val chunkSize = if (uploadInfo.chunkSize > bytesLeft) {
-            uploadInfo.chunkSize
-          } else {
             bytesLeft.toInt()
+          } else {
+            uploadInfo.chunkSize
           }
 
           val chunk = ChunkWorker.Chunk(
             contentLength = chunkSize,
             startByte = bytesSent,
-            endByte = bytesSent + chunkSize + 1,
+            endByte = bytesSent + chunkSize,
             totalFileSize = fileSize,
             sliceStream = fileStream.sliceOf(chunkSize)
           )
@@ -149,13 +149,10 @@ internal class UploadJobFactory private constructor() {
       val startTime = SystemClock.elapsedRealtime()
       return supervisorScope {
         val stream = chunk.sliceStream
-        val chunkSize = chunk.contentLength
+        val chunkSize = chunk.endByte - chunk.startByte
         val httpClient = MuxUploadSdk.httpClient()
-        val fileBody =
-          stream.asCountingRequestBody(
-            videoMimeType.toMediaTypeOrNull(),
-            chunkSize.toLong()
-          ) { bytes ->
+        val putBody =
+          stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), chunkSize) { bytes ->
             val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
             // We update in a job with a delay() to debounce these events, which come very quickly
             val start = updateCallersJob.compareAndSet(
@@ -171,13 +168,14 @@ internal class UploadJobFactory private constructor() {
               updateCallersJob.get()?.start()
             }
           } // countingFileBody callback
+
         val request = Request.Builder()
           .url(remoteUri.toString())
-          .put(fileBody)
+          .put(putBody)
           .header("Content-Type", videoMimeType)
           .header(
             "Content-Range",
-            "bytes ${chunk.startByte}-${chunk.endByte - 1}/${chunk.totalFileSize}"
+            "bytes ${chunk.startByte}-${chunk.endByte}/${chunk.totalFileSize}"
           )
           .build()
 
