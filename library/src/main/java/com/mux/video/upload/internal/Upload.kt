@@ -184,10 +184,10 @@ internal class UploadJobFactory private constructor() {
         logger.v("MuxUpload", "Uploaded $httpResponse")
         val finalState =
           MuxUpload.State(
-            chunkSize.toLong(),
-            chunkSize.toLong(),
-            startTime,
-            SystemClock.elapsedRealtime()
+            bytesUploaded = chunkSize,
+            totalBytes = chunkSize,
+            startTime = startTime,
+            updatedTime = SystemClock.elapsedRealtime()
           )
 
         // Cancel progress updates and make sure no one is stuck listening for more
