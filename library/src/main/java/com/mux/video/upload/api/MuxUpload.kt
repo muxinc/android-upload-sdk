@@ -186,7 +186,7 @@ class MuxUpload private constructor(
       return this
     }
 
-    fun chunkSize(sizeBytes: Long): Builder {
+    fun chunkSize(sizeBytes: Int): Builder {
       uploadInfo.update(chunkSize = sizeBytes)
       return this
     }

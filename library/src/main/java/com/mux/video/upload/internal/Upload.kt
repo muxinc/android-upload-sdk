@@ -6,11 +6,16 @@ import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
 import com.mux.video.upload.internal.network.asCountingRequestBody
+import com.mux.video.upload.internal.network.sliceOf
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
+import okhttp3.MediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
-import java.io.File
+import java.io.BufferedInputStream
+import java.io.FileInputStream
+import java.io.InputStream
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -40,16 +45,19 @@ internal class UploadJobFactory private constructor() {
     val successChannel = callbackChannel<MuxUpload.State>()
     val progressChannel = callbackChannel<MuxUpload.State>()
     val errorChannel = callbackChannel<Exception>()
-    val worker = Worker(
-      videoFile = uploadInfo.file,
-      videoMimeType = uploadInfo.videoMimeType,
-      remoteUri = uploadInfo.remoteUri,
-      progressChannel = progressChannel,
+    val fileStream = BufferedInputStream(FileInputStream(uploadInfo.file))
+
+    // TODO: This should be done from a factory method, taking a stream and a slice range
+    val chunkWorker = createWorkerForSlice(
+      fileStream = fileStream,
+      chunkSize = uploadInfo.chunkSize,
+      uploadInfo,
+      progressChannel
     )
 
     val uploadJob = outerScope.async {
       try {
-        val finalState = worker.doUpload()
+        val finalState = chunkWorker.doUpload()
         successChannel.send(finalState)
         Result.success(finalState)
       } catch (e: Exception) {
@@ -69,6 +77,20 @@ internal class UploadJobFactory private constructor() {
     )
   }
 
+  private fun createWorkerForSlice(
+    fileStream: InputStream,
+    chunkSize: Int,
+    uploadInfo: UploadInfo,
+    progressChannel: Channel<MuxUpload.State>
+  ): ChunkWorker = ChunkWorker(
+    stream = fileStream.sliceOf(chunkSize, closeParentWhenClosed = false),
+    contentLength = chunkSize,
+    videoMimeType = uploadInfo.videoMimeType,
+    remoteUri = uploadInfo.remoteUri,
+    progressChannel = progressChannel,
+  )
+
+
   private fun <T> callbackChannel() =
     Channel<T>(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST) { }
 
@@ -77,8 +99,9 @@ internal class UploadJobFactory private constructor() {
    * upload completes. The worker is only responsible for doing the upload and accurately reporting
    * state/errors. Owning objects handle errors, delegate
    */
-  internal class Worker(
-    val videoFile: File,
+  internal class ChunkWorker(
+    val stream: InputStream,
+    val contentLength: Int,
     val videoMimeType: String,
     val remoteUri: Uri,
     val progressChannel: Channel<MuxUpload.State>,
@@ -95,24 +118,25 @@ internal class UploadJobFactory private constructor() {
     suspend fun doUpload(): MuxUpload.State {
       val startTime = SystemClock.elapsedRealtime()
       return supervisorScope {
-        val fileSize = videoFile.length()
+        val chunkSize = contentLength
         val httpClient = MuxUploadSdk.httpClient()
-        val fileBody = videoFile.asCountingRequestBody(videoMimeType) { bytes ->
-          val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
-          // We update in a job with a delay() to debounce these events, which come very quickly
-          val start = updateCallersJob.compareAndSet(
-            null, newUpdateCallersJob(
-              uploadedBytes = bytes,
-              totalBytes = fileSize,
-              startTime = startTime,
-              endTime = elapsedRealtime,
-              coroutineScope = this
+        val fileBody =
+          stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), contentLength.toLong()) { bytes ->
+            val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
+            // We update in a job with a delay() to debounce these events, which come very quickly
+            val start = updateCallersJob.compareAndSet(
+              null, newUpdateCallersJob(
+                uploadedBytes = bytes,
+                totalBytes = chunkSize.toLong(),
+                startTime = startTime,
+                endTime = elapsedRealtime,
+                coroutineScope = this
+              )
             )
-          )
-          if (start) {
-            updateCallersJob.get()?.start()
-          }
-        } // countingFileBody callback
+            if (start) {
+              updateCallersJob.get()?.start()
+            }
+          } // countingFileBody callback
         val request = Request.Builder()
           .url(remoteUri.toString())
           .put(fileBody)
@@ -123,7 +147,7 @@ internal class UploadJobFactory private constructor() {
         val httpResponse = withContext(Dispatchers.IO) { httpClient.newCall(request).execute() }
         logger.v("MuxUpload", "Uploaded $httpResponse")
         val finalState =
-          MuxUpload.State(fileSize, fileSize, startTime, SystemClock.elapsedRealtime())
+          MuxUpload.State(chunkSize.toLong(), chunkSize.toLong(), startTime, SystemClock.elapsedRealtime())
         updateCallersJob.get()?.cancel()
         progressChannel.send(finalState)
         finalState
