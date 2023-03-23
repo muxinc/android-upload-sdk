@@ -10,7 +10,6 @@ import com.mux.video.upload.internal.network.sliceOf
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.consume
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
 import java.io.BufferedInputStream
@@ -55,11 +54,24 @@ internal class UploadJobFactory private constructor() {
         val startTime = Date().time
         var bytesSent: Long = 0
         do {
-          //progressChannel.consume {  } // TODO: Do something like this
+          // The last chunk will almost definitely be smaller than a whole chunk
+          val bytesLeft = fileSize - bytesSent
+          val chunkSize = if (uploadInfo.chunkSize > bytesLeft) {
+            uploadInfo.chunkSize
+          } else {
+            bytesLeft.toInt()
+          }
+
+          val chunk = ChunkWorker.Chunk(
+            contentLength = chunkSize,
+            startByte = bytesSent,
+            endByte = bytesSent + chunkSize + 1,
+            totalFileSize = fileSize,
+            sliceStream = fileStream.sliceOf(chunkSize)
+          )
           val chunkResult = createWorkerForSlice(
-            fileStream = fileStream,
+            chunk = chunk,
             uploadInfo = uploadInfo,
-            chunkSize = uploadInfo.chunkSize,
             progressChannel = Channel {} // TODO: Receive this
           ).doUpload()
 
@@ -100,13 +112,11 @@ internal class UploadJobFactory private constructor() {
   }
 
   private fun createWorkerForSlice(
-    fileStream: InputStream,
-    chunkSize: Int,
+    chunk: ChunkWorker.Chunk,
     uploadInfo: UploadInfo,
     progressChannel: Channel<MuxUpload.State>
   ): ChunkWorker = ChunkWorker(
-    stream = fileStream.sliceOf(chunkSize, closeParentWhenClosed = false),
-    contentLength = chunkSize,
+    chunk = chunk,
     videoMimeType = uploadInfo.videoMimeType,
     remoteUri = uploadInfo.remoteUri,
     progressChannel = progressChannel,
@@ -121,8 +131,7 @@ internal class UploadJobFactory private constructor() {
    * state/errors. Owning objects handle errors, delegate
    */
   internal class ChunkWorker(
-    val stream: InputStream,
-    val contentLength: Int,
+    val chunk: Chunk,
     val videoMimeType: String,
     val remoteUri: Uri,
     val progressChannel: Channel<MuxUpload.State>,
@@ -139,12 +148,13 @@ internal class UploadJobFactory private constructor() {
     suspend fun doUpload(): MuxUpload.State {
       val startTime = SystemClock.elapsedRealtime()
       return supervisorScope {
-        val chunkSize = contentLength
+        val stream = chunk.sliceStream
+        val chunkSize = chunk.contentLength
         val httpClient = MuxUploadSdk.httpClient()
         val fileBody =
           stream.asCountingRequestBody(
             videoMimeType.toMediaTypeOrNull(),
-            contentLength.toLong()
+            chunkSize.toLong()
           ) { bytes ->
             val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
             // We update in a job with a delay() to debounce these events, which come very quickly
@@ -164,7 +174,11 @@ internal class UploadJobFactory private constructor() {
         val request = Request.Builder()
           .url(remoteUri.toString())
           .put(fileBody)
-          //.put(videoFile.asRequestBody(videoMimeType.toMediaType()))
+          .header("Content-Type", videoMimeType)
+          .header(
+            "Content-Range",
+            "bytes ${chunk.startByte}-${chunk.endByte - 1}/${chunk.totalFileSize}"
+          )
           .build()
 
         logger.v("MuxUpload", "Uploading with request $request")
@@ -201,5 +215,13 @@ internal class UploadJobFactory private constructor() {
         updateCallersJob.set(null)
       }
     }
+
+    internal data class Chunk(
+      val startByte: Long,
+      val endByte: Long,
+      val totalFileSize: Long,
+      val contentLength: Int,
+      val sliceStream: InputStream
+    )
   } // class Worker
 }
