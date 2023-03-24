@@ -53,39 +53,43 @@ internal class UploadJobFactory private constructor() {
       try {
         val startTime = Date().time
         var bytesSent: Long = 0
-        do {
-          // The last chunk will almost definitely be smaller than a whole chunk
-          val bytesLeft = fileSize - bytesSent
-          val chunkSize = if (uploadInfo.chunkSize > bytesLeft) {
-            bytesLeft.toInt()
-          } else {
-            uploadInfo.chunkSize
-          }
+        try {
+          do {
+            // The last chunk will almost definitely be smaller than a whole chunk
+            val bytesLeft = fileSize - bytesSent
+            val chunkSize = if (uploadInfo.chunkSize > bytesLeft) {
+              bytesLeft.toInt()
+            } else {
+              uploadInfo.chunkSize
+            }
 
-          val chunk = ChunkWorker.Chunk(
-            contentLength = chunkSize,
-            startByte = bytesSent,
-            endByte = bytesSent + chunkSize,
-            totalFileSize = fileSize,
-            sliceStream = fileStream//.sliceOf(chunkSize)
-          )
-          val chunkResult = createWorkerForSlice(
-            chunk = chunk,
-            uploadInfo = uploadInfo,
-            progressChannel = Channel {} // TODO: Receive this
-          ).doUpload()
+            val chunk = ChunkWorker.Chunk(
+              contentLength = chunkSize,
+              startByte = bytesSent,
+              endByte = bytesSent + chunkSize,
+              totalFileSize = fileSize,
+              sliceStream = fileStream//.sliceOf(chunkSize)
+            )
+            val chunkResult = createWorkerForSlice(
+              chunk = chunk,
+              uploadInfo = uploadInfo,
+              progressChannel = Channel {} // TODO: Receive this
+            ).doUpload()
 
-          bytesSent += chunkResult.bytesUploaded
-          // TODO: Really we should listen to the chunk's progress and delegate to progressChannel
-          val intermediateProgress = MuxUpload.State(
-            bytesUploaded = bytesSent,
-            totalBytes = fileSize,
-            updatedTime = chunkResult.updatedTime,
-            startTime = startTime
-          )
-          progressChannel.send(intermediateProgress)
-        } while (bytesSent < fileSize)
-
+            bytesSent += chunkResult.bytesUploaded
+            // TODO: Really we should listen to the chunk's progress and delegate to progressChannel
+            val intermediateProgress = MuxUpload.State(
+              bytesUploaded = bytesSent,
+              totalBytes = fileSize,
+              updatedTime = chunkResult.updatedTime,
+              startTime = startTime
+            )
+            progressChannel.send(intermediateProgress)
+          } while (bytesSent < fileSize)
+        } finally {
+          @Suppress("BlockingMethodInNonBlockingContext") // nothing we do blocks on close
+          fileStream.close()
+        }
         val finalState = MuxUpload.State(
           bytesUploaded = fileSize,
           totalBytes = fileSize,
@@ -172,6 +176,7 @@ internal class UploadJobFactory private constructor() {
         val request = Request.Builder()
           .url(remoteUri.toString())
           .put(putBody)
+          //.header("Content-Length", /*chunk.contentLength.toString()*/chunk.totalFileSize.toString())
           .header("Content-Type", videoMimeType)
           .header(
             "Content-Range",

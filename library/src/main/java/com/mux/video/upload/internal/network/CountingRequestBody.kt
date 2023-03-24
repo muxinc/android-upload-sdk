@@ -35,16 +35,6 @@ internal fun File.asCountingRequestBody(
 }
 
 /**
- * RequestBody based on a file that reports the number of bytes written at regular intervals until
- * the file has been fully uploaded.
- */
-internal fun File.asCountingRequestBody(
-  contentType: String?,
-  callback: (Long) -> Unit
-): RequestBody =
-  asCountingRequestBody(contentType?.toMediaType(), callback)
-
-/**
  * A RequestBody that reads its content from a file and reports its progress (in bytes) as it goes
  */
 private class CountingRequestBody constructor(
@@ -67,17 +57,21 @@ private class CountingRequestBody constructor(
 
   override fun writeTo(sink: BufferedSink) {
     var tmpcnt = 0
-    inputStream.source().use { source ->
-      var readBytes: Long
-      do {
-        readBytes = source.read(sink.buffer, READ_LENGTH)
-        Log.v("fuck", "${tmpcnt++} writeTo() read $readBytes from src")
-        if (readBytes >= 0) {
-          val newTotal = totalBytes.addAndGet(readBytes)
-          callback(newTotal)
-        }
-      } while(readBytes >= 0)
-      sink.flush()
+    sink.use { output ->
+      inputStream.source().use { source ->
+        var readBytes: Long
+        do {
+          readBytes = source.read(output.buffer, READ_LENGTH)
+          if (readBytes >= 0) {
+            val newTotal = totalBytes.addAndGet(readBytes)
+            callback(newTotal)
+            //output.flush()
+          }
+          Log.v("fuck", "${tmpcnt++} writeTo() read $readBytes from src")
+          Log.v("fuck", "(That's ${totalBytes.get()} / $contentLength btw)")
+        } while (readBytes >= 0 && totalBytes.get() < contentLength)
+        Log.v("fuck", "total read: ${totalBytes.get()} (compare with contentLength $contentLength")
+      }
     }
   }
 }
