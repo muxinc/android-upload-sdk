@@ -46,6 +46,7 @@ private class CountingRequestBody constructor(
 ) : RequestBody() {
   // TODO <em>: this doesn't need to be atomic
   private var totalBytes = AtomicLong(0)
+  private var dead = false
 
   companion object {
     const val READ_LENGTH: Long = 256 * 1024
@@ -55,23 +56,39 @@ private class CountingRequestBody constructor(
 
   override fun contentType(): MediaType? = mediaType
 
+  override fun isOneShot(): Boolean = true
+
   override fun writeTo(sink: BufferedSink) {
+    Log.w("fuck", "writeTo called")
+//    sink.use { output ->
+//      inputStream.source().use { fileStream ->
+//        output.w
+//      }
+//    }
     var tmpcnt = 0
-    //sink.use { sink ->
+    if (dead) {
+      Log.d("fuck", "writeTo called on dead object");
+      Thread.dumpStack()
+      return
+    }
+    sink.use { sink ->
       inputStream.source().use { source ->
         var readBytes: Long
         do {
+//          readBytes = source.read(sink.buffer, contentLength)
           readBytes = source.read(sink.buffer, READ_LENGTH)
           if (readBytes >= 0) {
             val newTotal = totalBytes.addAndGet(readBytes)
             callback(newTotal)
-            sink.flush()
+            //sink.flush()
           }
-          //Log.v("fuck", "${tmpcnt++} writeTo() read $readBytes from src")
+          Log.v("fuck", "${tmpcnt++} writeTo() read $readBytes from src")
           //Log.v("fuck", "(That's ${totalBytes.get()} / $contentLength btw)")
         } while (readBytes >= 0 && totalBytes.get() < contentLength)
         Log.v("fuck", "total read: ${totalBytes.get()} (compare with contentLength $contentLength")
+
+        dead = true
       }
-    //}
+    }
   }
 }

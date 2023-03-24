@@ -45,8 +45,8 @@ internal class UploadJobFactory private constructor() {
     val successChannel = callbackChannel<MuxUpload.State>()
     val progressChannel = callbackChannel<MuxUpload.State>()
     val errorChannel = callbackChannel<Exception>()
-    //val fileStream = BufferedInputStream(FileInputStream(uploadInfo.file))
-    val fileStream = FileInputStream(uploadInfo.file)
+    val fileStream = BufferedInputStream(FileInputStream(uploadInfo.file))
+    //val fileStream = FileInputStream(uploadInfo.file)
     val fileSize = uploadInfo.file.length()
 
     // TODO: This should be done from a factory method, taking a stream and a slice range
