@@ -31,6 +31,8 @@ internal fun createUploadJob(upload: UploadInfo): UploadInfo {
 /**
  * Creates upload coroutine jobs, which handle uploading a single file and reporting/delegating
  * the state of the upload. To cancel, just call [Deferred.cancel]
+ *
+ * Create instances of this class via [createUploadJob]
  */
 internal class UploadJobFactory private constructor() {
   private val logger get() = MuxUploadSdk.logger
@@ -66,7 +68,7 @@ internal class UploadJobFactory private constructor() {
             val chunk = ChunkWorker.Chunk(
               contentLength = chunkSize,
               startByte = bytesSent,
-              endByte = bytesSent + chunkSize,
+              endByte = bytesSent + chunkSize - 1,
               totalFileSize = fileSize,
               sliceStream = fileStream.sliceOf(chunkSize)
             )
@@ -153,7 +155,7 @@ internal class UploadJobFactory private constructor() {
       val startTime = SystemClock.elapsedRealtime()
       return supervisorScope {
         val stream = chunk.sliceStream
-        val chunkSize = chunk.endByte - chunk.startByte
+        val chunkSize = chunk.endByte - chunk.startByte + 1
         val httpClient = MuxUploadSdk.httpClient()
         val putBody =
           stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), chunkSize) { bytes ->
