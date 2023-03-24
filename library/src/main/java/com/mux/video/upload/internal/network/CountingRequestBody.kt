@@ -57,21 +57,21 @@ private class CountingRequestBody constructor(
 
   override fun writeTo(sink: BufferedSink) {
     var tmpcnt = 0
-    sink.use { output ->
+    //sink.use { sink ->
       inputStream.source().use { source ->
         var readBytes: Long
         do {
-          readBytes = source.read(output.buffer, READ_LENGTH)
+          readBytes = source.read(sink.buffer, READ_LENGTH)
           if (readBytes >= 0) {
             val newTotal = totalBytes.addAndGet(readBytes)
             callback(newTotal)
-            //output.flush()
+            sink.flush()
           }
-          Log.v("fuck", "${tmpcnt++} writeTo() read $readBytes from src")
-          Log.v("fuck", "(That's ${totalBytes.get()} / $contentLength btw)")
+          //Log.v("fuck", "${tmpcnt++} writeTo() read $readBytes from src")
+          //Log.v("fuck", "(That's ${totalBytes.get()} / $contentLength btw)")
         } while (readBytes >= 0 && totalBytes.get() < contentLength)
         Log.v("fuck", "total read: ${totalBytes.get()} (compare with contentLength $contentLength")
       }
-    }
+    //}
   }
 }
