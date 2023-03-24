@@ -75,14 +75,13 @@ private class CountingRequestBody constructor(
       inputStream.source().use { source ->
         var readBytes: Long
         do {
-//          readBytes = source.read(sink.buffer, contentLength)
           readBytes = source.read(sink.buffer, READ_LENGTH)
           if (readBytes >= 0) {
             val newTotal = totalBytes.addAndGet(readBytes)
             callback(newTotal)
             //sink.flush()
           }
-          Log.v("fuck", "${tmpcnt++} writeTo() read $readBytes from src")
+          //Log.v("fuck", "${tmpcnt++} writeTo() read $readBytes from src")
           //Log.v("fuck", "(That's ${totalBytes.get()} / $contentLength btw)")
         } while (readBytes >= 0 && totalBytes.get() < contentLength)
         Log.v("fuck", "total read: ${totalBytes.get()} (compare with contentLength $contentLength")

@@ -63,13 +63,12 @@ internal class UploadJobFactory private constructor() {
             } else {
               uploadInfo.chunkSize
             }
-
             val chunk = ChunkWorker.Chunk(
               contentLength = chunkSize,
               startByte = bytesSent,
               endByte = bytesSent + chunkSize,
               totalFileSize = fileSize,
-              sliceStream = fileStream//.sliceOf(chunkSize)
+              sliceStream = fileStream.sliceOf(chunkSize)
             )
             val chunkResult = createWorkerForSlice(
               chunk = chunk,
@@ -157,13 +156,13 @@ internal class UploadJobFactory private constructor() {
         val chunkSize = chunk.endByte - chunk.startByte
         val httpClient = MuxUploadSdk.httpClient()
         val putBody =
-          stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), /*chunkSize*/chunk.totalFileSize) { bytes ->
+          stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), chunkSize) { bytes ->
             val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
             // We update in a job with a delay() to debounce these events, which come very quickly
             val start = updateCallersJob.compareAndSet(
               null, newUpdateCallersJob(
                 uploadedBytes = bytes,
-                totalBytes = chunkSize.toLong(),
+                totalBytes = chunkSize,
                 startTime = startTime,
                 endTime = elapsedRealtime,
                 coroutineScope = this
