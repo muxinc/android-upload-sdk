@@ -1,6 +1,7 @@
 package com.mux.video.upload.internal.network
 
 import android.renderscript.ScriptGroup.Input
+import android.util.Log
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody
@@ -65,16 +66,18 @@ private class CountingRequestBody constructor(
   override fun contentType(): MediaType? = mediaType
 
   override fun writeTo(sink: BufferedSink) {
+    var tmpcnt = 0
     inputStream.source().use { source ->
       var readBytes: Long
       do {
         readBytes = source.read(sink.buffer, READ_LENGTH)
+        Log.v("fuck", "${tmpcnt++} writeTo() read $readBytes from src")
         if (readBytes >= 0) {
           val newTotal = totalBytes.addAndGet(readBytes)
           callback(newTotal)
-          sink.flush()
         }
       } while(readBytes >= 0)
+      sink.flush()
     }
   }
 }

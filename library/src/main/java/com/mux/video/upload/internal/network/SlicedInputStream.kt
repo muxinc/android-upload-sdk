@@ -25,7 +25,7 @@ internal fun InputStream.sliceOf(length: Int): InputStream {
  */
 private class SlicedInputStream(
   originalStream: InputStream?,
-  private val closeParent: Boolean = true,
+  private val closeParent: Boolean = false,
   private val sliceLen: Int
 ) : FilterInputStream(originalStream) {
 
@@ -47,7 +47,7 @@ private class SlicedInputStream(
     } else {
       val data = super.read()
       readPos++
-      data
+      return data
     }
   }
 
@@ -60,9 +60,10 @@ private class SlicedInputStream(
         val smallerBuf = ByteArray((sliceLen - readPos).toInt())
         val readBytes = super.read(smallerBuf)
         smallerBuf.copyInto(bytes)
+        readPos += readBytes
         return readBytes
       } else {
-        return super.read(bytes)
+        return super.read(bytes).also { readPos += it }
       }
     }
   }
@@ -78,9 +79,10 @@ private class SlicedInputStream(
         val smallerBuf = ByteArray((sliceLen - readPos).toInt())
         val readBytes = super.read(smallerBuf)
         smallerBuf.copyInto(b, off)
+        readPos += readBytes
         return readBytes
       } else {
-        return super.read(b, off, len)
+        return super.read(b, off, len).also { readPos += it }
       }
     }
   }
@@ -88,11 +90,10 @@ private class SlicedInputStream(
   override fun skip(n: Long): Long {
     return if(n + readPos >= sliceLen) {
       // Don't skip past the end of the slice
-      readPos = sliceLen.toLong()
       // Skip to exactly the end of the slice
-      super.skip(sliceLen - readPos)
+      super.skip(sliceLen - readPos).also { readPos += it }
     } else {
-      super.skip(n)
+      super.skip(n).also { readPos += it }
     }
   }
 
@@ -111,5 +112,5 @@ private class SlicedInputStream(
     }
   }
 
-  private fun atEnd(): Boolean = readPos > sliceLen
+  private fun atEnd(): Boolean = readPos >= sliceLen // TODO: Is this off by one?
 }
