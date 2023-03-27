@@ -55,6 +55,7 @@ internal class UploadJobFactory private constructor() {
       try {
         val startTime = Date().time
         var totalBytesSent: Long = 0
+        val chunkBuffer = ByteArray(uploadInfo.chunkSize)
           do {
             // The last chunk will almost definitely be smaller than a whole chunk
             val bytesLeft = fileSize - totalBytesSent
@@ -68,7 +69,7 @@ internal class UploadJobFactory private constructor() {
               startByte = totalBytesSent,
               endByte = totalBytesSent + chunkSize - 1,
               totalFileSize = fileSize,
-              sliceStream = fileStream.sliceOf(chunkSize)
+              sliceData = chunkBuffer,
             )
             val chunkResult = createWorkerForSlice(chunk, uploadInfo, callbackChannel()).doUpload()
 
@@ -146,9 +147,10 @@ internal class UploadJobFactory private constructor() {
     suspend fun doUpload(): MuxUpload.State {
       val startTime = SystemClock.elapsedRealtime()
       return supervisorScope {
-        val stream = chunk.sliceStream
+        val stream = chunk.sliceData
         val chunkSize = chunk.endByte - chunk.startByte + 1
         val httpClient = MuxUploadSdk.httpClient()
+
         val putBody =
           stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), chunkSize) { bytes ->
             val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
@@ -218,7 +220,31 @@ internal class UploadJobFactory private constructor() {
       val endByte: Long,
       val totalFileSize: Long,
       val contentLength: Int,
-      val sliceStream: InputStream
-    )
+      val sliceData: ByteArray,
+    ) {
+      override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+
+        other as Chunk
+
+        if (startByte != other.startByte) return false
+        if (endByte != other.endByte) return false
+        if (totalFileSize != other.totalFileSize) return false
+        if (contentLength != other.contentLength) return false
+        if (!sliceData.contentEquals(other.sliceData)) return false
+
+        return true
+      }
+
+      override fun hashCode(): Int {
+        var result = startByte.hashCode()
+        result = 31 * result + endByte.hashCode()
+        result = 31 * result + totalFileSize.hashCode()
+        result = 31 * result + contentLength
+        result = 31 * result + sliceData.contentHashCode()
+        return result
+      }
+    }
   } // class Worker
 }
