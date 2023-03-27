@@ -48,6 +48,8 @@ object MuxUploadSdk {
       // these are high timeouts even uploading large files, but it's better to err on the high side
       .callTimeout(10, TimeUnit.MINUTES)  // 10 minutes per chunk
       .writeTimeout(1, TimeUnit.MINUTES) // 1 minute per packet
+      .followRedirects(false)
+      .followSslRedirects(false)
       .build()
   }
 
