@@ -44,7 +44,7 @@ private class CountingRequestBody constructor(
 
   override fun contentType(): MediaType? = mediaType
 
-  //override fun isOneShot(): Boolean = true
+  override fun isOneShot(): Boolean = true
 
   override fun writeTo(sink: BufferedSink) {
     Log.w("fuck", "writeTo called")
@@ -64,9 +64,23 @@ private class CountingRequestBody constructor(
         var readBytes: Int = 0
         val readBuf = ByteArray(size = READ_LENGTH)
         do {
-          //readBytes = source.read(sink.buffer, READ_LENGTH)
-          output.write(readBuf, 0, READ_LENGTH)
-          readBytes += READ_LENGTH
+          val realReadLength = if (readBytes + READ_LENGTH > contentLength) {
+            // There's not enough data left for the whole READ_LENGTH, so read the remainder
+            (contentLength - readBytes).toInt()
+          } else {
+            // There's enough to fill the entire read buffer
+            READ_LENGTH
+          }
+
+          bodyData.copyInto(
+            destination = readBuf,
+            startIndex = readBytes,
+            endIndex = readBytes + realReadLength,
+            destinationOffset = 0,
+          )
+
+          output.write(readBuf, 0, realReadLength)
+          readBytes += realReadLength
           if (readBytes >= 0) {
             val newTotal = totalBytes.addAndGet(readBytes)
             callback(newTotal.toLong())
