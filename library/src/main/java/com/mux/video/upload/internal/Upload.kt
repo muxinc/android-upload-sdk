@@ -111,6 +111,7 @@ internal class UploadJobFactory private constructor() {
     progressChannel: Channel<MuxUpload.State>
   ): ChunkWorker = ChunkWorker(
     chunk = chunk,
+    maxRetries = uploadInfo.retriesPerChunk,
     videoMimeType = uploadInfo.videoMimeType,
     remoteUri = uploadInfo.remoteUri,
     progressChannel = progressChannel,

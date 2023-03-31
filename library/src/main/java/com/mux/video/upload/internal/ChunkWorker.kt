@@ -20,6 +20,7 @@ import kotlin.coroutines.coroutineContext
  */
 internal class ChunkWorker(
   val chunk: Chunk,
+  val maxRetries: Int,
   val videoMimeType: String,
   val remoteUri: Uri,
   val progressChannel: Channel<MuxUpload.State>,
@@ -27,6 +28,9 @@ internal class ChunkWorker(
   companion object {
     // Progress updates are only sent once in this time frame. The latest event is always sent
     const val EVENT_DEBOUNCE_DELAY_MS: Long = 100
+
+    val ACCEPTABLE_ERROR_CODES = listOf(200, 201, 202, 204, 308)
+    val RETRYABLE_ERROR_CODES = listOf(408, 502, 503, 504)
   }
 
   private val logger get() = MuxUploadSdk.logger
@@ -48,16 +52,11 @@ internal class ChunkWorker(
       val httpClient = MuxUploadSdk.httpClient()
 
       val putBody =
-        stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), chunkSize) // {}
-//          {
-        //Log.d("fuck", "CountingBody callback called with $it from ${Thread.currentThread().name}")
-//          }
-        { bytes ->
+        stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), chunkSize) { bytes ->
           updateCallersScope.launch {
-            val elapsedRealtime =
-              SystemClock.elapsedRealtime() // Do this before switching threads
+            val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
             mostRecentUploadState.set(RecentState(elapsedRealtime, bytes))
-            synchronized(this) {
+            synchronized(this) { // Synchronize checking/creating update jobs
               if (updateCallersJob == null) {
                 // Update callers at most once every EVENT_DEBOUNCE_DELAY, giving most recent val
                 updateCallersJob = updateCallersScope.async {
@@ -71,30 +70,17 @@ internal class ChunkWorker(
                       updatedTime = elapsedRealtime,
                     ) // MuxUpload.State
                   ) // progressChannel.trySend
+                  // synchronize nulling out the update job, since we're on a different worker now
                   synchronized(this) { updateCallersJob = null }
                 } // updateCallersJob = async ()
               } // if (updateCallersJob == null)
             } // synchronized(this)
           }
-          // We update in a job with a delay() to debounce these events, which come very quickly
-//            val start = updateCallersJob.compareAndSet(
-//              null, newUpdateCallersJob(
-//                uploadedBytes = bytes,
-//                totalBytes = chunkSize,
-//                startTime = startTime,
-//                endTime = elapsedRealtime,
-//                coroutineScope = this
-//              )
-//            )
-//            if (start) {
-//              updateCallersJob.get()?.start()
-//            }
         } // stream.asCountingRequestBody
 
       val request = Request.Builder()
         .url(remoteUri.toString())
         .put(putBody)
-        //.header("Content-Length", /*chunk.contentLength.toString()*/chunk.totalFileSize.toString())
         .header("Content-Type", videoMimeType)
         .header(
           "Content-Range",
@@ -108,38 +94,18 @@ internal class ChunkWorker(
         httpClient.newCall(request).execute()
       }
       logger.v("MuxUpload", "Chunk Response: $httpResponse")
-      val finalState =
-        MuxUpload.State(
+      val finalState = MuxUpload.State(
           bytesUploaded = chunkSize,
           totalBytes = chunkSize,
           startTime = startTime,
           updatedTime = SystemClock.elapsedRealtime()
         )
-
       // Cancel progress updates and make sure no one is stuck listening for more
       updateCallersJob?.cancel()
-      //updateCallersScope.cancel()
       progressChannel.trySend(finalState)
-      //progressChannel.close() // TODO: I don't think we need this line
       finalState
     } // supervisorScope
   } // suspend fun doUpload
-
-  private fun newUpdateCallersJob(
-    uploadedBytes: Long,
-    totalBytes: Long,
-    startTime: Long,
-    endTime: Long,
-    coroutineScope: CoroutineScope
-  ): Job {
-    return coroutineScope.launch(Dispatchers.Default, CoroutineStart.LAZY) {
-      // Debounce the progress updates, as the file can be read quite quickly
-      delay(EVENT_DEBOUNCE_DELAY_MS)
-      val state = MuxUpload.State(uploadedBytes, totalBytes, startTime, endTime)
-      progressChannel.trySend(state)
-      updateCallersJob = null
-    }
-  }
 
   private data class RecentState(val updatedTime: Long, val uploadBytes: Long)
 
