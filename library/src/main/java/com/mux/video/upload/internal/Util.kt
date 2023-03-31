@@ -1,6 +1,7 @@
 package com.mux.video.upload.internal
 
 import android.os.Looper
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Asserts that we are on the main thread, crashing if not.

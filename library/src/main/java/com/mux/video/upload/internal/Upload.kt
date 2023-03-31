@@ -18,6 +18,7 @@ import java.io.FileInputStream
 import java.io.InputStream
 import java.util.*
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.coroutineContext
 
 /**
  * Creates a new Upload Job for this
@@ -142,11 +143,17 @@ internal class UploadJobFactory private constructor() {
     }
 
     private val logger get() = MuxUploadSdk.logger
-    private val updateCallersJob: AtomicReference<Job> = AtomicReference(null)
+
+    // updates from the request body come quickly, we have to debounce the events
+    private val mostRecentUploadState: AtomicReference<RecentState> =
+      AtomicReference(RecentState(0,0))
+    private var updateCallersJob: Job? = null
 
     @Throws
     suspend fun doUpload(): MuxUpload.State {
       Log.d("fuck", "doUpload called on ${Thread.currentThread().name}")
+      val updateCallersScope: CoroutineScope = CoroutineScope(coroutineContext)
+
       val startTime = SystemClock.elapsedRealtime()
       return supervisorScope {
         val stream = chunk.sliceData
@@ -159,21 +166,30 @@ internal class UploadJobFactory private constructor() {
             //Log.d("fuck", "CountingBody callback called with $it from ${Thread.currentThread().name}")
 //          }
           { bytes ->
-            val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
-            // We update in a job with a delay() to debounce these events, which come very quickly
-            val start = false
-              updateCallersJob.compareAndSet(
-              null, newUpdateCallersJob(
-                uploadedBytes = bytes,
-                totalBytes = chunkSize,
-                startTime = startTime,
-                endTime = elapsedRealtime,
-                coroutineScope = this
-              )
-            )
-            if (start) {
-              updateCallersJob.get()?.start()
+            updateCallersScope.launch {
+              val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
+              mostRecentUploadState.set(RecentState(elapsedRealtime, bytes))
+              synchronized(this) {
+                if (updateCallersJob == null) {
+                  updateCallersJob = async(updateCallersScope.coroutineContext) {
+
+                  }
+                }
+              }
             }
+            // We update in a job with a delay() to debounce these events, which come very quickly
+//            val start = updateCallersJob.compareAndSet(
+//              null, newUpdateCallersJob(
+//                uploadedBytes = bytes,
+//                totalBytes = chunkSize,
+//                startTime = startTime,
+//                endTime = elapsedRealtime,
+//                coroutineScope = this
+//              )
+//            )
+//            if (start) {
+//              updateCallersJob.get()?.start()
+//            }
           } // stream.asCountingRequestBody
 
         val request = Request.Builder()
@@ -202,7 +218,7 @@ internal class UploadJobFactory private constructor() {
           )
 
         // Cancel progress updates and make sure no one is stuck listening for more
-        updateCallersJob.get()?.cancel()
+        updateCallersJob?.cancel()
         progressChannel.trySend(finalState)
         //progressChannel.close()
         finalState
@@ -221,9 +237,11 @@ internal class UploadJobFactory private constructor() {
         delay(EVENT_DEBOUNCE_DELAY_MS)
         val state = MuxUpload.State(uploadedBytes, totalBytes, startTime, endTime)
         progressChannel.trySend(state)
-        updateCallersJob.set(null)
+        updateCallersJob = null
       }
     }
+
+    private data class RecentState(val updatedTime: Long, val uploadBytes: Long)
 
     internal data class Chunk(
       val startByte: Long,
