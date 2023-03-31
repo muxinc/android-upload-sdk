@@ -51,7 +51,7 @@ internal class UploadJobFactory private constructor() {
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
         do {
           // The last chunk will almost definitely be smaller than a whole chunk
-          val bytesLeft = fileSize - totalBytesSent
+          val bytesLeft = fileSize - totalBytesSent + 1
           val chunkSize = if (uploadInfo.chunkSize > bytesLeft) {
             bytesLeft.toInt()
           } else {
@@ -75,7 +75,7 @@ internal class UploadJobFactory private constructor() {
             updatedTime = chunkResult.updatedTime,
             startTime = startTime
           )
-          progressChannel.trySend(intermediateProgress)
+          progressChannel.send(intermediateProgress)
           Log.d("fuck", "Looped once in the chunk loop")
         } while (totalBytesSent < fileSize)
         val finalState = MuxUpload.State(
@@ -84,7 +84,7 @@ internal class UploadJobFactory private constructor() {
           startTime = startTime,
           updatedTime = Date().time
         )
-        successChannel.trySend(finalState)
+        successChannel.send(finalState)
         Result.success(finalState)
       } catch (e: Exception) {
         MuxUploadSdk.logger.e("MuxUpload", "Upload of ${uploadInfo.file} failed", e)
