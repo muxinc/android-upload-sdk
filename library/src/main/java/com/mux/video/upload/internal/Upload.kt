@@ -152,7 +152,7 @@ internal class UploadJobFactory private constructor() {
     @Throws
     suspend fun doUpload(): MuxUpload.State {
       Log.d("fuck", "doUpload called on ${Thread.currentThread().name}")
-      val updateCallersScope: CoroutineScope = CoroutineScope(coroutineContext)
+      val updateCallersScope = CoroutineScope(coroutineContext)
 
       val startTime = SystemClock.elapsedRealtime()
       return supervisorScope {
@@ -172,7 +172,8 @@ internal class UploadJobFactory private constructor() {
               mostRecentUploadState.set(RecentState(elapsedRealtime, bytes))
               synchronized(this) {
                 if (updateCallersJob == null) {
-                  updateCallersJob = async(updateCallersScope.coroutineContext) {
+                  // Update callers at most once every EVENT_DEBOUNCE_DELAY, giving most recent val
+                  updateCallersJob = updateCallersScope.async {
                     delay(EVENT_DEBOUNCE_DELAY_MS)
                     // todo: Should this be send()?
                     progressChannel.trySend(
@@ -231,8 +232,9 @@ internal class UploadJobFactory private constructor() {
 
         // Cancel progress updates and make sure no one is stuck listening for more
         updateCallersJob?.cancel()
+        updateCallersScope.cancel()
         progressChannel.trySend(finalState)
-        //progressChannel.close()
+        //progressChannel.close() // TODO: I don't think we need this line
         finalState
       } // supervisorScope
     } // suspend fun doUpload
