@@ -155,25 +155,26 @@ internal class UploadJobFactory private constructor() {
 
         val putBody =
           stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), chunkSize) // {}
-          {
+//          {
             //Log.d("fuck", "CountingBody callback called with $it from ${Thread.currentThread().name}")
-          }
-//          { bytes ->
-//            val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
-//            // We update in a job with a delay() to debounce these events, which come very quickly
-//            val start = updateCallersJob.compareAndSet(
-//              null, newUpdateCallersJob(
-//                uploadedBytes = bytes,
-//                totalBytes = chunkSize,
-//                startTime = startTime,
-//                endTime = elapsedRealtime,
-//                coroutineScope = this
-//              )
-//            )
-//            if (start) {
-//              updateCallersJob.get()?.start()
-//            }
-//          } // stream.asCountingRequestBody
+//          }
+          { bytes ->
+            val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
+            // We update in a job with a delay() to debounce these events, which come very quickly
+            val start = false
+              updateCallersJob.compareAndSet(
+              null, newUpdateCallersJob(
+                uploadedBytes = bytes,
+                totalBytes = chunkSize,
+                startTime = startTime,
+                endTime = elapsedRealtime,
+                coroutineScope = this
+              )
+            )
+            if (start) {
+              updateCallersJob.get()?.start()
+            }
+          } // stream.asCountingRequestBody
 
         val request = Request.Builder()
           .url(remoteUri.toString())
