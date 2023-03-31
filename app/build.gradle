@@ -46,7 +46,7 @@ dependencies {
   implementation "androidx.fragment:fragment-ktx:1.5.5"
   implementation "androidx.lifecycle:lifecycle-viewmodel-ktx:2.5.1"
   implementation 'androidx.core:core-ktx:1.9.0'
-  implementation 'net.danlew:android.joda:2.12.4'
+  implementation 'net.danlew:android.joda:2.12.5'
 
   testImplementation 'junit:junit:4.13.2'
   androidTestImplementation 'androidx.test.ext:junit:1.1.5'
