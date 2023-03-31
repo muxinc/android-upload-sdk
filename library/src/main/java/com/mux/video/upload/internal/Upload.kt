@@ -57,34 +57,34 @@ internal class UploadJobFactory private constructor() {
         val startTime = Date().time
         var totalBytesSent: Long = 0
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
-          do {
-            // The last chunk will almost definitely be smaller than a whole chunk
-            val bytesLeft = fileSize - totalBytesSent
-            val chunkSize = if (uploadInfo.chunkSize > bytesLeft) {
-              bytesLeft.toInt()
-            } else {
-              uploadInfo.chunkSize
-            }
-            val chunk = ChunkWorker.Chunk(
-              contentLength = chunkSize,
-              startByte = totalBytesSent,
-              endByte = totalBytesSent + chunkSize - 1,
-              totalFileSize = fileSize,
-              sliceData = chunkBuffer,
-            )
-            val chunkResult = createWorkerForSlice(chunk, uploadInfo, callbackChannel()).doUpload()
-            Log.d("fuck", "Returned chunk result $chunkResult")
+        do {
+          // The last chunk will almost definitely be smaller than a whole chunk
+          val bytesLeft = fileSize - totalBytesSent
+          val chunkSize = if (uploadInfo.chunkSize > bytesLeft) {
+            bytesLeft.toInt()
+          } else {
+            uploadInfo.chunkSize
+          }
+          val chunk = ChunkWorker.Chunk(
+            contentLength = chunkSize,
+            startByte = totalBytesSent,
+            endByte = totalBytesSent + chunkSize - 1,
+            totalFileSize = fileSize,
+            sliceData = chunkBuffer,
+          )
+          val chunkResult = createWorkerForSlice(chunk, uploadInfo, callbackChannel()).doUpload()
+          Log.d("fuck", "Returned chunk result $chunkResult")
 
-            totalBytesSent += chunkResult.bytesUploaded
-            val intermediateProgress = MuxUpload.State(
-              bytesUploaded = totalBytesSent,
-              totalBytes = fileSize,
-              updatedTime = chunkResult.updatedTime,
-              startTime = startTime
-            )
-            progressChannel.trySend(intermediateProgress)
-            Log.d("fuck", "Looped once in the chunk loop")
-          } while (totalBytesSent < fileSize)
+          totalBytesSent += chunkResult.bytesUploaded
+          val intermediateProgress = MuxUpload.State(
+            bytesUploaded = totalBytesSent,
+            totalBytes = fileSize,
+            updatedTime = chunkResult.updatedTime,
+            startTime = startTime
+          )
+          progressChannel.trySend(intermediateProgress)
+          Log.d("fuck", "Looped once in the chunk loop")
+        } while (totalBytesSent < fileSize)
         val finalState = MuxUpload.State(
           bytesUploaded = fileSize,
           totalBytes = fileSize,
@@ -146,7 +146,7 @@ internal class UploadJobFactory private constructor() {
 
     // updates from the request body come quickly, we have to debounce the events
     private val mostRecentUploadState: AtomicReference<RecentState> =
-      AtomicReference(RecentState(0,0))
+      AtomicReference(RecentState(0, 0))
     private var updateCallersJob: Job? = null
 
     @Throws
@@ -163,19 +163,31 @@ internal class UploadJobFactory private constructor() {
         val putBody =
           stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), chunkSize) // {}
 //          {
-            //Log.d("fuck", "CountingBody callback called with $it from ${Thread.currentThread().name}")
+          //Log.d("fuck", "CountingBody callback called with $it from ${Thread.currentThread().name}")
 //          }
           { bytes ->
             updateCallersScope.launch {
-              val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
+              val elapsedRealtime =
+                SystemClock.elapsedRealtime() // Do this before switching threads
               mostRecentUploadState.set(RecentState(elapsedRealtime, bytes))
               synchronized(this) {
                 if (updateCallersJob == null) {
                   updateCallersJob = async(updateCallersScope.coroutineContext) {
-
-                  }
-                }
-              }
+                    delay(EVENT_DEBOUNCE_DELAY_MS)
+                    // todo: Should this be send()?
+                    progressChannel.trySend(
+                      MuxUpload.State(
+                        bytesUploaded = mostRecentUploadState.get()!!.uploadBytes,
+                        totalBytes = chunkSize,
+                        startTime = startTime,
+                        updatedTime = elapsedRealtime,
+                      ) // MuxUpload.State
+                    ) // progressChannel.trySend
+                    // synchronize from the job created via async { }
+                    synchronized(this) { updateCallersJob = null }
+                  } // updateCallersJob = async ()
+                } // if (updateCallersJob == null)
+              } // synchronized(this)
             }
             // We update in a job with a delay() to debounce these events, which come very quickly
 //            val start = updateCallersJob.compareAndSet(
