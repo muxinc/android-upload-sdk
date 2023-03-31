@@ -45,6 +45,7 @@ internal class UploadJobFactory private constructor() {
 
     val uploadJob = outerScope.async {
       try {
+        var chunkNr = 0
         val startTime = Date().time
         var totalBytesSent: Long = 0
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
@@ -65,6 +66,7 @@ internal class UploadJobFactory private constructor() {
           )
           val chunkResult = createWorkerForSlice(chunk, uploadInfo, callbackChannel()).doUpload()
           Log.d("fuck", "Returned chunk result $chunkResult")
+          Log.d("UploadJobFactory", "Chunk number ${chunkNr++}")
 
           totalBytesSent += chunkResult.bytesUploaded
           val intermediateProgress = MuxUpload.State(
