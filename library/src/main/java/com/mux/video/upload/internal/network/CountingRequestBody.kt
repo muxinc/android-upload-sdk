@@ -33,7 +33,6 @@ private class CountingRequestBody constructor(
   private val callback: (Long) -> Unit,
 ) : RequestBody() {
   // TODO <em>: this doesn't need to be atomic
-  private var totalBytes = AtomicInteger(0)
   private var dead = false
 
   companion object {
@@ -47,20 +46,14 @@ private class CountingRequestBody constructor(
   override fun isOneShot(): Boolean = true
 
   override fun writeTo(sink: BufferedSink) {
-    Log.w("fuck", "writeTo called")
-//    sink.use { output ->
-//      inputStream.source().use { fileStream ->
-//        output.w
-//      }
-//    }
-    var tmpcnt = 0
+    Log.w("fuck", "writeTo called on thread ${Thread.currentThread().name}")
+    var totalBytes = 0
     if (dead) {
       Log.d("fuck", "writeTo called on dead object");
       Thread.dumpStack()
       return
     }
     sink.use { output ->
-      //.use { source ->
         var readBytes: Int = 0
         val readBuf = ByteArray(size = READ_LENGTH)
         do {
@@ -80,19 +73,18 @@ private class CountingRequestBody constructor(
           )
 
           output.write(readBuf, 0, realReadLength)
-          readBytes += realReadLength
+          readBytes = realReadLength
           if (readBytes >= 0) {
-            val newTotal = totalBytes.addAndGet(readBytes)
-            callback(newTotal.toLong())
-            //sink.flush()
+            totalBytes += readBytes
+            callback(totalBytes.toLong())
+            output.flush()
           }
           //Log.v("fuck", "${tmpcnt++} writeTo() read $readBytes from src")
           //Log.v("fuck", "(That's ${totalBytes.get()} / $contentLength btw)")
-        } while (readBytes >= 0 && totalBytes.get() < contentLength)
-        Log.v("fuck", "total read: ${totalBytes.get()} (compare with contentLength $contentLength")
+        } while (readBytes >= 0 && totalBytes < contentLength)
+        Log.v("fuck", "total read: $totalBytes (compare with contentLength $contentLength")
 
         dead = true
-//      }
     }
   }
 }

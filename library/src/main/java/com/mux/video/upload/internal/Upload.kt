@@ -72,6 +72,7 @@ internal class UploadJobFactory private constructor() {
               sliceData = chunkBuffer,
             )
             val chunkResult = createWorkerForSlice(chunk, uploadInfo, callbackChannel()).doUpload()
+            Log.d("fuck", "Returned chunk result $chunkResult")
 
             totalBytesSent += chunkResult.bytesUploaded
             val intermediateProgress = MuxUpload.State(
@@ -145,6 +146,7 @@ internal class UploadJobFactory private constructor() {
 
     @Throws
     suspend fun doUpload(): MuxUpload.State {
+      Log.d("fuck", "doUpload called on ${Thread.currentThread().name}")
       val startTime = SystemClock.elapsedRealtime()
       return supervisorScope {
         val stream = chunk.sliceData
@@ -152,22 +154,26 @@ internal class UploadJobFactory private constructor() {
         val httpClient = MuxUploadSdk.httpClient()
 
         val putBody =
-          stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), chunkSize) { bytes ->
-            val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
-            // We update in a job with a delay() to debounce these events, which come very quickly
-            val start = updateCallersJob.compareAndSet(
-              null, newUpdateCallersJob(
-                uploadedBytes = bytes,
-                totalBytes = chunkSize,
-                startTime = startTime,
-                endTime = elapsedRealtime,
-                coroutineScope = this
-              )
-            )
-            if (start) {
-              updateCallersJob.get()?.start()
-            }
-          } // stream.asCountingRequestBody
+          stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), chunkSize) // {}
+          {
+            //Log.d("fuck", "CountingBody callback called with $it from ${Thread.currentThread().name}")
+          }
+//          { bytes ->
+//            val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
+//            // We update in a job with a delay() to debounce these events, which come very quickly
+//            val start = updateCallersJob.compareAndSet(
+//              null, newUpdateCallersJob(
+//                uploadedBytes = bytes,
+//                totalBytes = chunkSize,
+//                startTime = startTime,
+//                endTime = elapsedRealtime,
+//                coroutineScope = this
+//              )
+//            )
+//            if (start) {
+//              updateCallersJob.get()?.start()
+//            }
+//          } // stream.asCountingRequestBody
 
         val request = Request.Builder()
           .url(remoteUri.toString())
@@ -181,7 +187,10 @@ internal class UploadJobFactory private constructor() {
           .build()
 
         logger.v("MuxUpload", "Uploading with request $request")
-        val httpResponse = withContext(Dispatchers.IO) { httpClient.newCall(request).execute() }
+        val httpResponse = withContext(Dispatchers.IO) {
+          Log.d("fuck", "executing request on thread ${Thread.currentThread().name}")
+          httpClient.newCall(request).execute()
+        }
         logger.v("MuxUpload", "Chunk Response: $httpResponse")
         val finalState =
           MuxUpload.State(
