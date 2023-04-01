@@ -36,16 +36,16 @@ internal class ChunkWorker(
   private val logger get() = MuxUploadSdk.logger
 
   // updates from the request body come quickly, we have to debounce the events
-  private val mostRecentUploadState: AtomicReference<RecentState> =
-    AtomicReference(RecentState(0, 0))
+  // TODO: This doesn't need to be an AtomicReference (used synchronized instead)
+  private var mostRecentUploadState: RecentState? = null
   private var updateCallersJob: Job? = null
 
   @Throws
   suspend fun doUpload(): MuxUpload.State {
     Log.d("fuck", "doUpload called on ${Thread.currentThread().name}")
     val updateCallersScope = CoroutineScope(coroutineContext)
-
     val startTime = SystemClock.elapsedRealtime()
+
     return supervisorScope {
       val stream = chunk.sliceData
       val chunkSize = chunk.endByte - chunk.startByte + 1
@@ -55,22 +55,24 @@ internal class ChunkWorker(
         stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), chunkSize) { bytes ->
           updateCallersScope.launch {
             val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
-            mostRecentUploadState.set(RecentState(elapsedRealtime, bytes))
+            mostRecentUploadState = RecentState(elapsedRealtime, bytes)
+
+            // This process happens really fast, so we debounce the callbacks using a coroutine.
+            // If there's no job to update callers, create one. That job delays for a set duration
+            // then sends a message out on the progress channel with the most-recent known progress
             synchronized(this) { // Synchronize checking/creating update jobs
               if (updateCallersJob == null) {
-                // Update callers at most once every EVENT_DEBOUNCE_DELAY, giving most recent val
                 updateCallersJob = updateCallersScope.async {
+                  // Update callers at most once every EVENT_DEBOUNCE_DELAY
                   delay(EVENT_DEBOUNCE_DELAY_MS)
-                  // todo: Should this be trySend()?
-                  progressChannel.send(
-                    MuxUpload.State(
-                      bytesUploaded = mostRecentUploadState.get()!!.uploadBytes,
+                  val currentState = MuxUpload.State(
+                      bytesUploaded = mostRecentUploadState?.uploadBytes ?: 0,
                       totalBytes = chunkSize,
                       startTime = startTime,
                       updatedTime = elapsedRealtime,
-                    ) // MuxUpload.State
-                  ) // progressChannel.trySend
-                  // synchronize nulling out the update job, since we're on a different worker now
+                    )
+                  progressChannel.send(currentState)
+                  // synchronize again since we're on a different worker inside async { }
                   synchronized(this) { updateCallersJob = null }
                 } // updateCallersJob = async ()
               } // if (updateCallersJob == null)
