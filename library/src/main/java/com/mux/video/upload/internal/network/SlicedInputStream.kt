@@ -1,5 +1,6 @@
 package com.mux.video.upload.internal.network
 
+import android.util.Log
 import java.io.FilterInputStream
 import java.io.InputStream
 
@@ -75,9 +76,13 @@ private class SlicedInputStream(
       -1
     } else {
       if (len + readPos > sliceLen) {
+        Log.d("fuck2", "This is the last of the slice")
+        Log.d("fuck2", "Want $len, readPos is $readPos, sliceLen is $sliceLen")
         // The caller wants more data than the size of the slice
         val smallerBuf = ByteArray((sliceLen - readPos).toInt())
+        Log.d("fuck2", "Allocated ${smallerBuf.size}")
         val readBytes = super.read(smallerBuf)
+        Log.d("fuck2", "read $readBytes bytes\n")
         smallerBuf.copyInto(b, off)
         readPos += readBytes
         return readBytes

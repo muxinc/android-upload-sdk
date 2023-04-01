@@ -4,12 +4,6 @@ import android.util.Log
 import okhttp3.MediaType
 import okhttp3.RequestBody
 import okio.BufferedSink
-import okio.source
-import java.io.File
-import java.io.FileInputStream
-import java.io.InputStream
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicLong
 
 /**
  * RequestBody based on an InputStream that reports the number of bytes written until either
@@ -39,7 +33,7 @@ private class CountingRequestBody constructor(
     const val READ_LENGTH = 256 * 1024
   }
 
-  override fun contentLength(): Long = bodyData.size.toLong()
+  override fun contentLength(): Long = contentLength//bodyData.size.toLong()
 
   override fun contentType(): MediaType? = mediaType
 
@@ -54,12 +48,13 @@ private class CountingRequestBody constructor(
       return
     }
     sink.use { output ->
-        var readBytes: Int = 0
         val readBuf = ByteArray(size = READ_LENGTH)
         do {
-          val realReadLength = if (readBytes + READ_LENGTH > contentLength) {
+          val bytesReadThisTime: Int
+          val realReadLength = if (totalBytes + READ_LENGTH > contentLength) {
             // There's not enough data left for the whole READ_LENGTH, so read the remainder
-            (contentLength - readBytes).toInt()
+            Log.d("fuck2", "readRedLength is ${(contentLength - totalBytes).toInt()}")
+            (contentLength - totalBytes).toInt()
           } else {
             // There's enough to fill the entire read buffer
             READ_LENGTH
@@ -67,21 +62,21 @@ private class CountingRequestBody constructor(
 
           bodyData.copyInto(
             destination = readBuf,
-            startIndex = readBytes,
-            endIndex = readBytes + realReadLength,
+            startIndex = totalBytes,
+            endIndex = totalBytes + realReadLength,
             destinationOffset = 0,
           )
 
           output.write(readBuf, 0, realReadLength)
-          readBytes = realReadLength
-          if (readBytes >= 0) {
-            totalBytes += readBytes
+          bytesReadThisTime = realReadLength
+          if (bytesReadThisTime >= 0) {
+            totalBytes += bytesReadThisTime
             callback(totalBytes.toLong())
             output.flush()
           }
           //Log.v("fuck", "${tmpcnt++} writeTo() read $readBytes from src")
           //Log.v("fuck", "(That's ${totalBytes.get()} / $contentLength btw)")
-        } while (readBytes >= 0 && totalBytes < contentLength)
+        } while (bytesReadThisTime >= 0 && totalBytes < contentLength)
         Log.v("fuck", "total read: $totalBytes (compare with contentLength $contentLength")
 
         dead = true

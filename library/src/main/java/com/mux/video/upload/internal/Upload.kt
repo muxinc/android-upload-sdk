@@ -51,7 +51,7 @@ internal class UploadJobFactory private constructor() {
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
         do {
           // The last chunk will almost definitely be smaller than a whole chunk
-          val bytesLeft = fileSize - totalBytesSent + 1
+          val bytesLeft = fileSize - totalBytesSent
           val chunkSize = if (uploadInfo.chunkSize > bytesLeft) {
             bytesLeft.toInt()
           } else {
