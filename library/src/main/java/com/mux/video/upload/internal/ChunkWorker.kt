@@ -14,7 +14,7 @@ import java.io.IOException
 import java.net.HttpRetryException
 
 /**
- * Uploads one single file, reporting progress as it goes, and returning the final state when the
+ * Uploads one single chunk, reporting progress as it goes, and returning the final state when the
  * upload completes. The worker is only responsible for doing the upload and accurately reporting
  * state/errors. Owning objects handle errors, delegate
  */
