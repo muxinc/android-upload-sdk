@@ -101,7 +101,7 @@ internal class UploadJobFactory private constructor(
           val chunkProgressChannel = callbackChannel<MuxUpload.State>()
           var updateProgressJob: Job? = null
           try {
-            // Bounce progress updates to callers  (but one-shot okhttp bodies aren't good for this)
+            // Bounce progress updates to callers 
             updateProgressJob = launch {
               for (chunkProgress in chunkProgressChannel) {
                 overallProgressChannel.send(
