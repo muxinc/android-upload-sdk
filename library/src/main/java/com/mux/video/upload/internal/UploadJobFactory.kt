@@ -104,7 +104,6 @@ internal class UploadJobFactory private constructor(
             // Bounce progress updates to callers  (but one-shot okhttp bodies aren't good for this)
             updateProgressJob = launch {
               for (chunkProgress in chunkProgressChannel) {
-                Log.d("ree", "Got chunk progress $chunkProgress")
                 overallProgressChannel.send(
                   MuxUpload.State(
                     bytesUploaded = chunkProgress.bytesUploaded + totalBytesSent,

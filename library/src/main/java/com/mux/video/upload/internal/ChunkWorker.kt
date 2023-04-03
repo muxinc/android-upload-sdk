@@ -48,7 +48,8 @@ internal class ChunkWorker(
           // End Case: Chunk success!
           return finalState
         } else if (RETRYABLE_STATUS_CODES.contains(httpResponse.code)) {
-          throw IOException("${httpResponse.code}: ${httpResponse.message}:\n")
+          throw IOException("${httpResponse.code}: ${httpResponse.message}:" +
+                  "\n${httpResponse.body?.bytes()?.decodeToString()}")
         }
       } catch (e: Exception) {
         tries++
