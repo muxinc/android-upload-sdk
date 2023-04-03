@@ -49,14 +49,10 @@ private class CountingRequestBody constructor(
 
   override fun contentType(): MediaType? = mediaType
 
-  override fun isOneShot(): Boolean = true
+  override fun isOneShot(): Boolean = false
 
   override fun writeTo(sink: BufferedSink) {
     var totalBytes = 0
-    if (dead) {
-      Thread.dumpStack()
-      return
-    }
     sink.use { output ->
       val readBuf = ByteArray(size = readLength)
       do {

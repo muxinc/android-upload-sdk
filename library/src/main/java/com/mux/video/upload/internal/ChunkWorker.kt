@@ -40,7 +40,6 @@ internal class ChunkWorker(
 
   @Throws
   suspend fun doUpload(): MuxUpload.State {
-    val updateCallersScope = CoroutineScope(coroutineContext)
     val startTime = SystemClock.elapsedRealtime()
 
     return supervisorScope {
@@ -50,31 +49,28 @@ internal class ChunkWorker(
 
       val putBody =
         stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), chunkSize) { bytes ->
-          updateCallersScope.launch {
-            val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
+          val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
+          // This process happens really fast, so we debounce the callbacks using a coroutine.
+          // If there's no job to update callers, create one. That job delays for a set duration
+          // then sends a message out on the progress channel with the most-recent known progress
+          synchronized(this) { // Synchronize checking/creating update jobs
             mostRecentUploadState = RecentState(elapsedRealtime, bytes)
-
-            // This process happens really fast, so we debounce the callbacks using a coroutine.
-            // If there's no job to update callers, create one. That job delays for a set duration
-            // then sends a message out on the progress channel with the most-recent known progress
-            synchronized(this) { // Synchronize checking/creating update jobs
-              if (updateCallersJob == null) {
-                updateCallersJob = updateCallersScope.async {
-                  // Update callers at most once every EVENT_DEBOUNCE_DELAY
-                  delay(EVENT_DEBOUNCE_DELAY_MS)
-                  val currentState = MuxUpload.State(
-                      bytesUploaded = mostRecentUploadState?.uploadBytes ?: 0,
-                      totalBytes = chunkSize,
-                      startTime = startTime,
-                      updatedTime = elapsedRealtime,
-                    )
-                  progressChannel.send(currentState)
-                  // synchronize again since we're on a different worker inside async { }
-                  synchronized(this) { updateCallersJob = null }
-                } // ..async { ...
-              } // if (updateCallersJob == null)
-            } // synchronized(this)
-          }
+            if (updateCallersJob == null) {
+              updateCallersJob = async {
+                // Update callers at most once every EVENT_DEBOUNCE_DELAY
+                delay(EVENT_DEBOUNCE_DELAY_MS)
+                val currentState = MuxUpload.State(
+                  bytesUploaded = mostRecentUploadState?.uploadBytes ?: 0,
+                  totalBytes = chunkSize,
+                  startTime = startTime,
+                  updatedTime = elapsedRealtime,
+                )
+                progressChannel.send(currentState)
+                // synchronize again since we're on a different worker inside async { }
+                synchronized(this) { updateCallersJob = null }
+              } // ..async { ...
+            } // if (updateCallersJob == null)
+          } // synchronized(this)
         } // stream.asCountingRequestBody
 
       val request = Request.Builder()
@@ -93,14 +89,14 @@ internal class ChunkWorker(
       }
       logger.v("MuxUpload", "Chunk Response: $httpResponse")
       val finalState = MuxUpload.State(
-          bytesUploaded = chunkSize,
-          totalBytes = chunkSize,
-          startTime = startTime,
-          updatedTime = SystemClock.elapsedRealtime()
-        )
+        bytesUploaded = chunkSize,
+        totalBytes = chunkSize,
+        startTime = startTime,
+        updatedTime = SystemClock.elapsedRealtime()
+      )
       // Cancel progress updates and make sure no one is stuck listening for more
       updateCallersJob?.cancel()
-      progressChannel.trySend(finalState)
+      progressChannel.send(finalState)
       finalState
     } // supervisorScope
   } // suspend fun doUpload
