@@ -60,34 +60,34 @@ private class CountingRequestBody constructor(
       return
     }
     sink.use { output ->
-        val readBuf = ByteArray(size = readLength)
-        do {
-          val bytesReadThisTime: Int
-          val realReadLength = if (totalBytes + readLength > contentLength) {
-            // There's not enough data left for the whole READ_LENGTH, so read the remainder
-            (contentLength - totalBytes).toInt()
-          } else {
-            // There's enough to fill the entire read buffer
-            readLength
-          }
+      val readBuf = ByteArray(size = readLength)
+      do {
+        val bytesReadThisTime: Int
+        val realReadLength = if (totalBytes + readLength > contentLength) {
+          // There's not enough data left for the whole READ_LENGTH, so read the remainder
+          (contentLength - totalBytes).toInt()
+        } else {
+          // There's enough to fill the entire read buffer
+          readLength
+        }
 
-          bodyData.copyInto(
-            destination = readBuf,
-            startIndex = totalBytes,
-            endIndex = totalBytes + realReadLength /*- 1*/,
-            destinationOffset = 0,
-          )
+        bodyData.copyInto(
+          destination = readBuf,
+          startIndex = totalBytes,
+          endIndex = totalBytes + realReadLength, /*- 1*/
+          destinationOffset = 0,
+        )
 
-          output.buffer.write(readBuf, 0, realReadLength)
-          bytesReadThisTime = realReadLength
-          if (bytesReadThisTime >= 0) {
-            totalBytes += bytesReadThisTime
-            callback(totalBytes.toLong())
-            output.flush()
-          }
-        } while (bytesReadThisTime >= 0 && totalBytes < contentLength)
+        output.buffer.write(readBuf, 0, realReadLength)
+        bytesReadThisTime = realReadLength
+        if (bytesReadThisTime >= 0) {
+          totalBytes += bytesReadThisTime
+          callback(totalBytes.toLong())
+          output.flush()
+        }
+      } while (bytesReadThisTime >= 0 && totalBytes < contentLength)
 
-        dead = true
+      dead = true
     }
   }
 }
