@@ -54,10 +54,8 @@ private class CountingRequestBody constructor(
   override fun isOneShot(): Boolean = true
 
   override fun writeTo(sink: BufferedSink) {
-    Log.w("fuck", "writeTo called on thread ${Thread.currentThread().name}")
     var totalBytes = 0
     if (dead) {
-      Log.d("fuck", "writeTo called on dead object");
       Thread.dumpStack()
       return
     }
@@ -67,7 +65,6 @@ private class CountingRequestBody constructor(
           val bytesReadThisTime: Int
           val realReadLength = if (totalBytes + readLength > contentLength) {
             // There's not enough data left for the whole READ_LENGTH, so read the remainder
-            Log.d("fuck2", "readRedLength is ${(contentLength - totalBytes).toInt()}")
             (contentLength - totalBytes).toInt()
           } else {
             // There's enough to fill the entire read buffer
@@ -81,11 +78,6 @@ private class CountingRequestBody constructor(
             destinationOffset = 0,
           )
 
-          Log.d("fuck2", "Copied data from $totalBytes to ${totalBytes + realReadLength - 1}")
-          Log.d("fuck2", "Writing data. ReadLen $realReadLength")
-          Log.d("fuck2", "writing>")
-
-          //output.write(readBuf, 0, realReadLength)
           output.buffer.write(readBuf, 0, realReadLength)
           bytesReadThisTime = realReadLength
           if (bytesReadThisTime >= 0) {
@@ -93,10 +85,7 @@ private class CountingRequestBody constructor(
             callback(totalBytes.toLong())
             output.flush()
           }
-          //Log.v("fuck", "${tmpcnt++} writeTo() read $readBytes from src")
-          //Log.v("fuck", "(That's ${totalBytes.get()} / $contentLength btw)")
         } while (bytesReadThisTime >= 0 && totalBytes < contentLength)
-        Log.v("fuck", "total read: $totalBytes (compare with contentLength $contentLength")
 
         dead = true
     }

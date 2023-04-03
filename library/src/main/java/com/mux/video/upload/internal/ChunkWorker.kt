@@ -42,7 +42,6 @@ internal class ChunkWorker(
 
   @Throws
   suspend fun doUpload(): MuxUpload.State {
-    Log.d("fuck", "doUpload called on ${Thread.currentThread().name}")
     val updateCallersScope = CoroutineScope(coroutineContext)
     val startTime = SystemClock.elapsedRealtime()
 
@@ -92,7 +91,6 @@ internal class ChunkWorker(
 
       logger.v("MuxUpload", "Uploading with request $request")
       val httpResponse = withContext(Dispatchers.IO) {
-        Log.d("fuck", "executing request on thread ${Thread.currentThread().name}")
         httpClient.newCall(request).execute()
       }
       logger.v("MuxUpload", "Chunk Response: $httpResponse")

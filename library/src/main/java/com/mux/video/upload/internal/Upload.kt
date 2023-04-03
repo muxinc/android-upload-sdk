@@ -65,7 +65,6 @@ internal class UploadJobFactory private constructor() {
             sliceData = chunkBuffer,
           )
           val chunkResult = createWorkerForSlice(chunk, uploadInfo, callbackChannel()).doUpload()
-          Log.d("fuck", "Returned chunk result $chunkResult")
           Log.d("UploadJobFactory", "Chunk number ${chunkNr++}")
 
           totalBytesSent += chunkResult.bytesUploaded
@@ -76,7 +75,6 @@ internal class UploadJobFactory private constructor() {
             startTime = startTime
           )
           progressChannel.send(intermediateProgress)
-          Log.d("fuck", "Looped once in the chunk loop")
         } while (totalBytesSent < fileSize)
         val finalState = MuxUpload.State(
           bytesUploaded = fileSize,
