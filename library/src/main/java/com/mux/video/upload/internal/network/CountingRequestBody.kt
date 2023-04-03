@@ -48,6 +48,10 @@ private class CountingRequestBody constructor(
       return
     }
     sink.use { output ->
+      if (false){
+        output.write(bodyData, 0, contentLength.toInt())
+        return
+      }
         val readBuf = ByteArray(size = READ_LENGTH)
         do {
           val bytesReadThisTime: Int
@@ -63,9 +67,13 @@ private class CountingRequestBody constructor(
           bodyData.copyInto(
             destination = readBuf,
             startIndex = totalBytes,
-            endIndex = totalBytes + realReadLength,
+            endIndex = totalBytes + realReadLength - 1,
             destinationOffset = 0,
           )
+
+          Log.d("fuck2", "Copied data from $totalBytes to ${totalBytes + realReadLength - 1}")
+          Log.d("fuck2", "Writing data. ReadLen $realReadLength")
+          Log.d("fuck2", "writing>")
 
           output.write(readBuf, 0, realReadLength)
           bytesReadThisTime = realReadLength
