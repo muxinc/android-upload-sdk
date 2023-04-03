@@ -28,12 +28,35 @@ internal fun createUploadJob(upload: UploadInfo): UploadInfo {
  *
  * Create instances of this class via [createUploadJob]
  */
-internal class UploadJobFactory private constructor() {
+internal class UploadJobFactory private constructor(
+  val workerFactory: (ChunkWorker.Chunk, UploadInfo, Channel<MuxUpload.State>) -> ChunkWorker =
+    this::createWorkerForSlice
+) {
   private val logger get() = MuxUploadSdk.logger
 
   companion object {
     @JvmSynthetic
     internal fun create() = UploadJobFactory()
+
+    @JvmSynthetic
+    internal fun create(
+      workerFactory: (ChunkWorker.Chunk, UploadInfo, Channel<MuxUpload.State>) -> ChunkWorker
+    ) = UploadJobFactory(workerFactory)
+
+    @Suppress("unused") // It's used by method-reference, which the linter doesn't see
+    @JvmSynthetic
+    private fun createWorkerForSlice(
+      chunk: ChunkWorker.Chunk,
+      uploadInfo: UploadInfo,
+      progressChannel: Channel<MuxUpload.State>
+    ): ChunkWorker =
+      ChunkWorker(
+        chunk = chunk,
+        maxRetries = uploadInfo.retriesPerChunk,
+        videoMimeType = uploadInfo.videoMimeType,
+        remoteUri = uploadInfo.remoteUri,
+        progressChannel = progressChannel,
+      )
   }
 
   fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope): UploadInfo {
@@ -50,6 +73,7 @@ internal class UploadJobFactory private constructor() {
         val startTime = SystemClock.elapsedRealtime()
         var totalBytesSent: Long = 0
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
+
         do {
           // The last chunk will almost definitely be smaller than a whole chunk
           val bytesLeft = fileSize - totalBytesSent
@@ -77,8 +101,9 @@ internal class UploadJobFactory private constructor() {
               )
             )
           }
-          val chunkResult = createWorkerForSlice(chunk, uploadInfo, chunkProgressChannel).doUpload()
+          val chunkResult = workerFactory(chunk, uploadInfo, chunkProgressChannel).doUpload()
           Log.d("UploadJobFactory", "Chunk number ${chunkNr++}")
+          updateProgressJob.cancel()
 
           totalBytesSent += chunkResult.bytesUploaded
           val intermediateProgress = MuxUpload.State(
@@ -115,19 +140,6 @@ internal class UploadJobFactory private constructor() {
       uploadJob = uploadJob
     )
   }
-
-  private fun createWorkerForSlice(
-    chunk: ChunkWorker.Chunk,
-    uploadInfo: UploadInfo,
-    progressChannel: Channel<MuxUpload.State>
-  ): ChunkWorker =
-    ChunkWorker(
-      chunk = chunk,
-      maxRetries = uploadInfo.retriesPerChunk,
-      videoMimeType = uploadInfo.videoMimeType,
-      remoteUri = uploadInfo.remoteUri,
-      progressChannel = progressChannel,
-    )
 
   private fun <T> callbackChannel() =
     Channel<T>(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST) { }
