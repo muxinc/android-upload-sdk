@@ -1,6 +1,5 @@
 package com.mux.video.upload.internal.network
 
-import android.util.Log
 import okhttp3.MediaType
 import okhttp3.RequestBody
 import okio.BufferedSink
@@ -40,14 +39,13 @@ private class CountingRequestBody constructor(
   private val readLength: Int = DEFAULT_READ_LENGTH,
   private val callback: (Long) -> Unit,
 ) : RequestBody() {
-  // TODO <em>: this doesn't need to be atomic
   private var dead = false
 
   companion object {
     const val DEFAULT_READ_LENGTH = 256 * 1024
   }
 
-  override fun contentLength(): Long = contentLength//bodyData.size.toLong()
+  override fun contentLength(): Long = contentLength
 
   override fun contentType(): MediaType? = mediaType
 
@@ -74,7 +72,7 @@ private class CountingRequestBody constructor(
         bodyData.copyInto(
           destination = readBuf,
           startIndex = totalBytes,
-          endIndex = totalBytes + realReadLength, /*- 1*/
+          endIndex = totalBytes + realReadLength,
           destinationOffset = 0,
         )
 
