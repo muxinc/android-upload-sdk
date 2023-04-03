@@ -48,10 +48,6 @@ private class CountingRequestBody constructor(
       return
     }
     sink.use { output ->
-      if (false){
-        output.write(bodyData, 0, contentLength.toInt())
-        return
-      }
         val readBuf = ByteArray(size = READ_LENGTH)
         do {
           val bytesReadThisTime: Int
@@ -75,7 +71,8 @@ private class CountingRequestBody constructor(
           Log.d("fuck2", "Writing data. ReadLen $realReadLength")
           Log.d("fuck2", "writing>")
 
-          output.write(readBuf, 0, realReadLength)
+          //output.write(readBuf, 0, realReadLength)
+          output.buffer.write(readBuf, 0, realReadLength)
           bytesReadThisTime = realReadLength
           if (bytesReadThisTime >= 0) {
             totalBytes += bytesReadThisTime

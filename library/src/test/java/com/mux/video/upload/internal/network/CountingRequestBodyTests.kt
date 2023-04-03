@@ -21,12 +21,13 @@ class CountingRequestBodyTests : AbsRobolectricTest() {
   @Test
   fun testCallbackIsCalled() {
     val dummyDataLen: Long = READ_LENGTH + (READ_LENGTH / 2) // One full and one partial read
-    val dummyData = ByteArrayInputStream(ByteArray(dummyDataLen.toInt()))
+    val dummyData = ByteArray(dummyDataLen.toInt())
     val mockSink = mockk<BufferedSink> {
       every { buffer } returns Buffer()
       @Suppress("DEPRECATION")
       every { buffer() } returns Buffer()
       every { flush() } just runs
+      every { close() } just runs
     }
     var reportedReadBytes = 0L
     val mockReadCallback: (Long) -> Unit = { reportedReadBytes = it }
