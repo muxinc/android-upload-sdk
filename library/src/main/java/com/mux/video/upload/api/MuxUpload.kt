@@ -171,7 +171,7 @@ class MuxUpload private constructor(
       // Default values
       remoteUri = uploadUri,
       file = videoFile,
-      videoMimeType = "application/mp4",
+      videoMimeType = "video/*",
       chunkSize = 8 * 1024 * 1024, // GCP recommends at least 8M chunk size
       retriesPerChunk = 3,
       retryBaseTimeMs = 500,
