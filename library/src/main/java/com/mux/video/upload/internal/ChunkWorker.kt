@@ -35,8 +35,6 @@ internal class ChunkWorker(
 
   private val logger get() = MuxUploadSdk.logger
 
-  // updates from the request body come quickly, we have to debounce the events
-  // TODO: This doesn't need to be an AtomicReference (used synchronized instead)
   private var mostRecentUploadState: RecentState? = null
   private var updateCallersJob: Job? = null
 
