@@ -5,11 +5,6 @@ import okhttp3.MediaType
 import okhttp3.RequestBody
 import okio.BufferedSink
 
-/**
- * RequestBody based on an InputStream that reports the number of bytes written until either
- * [contentLength] bytes are transferred or the end of the input is reached. This RequestBody
- * doesn't close
- */
 internal fun ByteArray.asCountingRequestBody(
   mediaType: MediaType?,
   contentLength: Long,
@@ -21,11 +16,6 @@ internal fun ByteArray.asCountingRequestBody(
   callback = callback
 )
 
-/**
- * RequestBody based on an InputStream that reports the number of bytes written until either
- * [contentLength] bytes are transferred or the end of the input is reached. This RequestBody
- * doesn't close
- */
 internal fun ByteArray.asCountingRequestBody(
   mediaType: MediaType?,
   contentLength: Long,
@@ -87,7 +77,7 @@ private class CountingRequestBody constructor(
           bodyData.copyInto(
             destination = readBuf,
             startIndex = totalBytes,
-            endIndex = totalBytes + realReadLength - 1,
+            endIndex = totalBytes + realReadLength /*- 1*/,
             destinationOffset = 0,
           )
 
