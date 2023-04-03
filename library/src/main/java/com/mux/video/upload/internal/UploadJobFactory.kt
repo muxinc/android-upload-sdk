@@ -98,31 +98,40 @@ internal class UploadJobFactory private constructor(
             sliceData = chunkBuffer,
           )
 
-          // Bounce progress updates to callers  (but one-shot okhttp bodies aren't good for this)
           val chunkProgressChannel = callbackChannel<MuxUpload.State>()
-          val updateProgressJob = launch {
-            val chunkProgress = chunkProgressChannel.receive()
-            overallProgressChannel.send(
-              MuxUpload.State(
-                bytesUploaded = chunkProgress.bytesUploaded + totalBytesSent,
-                totalBytes = fileSize,
-                startTime = startTime,
-                updatedTime = chunkProgress.updatedTime
-              )
-            )
-          }
-          val chunkResult = createWorker(chunk, uploadInfo, chunkProgressChannel).doUpload()
-          Log.d("UploadJobFactory", "Chunk number ${chunkNr++}")
-          updateProgressJob.cancel()
+          var updateProgressJob: Job? = null
+          try {
+            // Bounce progress updates to callers  (but one-shot okhttp bodies aren't good for this)
+            updateProgressJob = launch {
+              while (true) { // quits when this job is canceled (below)
+                //Log.d("ree", "About to suspend for state updates")
+                val chunkProgress = chunkProgressChannel.receive()
+                Log.d("ree", "Got chunk progress $chunkProgress")
+                overallProgressChannel.send(
+                  MuxUpload.State(
+                    bytesUploaded = chunkProgress.bytesUploaded + totalBytesSent,
+                    totalBytes = fileSize,
+                    startTime = startTime,
+                    updatedTime = chunkProgress.updatedTime
+                  )
+                ) // overallProgress.send(
+              } // while (true)
+            }
 
-          totalBytesSent += chunkResult.bytesUploaded
-          val intermediateProgress = MuxUpload.State(
-            bytesUploaded = totalBytesSent,
-            totalBytes = fileSize,
-            updatedTime = chunkResult.updatedTime,
-            startTime = startTime
-          )
-          overallProgressChannel.send(intermediateProgress)
+            val chunkResult = createWorker(chunk, uploadInfo, chunkProgressChannel).doUpload()
+            Log.d("UploadJobFactory", "Chunk number ${chunkNr++}")
+
+            totalBytesSent += chunkResult.bytesUploaded
+            val intermediateProgress = MuxUpload.State(
+              bytesUploaded = totalBytesSent,
+              totalBytes = fileSize,
+              updatedTime = chunkResult.updatedTime,
+              startTime = startTime
+            )
+            overallProgressChannel.send(intermediateProgress)
+          } finally {
+            updateProgressJob?.cancel()
+          }
         } while (totalBytesSent < fileSize)
         val finalState = MuxUpload.State(
           bytesUploaded = fileSize,
