@@ -1,5 +1,6 @@
 package com.mux.video.upload.internal
 
+import android.os.SystemClock
 import android.util.Log
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
@@ -38,7 +39,7 @@ internal class UploadJobFactory private constructor() {
   fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope): UploadInfo {
     logger
     val successChannel = callbackChannel<MuxUpload.State>()
-    val progressChannel = callbackChannel<MuxUpload.State>()
+    val overallProgressChannel = callbackChannel<MuxUpload.State>()
     val errorChannel = callbackChannel<Exception>()
     val fileStream = BufferedInputStream(FileInputStream(uploadInfo.file))
     val fileSize = uploadInfo.file.length()
@@ -46,7 +47,7 @@ internal class UploadJobFactory private constructor() {
     val uploadJob = outerScope.async {
       try {
         var chunkNr = 0
-        val startTime = Date().time
+        val startTime = SystemClock.elapsedRealtime()
         var totalBytesSent: Long = 0
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
         do {
@@ -64,7 +65,19 @@ internal class UploadJobFactory private constructor() {
             totalFileSize = fileSize,
             sliceData = chunkBuffer,
           )
-          val chunkResult = createWorkerForSlice(chunk, uploadInfo, callbackChannel()).doUpload()
+          val chunkProgressChannel = callbackChannel<MuxUpload.State>()
+          val updateProgressJob = launch {
+            val chunkProgress = chunkProgressChannel.receive()
+            overallProgressChannel.send(
+              MuxUpload.State(
+                bytesUploaded = chunkProgress.bytesUploaded + totalBytesSent,
+                totalBytes = fileSize,
+                startTime = startTime,
+                updatedTime = chunkProgress.updatedTime
+              )
+            )
+          }
+          val chunkResult = createWorkerForSlice(chunk, uploadInfo, chunkProgressChannel).doUpload()
           Log.d("UploadJobFactory", "Chunk number ${chunkNr++}")
 
           totalBytesSent += chunkResult.bytesUploaded
@@ -74,30 +87,30 @@ internal class UploadJobFactory private constructor() {
             updatedTime = chunkResult.updatedTime,
             startTime = startTime
           )
-          progressChannel.send(intermediateProgress)
+          overallProgressChannel.send(intermediateProgress)
         } while (totalBytesSent < fileSize)
         val finalState = MuxUpload.State(
           bytesUploaded = fileSize,
           totalBytes = fileSize,
           startTime = startTime,
-          updatedTime = Date().time
+          updatedTime = SystemClock.elapsedRealtime()
         )
         successChannel.send(finalState)
         Result.success(finalState)
       } catch (e: Exception) {
         MuxUploadSdk.logger.e("MuxUpload", "Upload of ${uploadInfo.file} failed", e)
         errorChannel.trySend(e)
-        @Suppress("BlockingMethodInNonBlockingContext") // the streams we use don't block on close
-        fileStream.close()
         Result.failure(e)
       } finally {
+        @Suppress("BlockingMethodInNonBlockingContext") // the streams we use don't block on close
+        fileStream.close()
         MainScope().launch { MuxUploadManager.jobFinished(uploadInfo) }
       }
     }
 
     return uploadInfo.update(
       successChannel = successChannel,
-      progressChannel = progressChannel,
+      progressChannel = overallProgressChannel,
       errorChannel = errorChannel,
       uploadJob = uploadJob
     )
@@ -107,13 +120,14 @@ internal class UploadJobFactory private constructor() {
     chunk: ChunkWorker.Chunk,
     uploadInfo: UploadInfo,
     progressChannel: Channel<MuxUpload.State>
-  ): ChunkWorker = ChunkWorker(
-    chunk = chunk,
-    maxRetries = uploadInfo.retriesPerChunk,
-    videoMimeType = uploadInfo.videoMimeType,
-    remoteUri = uploadInfo.remoteUri,
-    progressChannel = progressChannel,
-  )
+  ): ChunkWorker =
+    ChunkWorker(
+      chunk = chunk,
+      maxRetries = uploadInfo.retriesPerChunk,
+      videoMimeType = uploadInfo.videoMimeType,
+      remoteUri = uploadInfo.remoteUri,
+      progressChannel = progressChannel,
+    )
 
   private fun <T> callbackChannel() =
     Channel<T>(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST) { }

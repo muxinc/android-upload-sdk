@@ -71,7 +71,7 @@ internal class ChunkWorker(
                   progressChannel.send(currentState)
                   // synchronize again since we're on a different worker inside async { }
                   synchronized(this) { updateCallersJob = null }
-                } // updateCallersJob = async ()
+                } // ..async { ...
               } // if (updateCallersJob == null)
             } // synchronized(this)
           }
