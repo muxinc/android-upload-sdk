@@ -14,7 +14,30 @@ internal fun ByteArray.asCountingRequestBody(
   mediaType: MediaType?,
   contentLength: Long,
   callback: (Long) -> Unit
-): RequestBody = CountingRequestBody(this, mediaType, contentLength, callback)
+): RequestBody = CountingRequestBody(
+  bodyData = this,
+  mediaType = mediaType,
+  contentLength = contentLength,
+  callback = callback
+)
+
+/**
+ * RequestBody based on an InputStream that reports the number of bytes written until either
+ * [contentLength] bytes are transferred or the end of the input is reached. This RequestBody
+ * doesn't close
+ */
+internal fun ByteArray.asCountingRequestBody(
+  mediaType: MediaType?,
+  contentLength: Long,
+  readSize: Int = CountingRequestBody.DEFAULT_READ_LENGTH,
+  callback: (Long) -> Unit
+): RequestBody = CountingRequestBody(
+  bodyData = this,
+  mediaType = mediaType,
+  contentLength = contentLength,
+  readLength = readSize,
+  callback = callback
+)
 
 /**
  * A RequestBody that reads its content from a file and reports its progress (in bytes) as it goes
@@ -24,13 +47,14 @@ private class CountingRequestBody constructor(
   private val bodyData: ByteArray,
   private val mediaType: MediaType?,
   private val contentLength: Long,
+  private val readLength: Int = DEFAULT_READ_LENGTH,
   private val callback: (Long) -> Unit,
 ) : RequestBody() {
   // TODO <em>: this doesn't need to be atomic
   private var dead = false
 
   companion object {
-    const val READ_LENGTH = 256 * 1024
+    const val DEFAULT_READ_LENGTH = 256 * 1024
   }
 
   override fun contentLength(): Long = contentLength//bodyData.size.toLong()
@@ -48,16 +72,16 @@ private class CountingRequestBody constructor(
       return
     }
     sink.use { output ->
-        val readBuf = ByteArray(size = READ_LENGTH)
+        val readBuf = ByteArray(size = readLength)
         do {
           val bytesReadThisTime: Int
-          val realReadLength = if (totalBytes + READ_LENGTH > contentLength) {
+          val realReadLength = if (totalBytes + readLength > contentLength) {
             // There's not enough data left for the whole READ_LENGTH, so read the remainder
             Log.d("fuck2", "readRedLength is ${(contentLength - totalBytes).toInt()}")
             (contentLength - totalBytes).toInt()
           } else {
             // There's enough to fill the entire read buffer
-            READ_LENGTH
+            readLength
           }
 
           bodyData.copyInto(
