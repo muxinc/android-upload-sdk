@@ -29,7 +29,7 @@ internal fun createUploadJob(upload: UploadInfo): UploadInfo {
  * Create instances of this class via [createUploadJob]
  */
 internal class UploadJobFactory private constructor(
-  val workerFactory: (ChunkWorker.Chunk, UploadInfo, Channel<MuxUpload.State>) -> ChunkWorker =
+  val createWorker: (ChunkWorker.Chunk, UploadInfo, Channel<MuxUpload.State>) -> ChunkWorker =
     this::createWorkerForSlice
 ) {
   private val logger get() = MuxUploadSdk.logger
@@ -82,6 +82,14 @@ internal class UploadJobFactory private constructor(
           } else {
             uploadInfo.chunkSize
           }
+          //read-in a chunk
+          val fileReadSize = withContext(Dispatchers.IO) {
+            fileStream.read(chunkBuffer, 0, chunkSize)
+          }
+          if (fileReadSize != chunkSize) { // Guaranteed for single-threaded cases
+            throw IllegalStateException("expected to read $chunkSize bytes, but read $fileReadSize")
+          }
+
           val chunk = ChunkWorker.Chunk(
             contentLength = chunkSize,
             startByte = totalBytesSent,
@@ -89,6 +97,8 @@ internal class UploadJobFactory private constructor(
             totalFileSize = fileSize,
             sliceData = chunkBuffer,
           )
+
+          // Bounce progress updates to callers  (but one-shot okhttp bodies aren't good for this)
           val chunkProgressChannel = callbackChannel<MuxUpload.State>()
           val updateProgressJob = launch {
             val chunkProgress = chunkProgressChannel.receive()
@@ -101,7 +111,7 @@ internal class UploadJobFactory private constructor(
               )
             )
           }
-          val chunkResult = workerFactory(chunk, uploadInfo, chunkProgressChannel).doUpload()
+          val chunkResult = createWorker(chunk, uploadInfo, chunkProgressChannel).doUpload()
           Log.d("UploadJobFactory", "Chunk number ${chunkNr++}")
           updateProgressJob.cancel()
 

@@ -4,6 +4,8 @@ import android.util.Log
 import java.io.FilterInputStream
 import java.io.InputStream
 
+// NOTE: This class is not currently used, but might be part of a simpler future implementation that
+//   just uses hurlconn. okhttp turned out to be a huge liability for this (like alamofire on ios)
 /**
  * InputStream that reads only a slice of the Stream that it decorates, starting from its current
  * read position. Reading, skipping, etc on this stream advances the stream that it decorates.
