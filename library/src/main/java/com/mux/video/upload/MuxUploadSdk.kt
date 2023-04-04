@@ -5,6 +5,7 @@ import android.util.Log
 import com.mux.video.upload.internal.UploadJobFactory
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
+import java.util.concurrent.TimeUnit
 
 /**
  * Uploads videos to Mux Video.
@@ -43,7 +44,12 @@ object MuxUploadSdk {
     httpClient = OkHttpClient.Builder()
       .addInterceptor(HttpLoggingInterceptor {
         logger.v("MuxUploadHttp", it)
-      }.apply { setLevel(HttpLoggingInterceptor.Level.BODY) })
+      }.apply { setLevel(HttpLoggingInterceptor.Level.HEADERS) })
+      // these are high timeouts even uploading large files, but it's better to err on the high side
+      .callTimeout(10, TimeUnit.MINUTES)  // 10 minutes per chunk
+      .writeTimeout(1, TimeUnit.MINUTES) // 1 minute per packet
+      .followRedirects(false)
+      .followSslRedirects(false)
       .build()
   }
 
