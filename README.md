@@ -1,6 +1,6 @@
 # Mux's Android Upload SDK
 
-This SDK makes it easy to upload videos to Mux from an android app. It handles large files by
+This SDK makes it easy to upload videos to Mux from an Android app. It handles large files by
 breaking them into chunks and uploads each chunk individually. Each file that gets uploaded will get
 sent to
 an [upload URL created by a backend server](https://docs.mux.com/guides/video/upload-files-directly)
