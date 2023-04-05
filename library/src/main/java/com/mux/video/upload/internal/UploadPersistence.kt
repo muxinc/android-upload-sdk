@@ -19,7 +19,7 @@ internal fun writeUploadState(uploadInfo: UploadInfo, state: MuxUpload.State) {
     PersistenceEntry(
       file = uploadInfo.file,
       savedAtLocalMs = Date().time,
-      state = if(uploadInfo.uploadJob != null) {
+      state = if(uploadInfo.isRunning()) {
         UploadPersistence.WAS_RUNNING
       } else {
         UploadPersistence.WAS_PAUSED
