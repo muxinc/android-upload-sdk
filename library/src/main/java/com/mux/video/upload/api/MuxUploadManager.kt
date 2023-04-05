@@ -7,14 +7,20 @@ import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.assertMainThread
 import com.mux.video.upload.internal.startUploadJob
 import com.mux.video.upload.internal.forgetUploadState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.flow.FlowCollector
+import kotlinx.coroutines.launch
 import java.io.File
 
 object MuxUploadManager {
 
   private val mainScope = MainScope()
+
   // TODO: The production version will keep a persistent cache of
   private val uploadsByFilename: MutableMap<String, UploadInfo> = mutableMapOf()
+  private val observerJobsByFilename: MutableMap<String, Job> = mutableMapOf()
   private val logger get() = MuxUploadSdk.logger
 
   /**
@@ -61,6 +67,7 @@ object MuxUploadManager {
     assertMainThread()
     uploadsByFilename[upload.file.absolutePath]?.let {
       cancelJobInner(it)
+      observerJobsByFilename.remove(upload.file.absolutePath)?.cancel()
       uploadsByFilename -= it.file.absolutePath
       forgetUploadState(upload)
     }
@@ -70,6 +77,7 @@ object MuxUploadManager {
   @MainThread
   internal fun jobFinished(upload: UploadInfo) {
     assertMainThread()
+    observerJobsByFilename.remove(upload.file.absolutePath)?.cancel()
     uploadsByFilename -= upload.file.absolutePath
     forgetUploadState(upload)
   }
@@ -91,6 +99,26 @@ object MuxUploadManager {
       }
     }
     uploadsByFilename += upload.file.absolutePath to finalUpload
+    observerJobsByFilename[upload.file.absolutePath]?.cancel()
+    observerJobsByFilename += upload.file.absolutePath to newObserveProgressJob(upload)
     return finalUpload
   }
+
+  private fun newObserveProgressJob(upload: UploadInfo): Job {
+    // This job has up to three children, one for each of the state flows on UploadInfo
+    return mainScope.launch {
+      upload.progressChannel?.let { flow ->
+        launch {
+          flow.collect { state ->
+            launch(Dispatchers.IO) { writeUploadState(upload, state) }
+          }
+        }
+      }
+
+      val terminatingCollector: FlowCollector<Any> = FlowCollector { jobFinished(upload) }
+      upload.errorChannel?.let { flow -> launch { flow.collect(terminatingCollector) } }
+      upload.successChannel?.let { flow -> launch { flow.collect(terminatingCollector) } }
+    }
+  }
+
 }
