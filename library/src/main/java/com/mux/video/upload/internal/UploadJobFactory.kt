@@ -66,8 +66,8 @@ internal class UploadJobFactory private constructor(
     val fileSize = uploadInfo.file.length()
 
     val uploadJob = outerScope.async {
+      val startTime = SystemClock.elapsedRealtime()
       try {
-        val startTime = SystemClock.elapsedRealtime()
         var totalBytesSent: Long = calculateStartingByte(uploadInfo)
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
 
@@ -107,7 +107,6 @@ internal class UploadJobFactory private constructor(
                     totalBytes = fileSize,
                     startTime = startTime,
                     updatedTime = chunkProgress.updatedTime,
-                    isRunning = true,
                   )
                 ) // overallProgressChannel.emit(
               } // chunkProgressChannel.collect {
@@ -121,24 +120,19 @@ internal class UploadJobFactory private constructor(
               totalBytes = fileSize,
               updatedTime = chunkResult.updatedTime,
               startTime = startTime,
-              isRunning = true,
             )
             overallProgressChannel.emit(intermediateProgress)
           } finally {
             updateProgressJob?.cancel()
           }
         } while (totalBytesSent < fileSize)
-        val finalState = MuxUpload.Progress(
-          bytesUploaded = fileSize,
-          totalBytes = fileSize,
-          startTime = startTime,
-          updatedTime = SystemClock.elapsedRealtime(),
-          isRunning = true,
-        )
+        val finalState = createFinalState(fileSize, startTime)
         successChannel.emit(finalState)
         Result.success(finalState)
       } catch (e: Exception) {
         MuxUploadSdk.logger.e("MuxUpload", "Upload of ${uploadInfo.file} failed", e)
+        val finalState = createFinalState(fileSize, startTime)
+        overallProgressChannel.emit(finalState)
         errorChannel.emit(e)
         Result.failure(e)
       } finally {
@@ -152,7 +146,16 @@ internal class UploadJobFactory private constructor(
       successChannel = successChannel,
       progressChannel = overallProgressChannel,
       errorChannel = errorChannel,
-      uploadJob = uploadJob
+      uploadJob = uploadJob,
+    )
+  }
+
+  private fun createFinalState(fileSize: Long, startTime: Long): MuxUpload.Progress {
+    return MuxUpload.Progress(
+      bytesUploaded = fileSize,
+      totalBytes = fileSize,
+      startTime = startTime,
+      updatedTime = SystemClock.elapsedRealtime()
     )
   }
 

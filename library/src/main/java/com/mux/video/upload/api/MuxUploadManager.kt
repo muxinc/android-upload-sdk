@@ -73,11 +73,13 @@ object MuxUploadManager {
 
   @JvmSynthetic
   @MainThread
-  internal fun jobFinished(upload: UploadInfo) {
+  internal fun jobFinished(upload: UploadInfo, forgetJob: Boolean = true) {
     assertMainThread()
     observerJobsByFilename.remove(upload.file.absolutePath)?.cancel()
     uploadsByFilename -= upload.file.absolutePath
-    forgetUploadState(upload)
+    if (forgetJob) {
+      forgetUploadState(upload)
+    }
   }
 
   private fun cancelJobInner(upload: UploadInfo) {
@@ -113,9 +115,14 @@ object MuxUploadManager {
         }
       }
 
-      val terminatingCollector: FlowCollector<Any> = FlowCollector { jobFinished(upload) }
-      upload.errorChannel?.let { flow -> launch { flow.collect(terminatingCollector) } }
-      upload.successChannel?.let { flow -> launch { flow.collect(terminatingCollector) } }
+      upload.errorChannel?.let { flow ->
+        launch {
+          flow.collect {
+            jobFinished(upload, it !is CancellationException)
+          }
+        }
+      }
+      upload.successChannel?.let { flow -> launch { flow.collect { jobFinished(upload) } } }
     }
   }
 

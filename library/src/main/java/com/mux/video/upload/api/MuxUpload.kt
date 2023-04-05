@@ -23,12 +23,21 @@ class MuxUpload private constructor(
   private var uploadInfo: UploadInfo, private val autoManage: Boolean = true
 ) {
 
+  /**
+   * File containing the video to be uploaded
+   */
   val videoFile: File get() = uploadInfo.file
+
+  /**
+   * The most-currents state of the upload
+   */
   val currentState: Progress
-    get() = lastKnownState ?: Progress(
-      totalBytes = videoFile.length(),
-      isRunning = false
-    )
+    get() = lastKnownState ?: Progress(totalBytes = videoFile.length())
+
+  /**
+   * True when the upload is running, false if it's paused, failed, or canceled
+   */
+  val isRunning get() = uploadInfo.isRunning()
 
   private var resultListeners = mutableListOf<EventListener<Result<Progress>>>()
   private var progressListeners = mutableListOf<EventListener<Progress>>()
@@ -196,7 +205,6 @@ class MuxUpload private constructor(
     val totalBytes: Long = 0,
     val startTime: Long = 0,
     val updatedTime: Long = 0,
-    val isRunning: Boolean = false,
   )
 
   /**

@@ -47,14 +47,14 @@ class MediaStoreVideosAdapter(
       "${listItem.currentState.bytesUploaded} bytes in ${elapsedTime / 1000F} s elapsed "
     holder.viewBinding.mediastoreVideoFilesize.text = "${formattedRate} KBytes/s"
 
-    if (listItem.currentState.isRunning) {
+    if (listItem.isRunning) {
       holder.viewBinding.mediastoreVideoPause.setImageResource(android.R.drawable.ic_media_pause)
     } else {
       holder.viewBinding.mediastoreVideoPause.setImageResource(android.R.drawable.ic_media_play)
     }
 
     holder.viewBinding.mediastoreVideoPause.setOnClickListener {
-      if (listItem.currentState.isRunning) {
+      if (listItem.isRunning) {
         listItem.pause()
       } else {
         listItem.start()
