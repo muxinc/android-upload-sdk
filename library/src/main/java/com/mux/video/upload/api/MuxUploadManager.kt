@@ -16,7 +16,6 @@ object MuxUploadManager {
 
   private val mainScope = MainScope()
 
-  // TODO: The production version will keep a persistent cache of
   private val uploadsByFilename: MutableMap<String, UploadInfo> = mutableMapOf()
   private val observerJobsByFilename: MutableMap<String, Job> = mutableMapOf()
   private val logger get() = MuxUploadSdk.logger

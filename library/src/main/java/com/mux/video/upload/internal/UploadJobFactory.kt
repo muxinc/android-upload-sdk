@@ -128,17 +128,18 @@ internal class UploadJobFactory private constructor(
         } while (totalBytesSent < fileSize)
         val finalState = createFinalState(fileSize, startTime)
         successChannel.emit(finalState)
+        MainScope().launch { MuxUploadManager.jobFinished(uploadInfo) }
         Result.success(finalState)
       } catch (e: Exception) {
         MuxUploadSdk.logger.e("MuxUpload", "Upload of ${uploadInfo.file} failed", e)
         val finalState = createFinalState(fileSize, startTime)
         overallProgressChannel.emit(finalState)
         errorChannel.emit(e)
+        MainScope().launch { MuxUploadManager.jobFinished(uploadInfo, e !is CancellationException) }
         Result.failure(e)
       } finally {
         @Suppress("BlockingMethodInNonBlockingContext") // the streams we use don't block on close
         fileStream.close()
-        MainScope().launch { MuxUploadManager.jobFinished(uploadInfo) }
       }
     }
 
