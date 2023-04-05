@@ -1,17 +1,12 @@
 package com.mux.video.upload.internal
 
 import android.os.SystemClock
-import android.util.Log
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.collect
 import java.io.BufferedInputStream
-import java.io.File
 import java.io.FileInputStream
 import java.util.*
 
@@ -68,7 +63,7 @@ internal class UploadJobFactory private constructor(
     val uploadJob = outerScope.async {
       val startTime = SystemClock.elapsedRealtime()
       try {
-        var totalBytesSent: Long = calculateStartingByte(uploadInfo)
+        var totalBytesSent: Long = getAlreadyTransferredBytes(uploadInfo)
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
 
         do {
@@ -79,6 +74,12 @@ internal class UploadJobFactory private constructor(
           } else {
             uploadInfo.chunkSize
           }
+
+          // If we're resuming, we must skip to the current file pos
+          if(totalBytesSent != 0L) {
+            withContext(Dispatchers.IO) { fileStream.skip(totalBytesSent) }
+          }
+
           //read-in a chunk
           val fileReadSize = withContext(Dispatchers.IO) {
             fileStream.read(chunkBuffer, 0, chunkSize)
@@ -160,7 +161,7 @@ internal class UploadJobFactory private constructor(
     )
   }
 
-  private fun calculateStartingByte(file: UploadInfo): Long = readLastByteForFile(file)
+  private fun getAlreadyTransferredBytes(file: UploadInfo): Long = readLastByteForFile(file)
 
   private fun <T> callbackFlow() = MutableSharedFlow<T>()
 }
