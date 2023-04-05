@@ -105,7 +105,6 @@ class MuxUpload private constructor(
   fun pause() {
     uploadInfo = if (autoManage) {
       observerJob?.cancel("user requested pause")
-      lastKnownState?.let { state -> progressListeners.forEach { it.onEvent(state) } }
       MuxUploadManager.pauseJob(uploadInfo)
     } else {
       observerJob?.cancel("user requested pause")
@@ -117,6 +116,7 @@ class MuxUpload private constructor(
         progressChannel = null,
       )
     }
+    lastKnownState?.let { state -> progressListeners.forEach { it.onEvent(state) } }
   }
 
   /**

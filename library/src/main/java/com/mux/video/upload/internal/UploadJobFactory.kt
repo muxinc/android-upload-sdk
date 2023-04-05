@@ -66,6 +66,11 @@ internal class UploadJobFactory private constructor(
         var totalBytesSent: Long = getAlreadyTransferredBytes(uploadInfo)
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
 
+        // If we're resuming, we must skip to the current file pos
+        if(totalBytesSent != 0L) {
+          withContext(Dispatchers.IO) { fileStream.skip(totalBytesSent) }
+        }
+
         do {
           // The last chunk will almost definitely be smaller than a whole chunk
           val bytesLeft = fileSize - totalBytesSent
@@ -73,11 +78,6 @@ internal class UploadJobFactory private constructor(
             bytesLeft.toInt()
           } else {
             uploadInfo.chunkSize
-          }
-
-          // If we're resuming, we must skip to the current file pos
-          if(totalBytesSent != 0L) {
-            withContext(Dispatchers.IO) { fileStream.skip(totalBytesSent) }
           }
 
           //read-in a chunk
