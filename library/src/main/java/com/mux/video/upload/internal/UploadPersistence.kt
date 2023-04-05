@@ -16,7 +16,7 @@ internal fun initializeUploadPersistence(appContext: Context) {
 @JvmSynthetic
 internal fun writeUploadState(uploadInfo: UploadInfo, state: MuxUpload.State) {
   UploadPersistence.write(
-    PersistenceEntry(
+    UploadEntry(
       file = uploadInfo.file,
       savedAtLocalMs = Date().time,
       state = if(uploadInfo.isRunning()) {
@@ -24,9 +24,14 @@ internal fun writeUploadState(uploadInfo: UploadInfo, state: MuxUpload.State) {
       } else {
         UploadPersistence.WAS_PAUSED
       },
-      lastSuccessfulByte = state.bytesUploaded - 1
+      bytesSent = state.bytesUploaded
     )
   )
+}
+
+@JvmSynthetic
+internal fun readLastByteForFile(upload: UploadInfo): Long {
+  return UploadPersistence.readEntries()[upload.file.absolutePath]?.bytesSent ?: 0
 }
 
 @JvmSynthetic
@@ -49,7 +54,7 @@ private object UploadPersistence {
 
   @Throws
   @Synchronized
-  fun write(entry: PersistenceEntry) {
+  fun write(entry: UploadEntry) {
     checkInitialized()
     val entries = fetchEntries()
     entries[entry.file.absolutePath] = entry
@@ -67,26 +72,26 @@ private object UploadPersistence {
 
   @Throws
   @Synchronized
-  fun readEntries(): MutableMap<String, PersistenceEntry> {
+  fun readEntries(): MutableMap<String, UploadEntry> {
     checkInitialized()
     return readEntries()
   }
 
   @Throws
-  private fun writeEntries(entries: Map<String, PersistenceEntry>) {
+  private fun writeEntries(entries: Map<String, UploadEntry>) {
     val entriesJson = JSONArray()
     entries.forEach { entriesJson.put(it.value.toJson()) }
     prefs.edit().putString(LIST_KEY, entriesJson.toString()).apply()
   }
 
   @Throws
-  private fun fetchEntries(): MutableMap<String, PersistenceEntry> {
+  private fun fetchEntries(): MutableMap<String, UploadEntry> {
     val jsonStr = prefs.getString(LIST_KEY, null)
     return if (jsonStr == null) {
       mutableMapOf()
     } else {
       val jsonArray = JSONArray(jsonStr)
-      val parsedEntries = mutableMapOf<String, PersistenceEntry>()
+      val parsedEntries = mutableMapOf<String, UploadEntry>()
       for (index in 0..jsonArray.length()) {
         jsonArray.getJSONObject(index)?.let { elemJson ->
           val entry = elemJson.parsePersistenceEntry()
@@ -107,11 +112,11 @@ private object UploadPersistence {
   }
 }
 
-private data class PersistenceEntry(
+internal data class UploadEntry(
   val file: File,
   val savedAtLocalMs: Long,
   val state: Int,
-  val lastSuccessfulByte: Long,
+  val bytesSent: Long,
 ) {
   fun toJson(): JSONObject {
     return JSONObject().apply {
@@ -119,19 +124,19 @@ private data class PersistenceEntry(
       put("data", JSONObject().apply {
         put("saved_at_local_ms", savedAtLocalMs)
         put("state", state)
-        put("last_successful_byte", lastSuccessfulByte)
+        put("bytes_sent", bytesSent)
       })
     }
   }
 }
 
-private fun JSONObject.parsePersistenceEntry(): PersistenceEntry {
+private fun JSONObject.parsePersistenceEntry(): UploadEntry {
   val file = File(getString("file"))
   val data = getJSONObject("data")
-  return PersistenceEntry(
+  return UploadEntry(
     file = file,
     savedAtLocalMs = data.optLong("saved_at_local_ms"),
     state = data.optInt("state"),
-    lastSuccessfulByte = data.optLong("last_successful_byte")
+    bytesSent = data.optLong("bytes_sent")
   )
 }

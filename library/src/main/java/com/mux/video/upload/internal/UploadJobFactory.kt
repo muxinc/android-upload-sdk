@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.collect
 import java.io.BufferedInputStream
+import java.io.File
 import java.io.FileInputStream
 import java.util.*
 
@@ -70,7 +71,7 @@ internal class UploadJobFactory private constructor(
       try {
         var chunkNr = 0
         val startTime = SystemClock.elapsedRealtime()
-        var totalBytesSent: Long = 0
+        var totalBytesSent: Long = calculateStartingByte(uploadInfo)
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
 
         do {
@@ -156,6 +157,7 @@ internal class UploadJobFactory private constructor(
     )
   }
 
+  private fun calculateStartingByte(file: UploadInfo): Long  = readLastByteForFile(file)
+
   private fun <T> callbackFlow() = MutableSharedFlow<T>()
-    //Channel<T>(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST) { }
 }
