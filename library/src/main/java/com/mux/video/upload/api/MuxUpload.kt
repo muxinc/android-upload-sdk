@@ -106,7 +106,7 @@ class MuxUpload private constructor(
         progressChannel = null,
       )
     }
-    callbackScope.cancel("user requested pause")
+    observerJob?.cancel("user requested pause")
   }
 
   /**
@@ -121,7 +121,7 @@ class MuxUpload private constructor(
       uploadInfo.uploadJob?.cancel("user requested cancel")
     }
     lastKnownState = null
-    callbackScope.cancel("user requested cancel")
+    observerJob?.cancel("user requested cancel")
   }
 
   @MainThread
