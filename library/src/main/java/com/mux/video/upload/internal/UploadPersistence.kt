@@ -2,19 +2,64 @@ package com.mux.video.upload.internal
 
 import android.content.Context
 import android.content.SharedPreferences
-import androidx.annotation.IntDef
+import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 
 @JvmSynthetic
 internal fun initializeUploadPersistence(appContext: Context) {
   UploadPersistence.prefs = appContext.applicationContext.getSharedPreferences("mux_upload", 0)
 }
 
+/**
+ * Datastore for uploads that are paused, are running, or should be running. Internally it models
+ * the store as a Map keyed by the the upload entry's file name, storing json in shared prefs.
+ * Objects are cleared from this store when uploads are finished, failed, or canceled. This is
+ * handled by MuxUploadManager
+ */
 private object UploadPersistence {
   const val WAS_RUNNING = 0
   const val WAS_PAUSED = 1
+  const val LIST_KEY = "uploads"
 
   lateinit var prefs: SharedPreferences
+
+  @Throws
+  @Synchronized
+  fun write(entry: PersistenceEntry) {
+    checkInitialized()
+    val entries = fetchEntries()
+    entries[entry.file.absolutePath] = entry
+
+    val entriesJson = JSONArray()
+    entries.forEach { entriesJson.put(it.value.toJson()) }
+    prefs.edit().putString(LIST_KEY, entriesJson.toString()).apply()
+  }
+
+  @Throws
+  @Synchronized
+  fun readEntries(): Map<String, PersistenceEntry> {
+    checkInitialized()
+    return readEntries()
+  }
+
+  @Throws
+  private fun fetchEntries(): MutableMap<String, PersistenceEntry> {
+    val jsonStr = prefs.getString(LIST_KEY, null)
+    return if (jsonStr == null) {
+      mutableMapOf()
+    } else {
+      val jsonArray = JSONArray(jsonStr)
+      val parsedEntries = mutableMapOf<String, PersistenceEntry>()
+      for (index in 0..jsonArray.length()) {
+        jsonArray.getJSONObject(index)?.let { elemJson ->
+          val entry = elemJson.parsePersistenceEntry()
+          parsedEntries.put(entry.file.absolutePath, elemJson.parsePersistenceEntry())
+        }
+      }
+      return parsedEntries
+    }
+  }
 
   private fun checkInitialized() {
     if (!this::prefs.isInitialized) {
@@ -27,24 +72,30 @@ private object UploadPersistence {
 }
 
 private data class PersistenceEntry(
+  val file: File,
   val savedAtLocalMs: Long,
   val state: Int,
   val lastSuccessfulByte: Long,
 ) {
-  fun toJson(): String {
+  fun toJson(): JSONObject {
     return JSONObject().apply {
-      put("saved_at_local_ms", savedAtLocalMs)
-      put("state", state)
-      put("last_successful_byte", lastSuccessfulByte)
-    }.toString()
+      put("file", file.absolutePath)
+      put("data", JSONObject().apply {
+        put("saved_at_local_ms", savedAtLocalMs)
+        put("state", state)
+        put("last_successful_byte", lastSuccessfulByte)
+      })
+    }
   }
 }
 
-private fun String.parsePersistenceEntry(): PersistenceEntry {
-  val json = JSONObject(this)
+private fun JSONObject.parsePersistenceEntry(): PersistenceEntry {
+  val file = File(getString("file"))
+  val data = getJSONObject("data")
   return PersistenceEntry(
-    savedAtLocalMs = json.optLong("saved_at_local_ms"),
-    state = json.optInt("state"),
-    lastSuccessfulByte = json.optLong("last_successful_byte")
+    file = file,
+    savedAtLocalMs = data.optLong("saved_at_local_ms"),
+    state = data.optInt("state"),
+    lastSuccessfulByte = data.optLong("last_successful_byte")
   )
 }
