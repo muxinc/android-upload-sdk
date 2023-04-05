@@ -72,6 +72,8 @@ internal class UploadJobFactory private constructor(
         val startTime = SystemClock.elapsedRealtime()
         var totalBytesSent: Long = 0//calculateStartingByte(uploadInfo)
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
+        var prevBytesSent = calculateStartingByte(uploadInfo)
+        Log.d("why", "Previously sent bytes: $prevBytesSent")
 
         do {
           // The last chunk will almost definitely be smaller than a whole chunk

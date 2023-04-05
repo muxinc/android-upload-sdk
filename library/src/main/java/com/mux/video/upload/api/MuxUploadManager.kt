@@ -1,5 +1,6 @@
 package com.mux.video.upload.api
 
+import android.util.Log
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.*
@@ -7,11 +8,8 @@ import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.assertMainThread
 import com.mux.video.upload.internal.startUploadJob
 import com.mux.video.upload.internal.forgetUploadState
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.FlowCollector
-import kotlinx.coroutines.launch
 import java.io.File
 
 object MuxUploadManager {
@@ -88,28 +86,31 @@ object MuxUploadManager {
 
   private fun insertOrUpdateUpload(upload: UploadInfo, restart: Boolean): UploadInfo {
     val filename = upload.file.absolutePath
-    var finalUpload = uploadsByFilename[filename]
+    var newUpload = uploadsByFilename[filename]
     // Use the old job if possible (unless requested otherwise)
-    if (finalUpload?.uploadJob == null) {
-      finalUpload = startUploadJob(upload)
+    if (newUpload?.uploadJob == null) {
+      newUpload = startUploadJob(upload)
     } else {
       if (restart) {
         cancelJobInner(upload)
-        finalUpload = startUploadJob(upload)
+        newUpload = startUploadJob(upload)
       }
     }
-    uploadsByFilename += upload.file.absolutePath to finalUpload
+    uploadsByFilename += upload.file.absolutePath to newUpload
     observerJobsByFilename[upload.file.absolutePath]?.cancel()
-    observerJobsByFilename += upload.file.absolutePath to newObserveProgressJob(upload)
-    return finalUpload
+    observerJobsByFilename += upload.file.absolutePath to newObserveProgressJob(newUpload)
+    return newUpload
   }
 
   private fun newObserveProgressJob(upload: UploadInfo): Job {
     // This job has up to three children, one for each of the state flows on UploadInfo
     return mainScope.launch {
+      Log.d("why", "observe things: $upload")
       upload.progressChannel?.let { flow ->
         launch {
+          Log.d("why", "inside coroutine to collect progress")
           flow.collect { state ->
+            Log.d("why", "writing state $state")
             launch(Dispatchers.IO) { writeUploadState(upload, state) }
           }
         }

@@ -74,7 +74,7 @@ private object UploadPersistence {
   @Synchronized
   fun readEntries(): MutableMap<String, UploadEntry> {
     checkInitialized()
-    return readEntries()
+    return fetchEntries()
   }
 
   @Throws
@@ -91,14 +91,18 @@ private object UploadPersistence {
       mutableMapOf()
     } else {
       val jsonArray = JSONArray(jsonStr)
-      val parsedEntries = mutableMapOf<String, UploadEntry>()
-      for (index in 0..jsonArray.length()) {
-        jsonArray.getJSONObject(index)?.let { elemJson ->
-          val entry = elemJson.parsePersistenceEntry()
-          parsedEntries.put(entry.file.absolutePath, elemJson.parsePersistenceEntry())
+      if (jsonArray.length() <= 0) {
+        return mutableMapOf()
+      } else {
+        val parsedEntries = mutableMapOf<String, UploadEntry>()
+        for (index in 0 until jsonArray.length()) {
+          jsonArray.getJSONObject(index)?.let { elemJson ->
+            val entry = elemJson.parsePersistenceEntry()
+            parsedEntries.put(entry.file.absolutePath, elemJson.parsePersistenceEntry())
+          }
         }
+        return parsedEntries
       }
-      return parsedEntries
     }
   }
 

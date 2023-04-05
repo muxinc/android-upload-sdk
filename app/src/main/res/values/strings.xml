@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">Mux Video VOD Upload SDK</string>
-    <string name="title_activity_scrolling">ScrollingActivity</string>
+    <string name="title_activity_scrolling">Mux Upload Example</string>
     <string name="action_settings">Settings</string>
 </resources>

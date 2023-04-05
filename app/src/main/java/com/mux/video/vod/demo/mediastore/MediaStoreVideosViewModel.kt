@@ -46,7 +46,7 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
 
       val upl = MuxUpload.Builder(MediaStoreVideosActivity.PUT_URL, copiedFile).build()
       upl.addProgressListener {
-        Log.v(javaClass.simpleName, "Upload progress: ${it.bytesUploaded} / ${it.totalBytes}")
+        //Log.v(javaClass.simpleName, "Upload progress: ${it.bytesUploaded} / ${it.totalBytes}")
         innerUploads.postValue(uploadList)
       }
       upl.addResultListener {
