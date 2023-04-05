@@ -1,23 +1,22 @@
 package com.mux.video.upload.internal
 
 import android.os.SystemClock
-import android.util.Log
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import java.io.BufferedInputStream
 import java.io.FileInputStream
 import java.util.*
 
 /**
- * Creates a new Upload Job for this
+ * Creates a new Upload Job for the given [UploadInfo]. The job is started as soon as it is created.
+ * To pause a job, save its last-known state in UploadPersistence and cancel the [Job] in the
+ * [UploadInfo] returned by this function
  */
 @JvmSynthetic
-internal fun createUploadJob(upload: UploadInfo): UploadInfo {
-  MuxUploadSdk.logger.d("MuxUpload", "Creating job for: $upload")
+internal fun startUploadJob(upload: UploadInfo): UploadInfo {
   return MuxUploadSdk.uploadJobFactory()
     .createUploadJob(upload, CoroutineScope(Dispatchers.Default))
 }
@@ -25,11 +24,10 @@ internal fun createUploadJob(upload: UploadInfo): UploadInfo {
 /**
  * Creates upload coroutine jobs, which handle uploading a single file and reporting/delegating
  * the state of the upload. To cancel, just call [Deferred.cancel]
- *
- * Create instances of this class via [createUploadJob]
+ * This class is not intended to be used from outside the SDK
  */
 internal class UploadJobFactory private constructor(
-  val createWorker: (ChunkWorker.Chunk, UploadInfo, Channel<MuxUpload.State>) -> ChunkWorker =
+  val createWorker: (ChunkWorker.Chunk, UploadInfo, MutableSharedFlow<MuxUpload.Progress>) -> ChunkWorker =
     this::createWorkerForSlice
 ) {
   private val logger get() = MuxUploadSdk.logger
@@ -38,17 +36,12 @@ internal class UploadJobFactory private constructor(
     @JvmSynthetic
     internal fun create() = UploadJobFactory()
 
-    @JvmSynthetic
-    internal fun create(
-      workerFactory: (ChunkWorker.Chunk, UploadInfo, Channel<MuxUpload.State>) -> ChunkWorker
-    ) = UploadJobFactory(workerFactory)
-
     @Suppress("unused") // It's used by method-reference, which the linter doesn't see
     @JvmSynthetic
     private fun createWorkerForSlice(
       chunk: ChunkWorker.Chunk,
       uploadInfo: UploadInfo,
-      progressChannel: Channel<MuxUpload.State>
+      progressChannel: MutableSharedFlow<MuxUpload.Progress>
     ): ChunkWorker =
       ChunkWorker(
         chunk = chunk,
@@ -61,18 +54,22 @@ internal class UploadJobFactory private constructor(
 
   fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope): UploadInfo {
     logger
-    val successChannel = callbackChannel<MuxUpload.State>()
-    val overallProgressChannel = callbackChannel<MuxUpload.State>()
-    val errorChannel = callbackChannel<Exception>()
+    val successChannel = callbackFlow<MuxUpload.Progress>()
+    val overallProgressChannel = callbackFlow<MuxUpload.Progress>()
+    val errorChannel = callbackFlow<Exception>()
     val fileStream = BufferedInputStream(FileInputStream(uploadInfo.file))
     val fileSize = uploadInfo.file.length()
 
     val uploadJob = outerScope.async {
+      val startTime = SystemClock.elapsedRealtime()
       try {
-        var chunkNr = 0
-        val startTime = SystemClock.elapsedRealtime()
-        var totalBytesSent: Long = 0
+        var totalBytesSent: Long = getAlreadyTransferredBytes(uploadInfo)
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
+
+        // If we're resuming, we must skip to the current file pos
+        if(totalBytesSent != 0L) {
+          withContext(Dispatchers.IO) { fileStream.skip(totalBytesSent) }
+        }
 
         do {
           // The last chunk will almost definitely be smaller than a whole chunk
@@ -82,6 +79,7 @@ internal class UploadJobFactory private constructor(
           } else {
             uploadInfo.chunkSize
           }
+
           //read-in a chunk
           val fileReadSize = withContext(Dispatchers.IO) {
             fileStream.read(chunkBuffer, 0, chunkSize)
@@ -98,54 +96,51 @@ internal class UploadJobFactory private constructor(
             sliceData = chunkBuffer,
           )
 
-          val chunkProgressChannel = callbackChannel<MuxUpload.State>()
+          val chunkProgressChannel = callbackFlow<MuxUpload.Progress>()
           var updateProgressJob: Job? = null
           try {
             // Bounce progress updates to callers
             updateProgressJob = launch {
-              for (chunkProgress in chunkProgressChannel) {
-                overallProgressChannel.send(
-                  MuxUpload.State(
+              chunkProgressChannel.collect { chunkProgress ->
+                overallProgressChannel.emit(
+                  MuxUpload.Progress(
                     bytesUploaded = chunkProgress.bytesUploaded + totalBytesSent,
                     totalBytes = fileSize,
                     startTime = startTime,
-                    updatedTime = chunkProgress.updatedTime
+                    updatedTime = chunkProgress.updatedTime,
                   )
-                ) // overallProgress.send(
-              } // for (chunkProgress in chunkProgressChannel)
+                ) // overallProgressChannel.emit(
+              } // chunkProgressChannel.collect {
             }
 
-            val chunkResult = createWorker(chunk, uploadInfo, chunkProgressChannel).doUpload()
-            Log.d("UploadJobFactory", "Chunk number ${chunkNr++}")
+            val chunkResult = createWorker(chunk, uploadInfo, chunkProgressChannel).upload()
 
             totalBytesSent += chunkResult.bytesUploaded
-            val intermediateProgress = MuxUpload.State(
+            val intermediateProgress = MuxUpload.Progress(
               bytesUploaded = totalBytesSent,
               totalBytes = fileSize,
               updatedTime = chunkResult.updatedTime,
-              startTime = startTime
+              startTime = startTime,
             )
-            overallProgressChannel.send(intermediateProgress)
+            overallProgressChannel.emit(intermediateProgress)
           } finally {
             updateProgressJob?.cancel()
           }
         } while (totalBytesSent < fileSize)
-        val finalState = MuxUpload.State(
-          bytesUploaded = fileSize,
-          totalBytes = fileSize,
-          startTime = startTime,
-          updatedTime = SystemClock.elapsedRealtime()
-        )
-        successChannel.send(finalState)
+        val finalState = createFinalState(fileSize, startTime)
+        successChannel.emit(finalState)
+        MainScope().launch { MuxUploadManager.jobFinished(uploadInfo) }
         Result.success(finalState)
       } catch (e: Exception) {
         MuxUploadSdk.logger.e("MuxUpload", "Upload of ${uploadInfo.file} failed", e)
-        errorChannel.trySend(e)
+        val finalState = createFinalState(fileSize, startTime)
+        overallProgressChannel.emit(finalState)
+        errorChannel.emit(e)
+        MainScope().launch { MuxUploadManager.jobFinished(uploadInfo, e !is CancellationException) }
         Result.failure(e)
       } finally {
         @Suppress("BlockingMethodInNonBlockingContext") // the streams we use don't block on close
         fileStream.close()
-        MainScope().launch { MuxUploadManager.jobFinished(uploadInfo) }
       }
     }
 
@@ -153,10 +148,20 @@ internal class UploadJobFactory private constructor(
       successChannel = successChannel,
       progressChannel = overallProgressChannel,
       errorChannel = errorChannel,
-      uploadJob = uploadJob
+      uploadJob = uploadJob,
     )
   }
 
-  private fun <T> callbackChannel() =
-    Channel<T>(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST) { }
+  private fun createFinalState(fileSize: Long, startTime: Long): MuxUpload.Progress {
+    return MuxUpload.Progress(
+      bytesUploaded = fileSize,
+      totalBytes = fileSize,
+      startTime = startTime,
+      updatedTime = SystemClock.elapsedRealtime()
+    )
+  }
+
+  private fun getAlreadyTransferredBytes(file: UploadInfo): Long = readLastByteForFile(file)
+
+  private fun <T> callbackFlow() = MutableSharedFlow<T>()
 }

@@ -9,13 +9,13 @@ import androidx.recyclerview.widget.RecyclerView.ViewHolder
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.databinding.ListItemUploadingVideoBinding
 import java.text.DecimalFormat
-import java.util.*
 
 class MediaStoreVideosAdapter(
   private var items: List<MuxUpload>,
+  private var viewModel: MediaStoreVideosViewModel,
 ) : RecyclerView.Adapter<MediaStoreVideoViewHolder>() {
 
-  private var progressConsumer: Consumer<MuxUpload.State>? = null
+  private var progressConsumer: Consumer<MuxUpload.Progress>? = null
 
   override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MediaStoreVideoViewHolder {
     val viewBinding =
@@ -46,6 +46,20 @@ class MediaStoreVideosAdapter(
     holder.viewBinding.mediastoreVideoDate.text =
       "${listItem.currentState.bytesUploaded} bytes in ${elapsedTime / 1000F} s elapsed "
     holder.viewBinding.mediastoreVideoFilesize.text = "${formattedRate} KBytes/s"
+
+    if (listItem.isRunning) {
+      holder.viewBinding.mediastoreVideoPause.setImageResource(android.R.drawable.ic_media_pause)
+    } else {
+      holder.viewBinding.mediastoreVideoPause.setImageResource(android.R.drawable.ic_media_play)
+    }
+
+    holder.viewBinding.mediastoreVideoPause.setOnClickListener {
+      if (listItem.isRunning) {
+        listItem.pause()
+      } else {
+        listItem.start()
+      }
+    }
   }
 }
 

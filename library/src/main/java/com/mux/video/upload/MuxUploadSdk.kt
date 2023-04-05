@@ -3,6 +3,7 @@ package com.mux.video.upload
 import android.content.Context
 import android.util.Log
 import com.mux.video.upload.internal.UploadJobFactory
+import com.mux.video.upload.internal.initializeUploadPersistence
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import java.util.concurrent.TimeUnit
@@ -14,9 +15,9 @@ import java.util.concurrent.TimeUnit
  */
 object MuxUploadSdk {
   /**
-   * The current version of this SDK. Release builds of this SDK strictly follow the rules of
-   * semantic versioning (https://semver.org)
+   * The current version of this SDK. Release builds of this SDK follow semver (https://semver.org)
    */
+  @Suppress("unused")
   const val VERSION = BuildConfig.LIB_VERSION
 
   /**
@@ -53,15 +54,19 @@ object MuxUploadSdk {
       .build()
   }
 
+  @Suppress("unused")
   fun initialize(appContext: Context) {
     // TODO: Collect caller app metrics, get the cache directory, etc.
     //  Also, try not to save the appContext. Context.applicationContext is safe to hold statically
     //  but it makes compiler warnings
+
+    initializeUploadPersistence(appContext)
   }
 
   /**
    * Use the specified [OkHttpClient] instead of the default internal okhttp client
    */
+  @Suppress("unused")
   fun useOkHttpClient(okHttpClient: OkHttpClient) {
     httpClient = okHttpClient
   }

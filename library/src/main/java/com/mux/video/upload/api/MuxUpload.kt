@@ -7,8 +7,6 @@ import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.update
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.receiveAsFlow
 import java.io.File
 
 /**
@@ -25,16 +23,28 @@ class MuxUpload private constructor(
   private var uploadInfo: UploadInfo, private val autoManage: Boolean = true
 ) {
 
+  /**
+   * File containing the video to be uploaded
+   */
   val videoFile: File get() = uploadInfo.file
-  val currentState: State get() = lastKnownState ?: State(totalBytes = videoFile.length())
-  // TODO: Add more (possibly all) properties read-only from UploadInfo
 
-  private val successConsumers: MutableList<Consumer<State>> = mutableListOf()
-  private val failureConsumers: MutableList<Consumer<Exception>> = mutableListOf()
-  private val progressConsumers: MutableList<Consumer<State>> = mutableListOf()
-  private var lastKnownState: State? = null
+  /**
+   * The most-currents state of the upload
+   */
+  val currentState: Progress
+    get() = lastKnownState ?: Progress(totalBytes = videoFile.length())
 
-  private val mainScope: CoroutineScope = MainScope()
+  /**
+   * True when the upload is running, false if it's paused, failed, or canceled
+   */
+  val isRunning get() = uploadInfo.isRunning()
+
+  private var resultListeners = mutableListOf<EventListener<Result<Progress>>>()
+  private var progressListeners = mutableListOf<EventListener<Progress>>()
+  private var observerJob: Job? = null
+  private var lastKnownState: Progress? = null
+
+  private val callbackScope: CoroutineScope = MainScope()
   private val logger get() = MuxUploadSdk.logger
 
   init {
@@ -75,82 +85,124 @@ class MuxUpload private constructor(
   }
 
   @Throws
-  suspend fun awaitSuccess(): State {
+  @Suppress("unused")
+  suspend fun awaitSuccess(): Progress {
     return coroutineScope {
       startInner(coroutineScope = this)
       uploadInfo.uploadJob?.let { job ->
         val result = job.await()
         result.exceptionOrNull()?.let { throw it }
         result.getOrThrow()
-      } ?: State(0, uploadInfo.file.length())
+      } ?: Progress(0, uploadInfo.file.length())
     }
   }
 
+  /**
+   * Pauses the upload. If the upload was already paused, this method has no effect
+   * You can resume the upload where it left off by calling [start]
+   */
+  @Suppress("MemberVisibilityCanBePrivate")
   fun pause() {
-    logger.w("MuxUpload", "pause() is not implemented yet")
+    uploadInfo = if (autoManage) {
+      observerJob?.cancel("user requested pause")
+      MuxUploadManager.pauseJob(uploadInfo)
+    } else {
+      observerJob?.cancel("user requested pause")
+      uploadInfo.uploadJob?.cancel()
+      uploadInfo.update(
+        uploadJob = null,
+        successChannel = null,
+        errorChannel = null,
+        progressChannel = null,
+      )
+    }
+    lastKnownState?.let { state -> progressListeners.forEach { it.onEvent(state) } }
   }
 
+  /**
+   * Cancels this upload. The upload job will be canceled and it will not be possible to start this
+   * job again where it left off
+   */
+  @Suppress("MemberVisibilityCanBePrivate")
   fun cancel() {
     if (autoManage) {
       MuxUploadManager.cancelJob(uploadInfo)
     } else {
       uploadInfo.uploadJob?.cancel("user requested cancel")
     }
-    mainScope.cancel("user requested cancel")
+    lastKnownState = null
+    observerJob?.cancel("user requested cancel")
+  }
+
+  /**
+   * Adds a listener for progress updates on this upload
+   */
+  @MainThread
+  fun addProgressListener(listener: EventListener<Progress>) {
+    progressListeners += listener
+    lastKnownState?.let { listener.onEvent(it) }
+  }
+
+  /**
+   * Removes the given listener for progress updates
+   */
+  @MainThread
+  fun removeProgressListener(listener: EventListener<Progress>) {
+    progressListeners -= listener
+  }
+
+  /**
+   * Adds a listener for success or failure updates on this upload
+   */
+  @MainThread
+  fun addResultListener(listener: EventListener<Result<Progress>>) {
+    resultListeners += listener
+    lastKnownState?.let {
+      if (it.bytesUploaded >= it.totalBytes) {
+        listener.onEvent(Result.success(it))
+      }
+    }
   }
 
   @MainThread
-  fun addSuccessConsumer(cb: Consumer<State>) {
-    successConsumers += cb
+  fun removeResultListener(listener: EventListener<Result<Progress>>) {
+    resultListeners -= listener
   }
 
-  @MainThread
-  fun removeSuccessConsumer(cb: Consumer<State>) {
-    successConsumers -= cb
-  }
-
-  @MainThread
-  fun addFailureConsumer(cb: Consumer<Exception>) {
-    failureConsumers += cb
-  }
-
-  @MainThread
-  fun removeFailureConsumer(cb: Consumer<Exception>) {
-    failureConsumers -= cb
-  }
-
-  @MainThread
-  fun addProgressConsumer(cb: Consumer<State>) {
-    progressConsumers += cb
-  }
-
-  @MainThread
-  fun removeProgressConsumer(cb: Consumer<State>) {
-    progressConsumers -= cb
-  }
-
-  private fun <T> Channel<T>.forwardEvents(
-    consumers: List<Consumer<T>>,
-    butFirst: ((T) -> Unit)? = null
-  ) {
-    mainScope.launch {
-      // This creates thread & memory isolation because our FlowCollector is only owned by *this*
-      //  CoroutineContext, and not the Channel or Flow derived form it (see ChannelFlow.collect())
-      //  and execution + reference scope is limited to this object after canceling mainScope
-      receiveAsFlow().collect { t ->
-        butFirst?.invoke(t)
-        consumers.forEach { it.accept(t) }
+  private fun newObserveProgressJob(upload: UploadInfo): Job {
+    // This job has up to three children, one for each of the state flows on UploadInfo
+    return callbackScope.launch {
+      upload.errorChannel?.let { flow ->
+        launch { flow.collect { error -> resultListeners.forEach { it.onEvent(Result.failure(error)) } } }
+      }
+      upload.successChannel?.let { flow ->
+        launch {
+          flow.collect { state ->
+            lastKnownState = state
+            resultListeners.forEach { it.onEvent(Result.success(state)) }
+          }
+        }
+      }
+      upload.progressChannel?.let { flow ->
+        launch {
+          flow.collect { state ->
+            lastKnownState = state
+            progressListeners.forEach { it.onEvent(state) }
+          }
+        }
       }
     }
   }
 
   private fun maybeObserveUpload(uploadInfo: UploadInfo) {
-    uploadInfo.successChannel?.forwardEvents(successConsumers) { lastKnownState = it }
-    uploadInfo.progressChannel?.forwardEvents(progressConsumers) { lastKnownState = it }
-    uploadInfo.errorChannel?.forwardEvents(failureConsumers)
+    observerJob?.cancel("switching observers")
+    observerJob = newObserveProgressJob(uploadInfo)
   }
 
-  data class State(
+  /**
+   * The current progress of an upload, in terms of time elapsed and data transmitted
+   */
+  data class Progress(
     val bytesUploaded: Long = 0,
     val totalBytes: Long = 0,
     val startTime: Long = 0,
@@ -158,7 +210,15 @@ class MuxUpload private constructor(
   )
 
   /**
-   * Builds instances of this object
+   * Listens for events from this object and handles them. Use with [addProgressListener] or
+   * [addResultListener]
+   */
+  fun interface EventListener<EventType> {
+    fun onEvent(event: EventType)
+  }
+
+  /**
+   * Builds instances of [MuxUpload]
    *
    * @param uploadUri the URL obtained from the Direct video up
    */
@@ -181,21 +241,25 @@ class MuxUpload private constructor(
       errorChannel = null
     )
 
+    @Suppress("unused")
     fun manageUploadTask(autoManage: Boolean): Builder {
       manageTask = autoManage;
       return this
     }
 
+    @Suppress("unused")
     fun chunkSize(sizeBytes: Int): Builder {
       uploadInfo.update(chunkSize = sizeBytes)
       return this
     }
 
+    @Suppress("unused")
     fun retriesPerChunk(retries: Int): Builder {
       uploadInfo.update(retriesPerChunk = retries)
       return this
     }
 
+    @Suppress("unused")
     fun backoffBaseTime(backoffTimeMillis: Long): Builder {
       uploadInfo.update(retryBaseTimeMs = backoffTimeMillis)
       return this

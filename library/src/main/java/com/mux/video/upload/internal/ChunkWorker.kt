@@ -6,12 +6,11 @@ import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.internal.network.asCountingRequestBody
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
 import okhttp3.Response
 import java.io.IOException
-import java.net.HttpRetryException
 
 /**
  * Uploads one single chunk, reporting progress as it goes, and returning the final state when the
@@ -23,11 +22,11 @@ internal class ChunkWorker(
   val maxRetries: Int,
   val videoMimeType: String,
   val remoteUri: Uri,
-  val progressChannel: Channel<MuxUpload.State>,
+  val progressChannel: MutableSharedFlow<MuxUpload.Progress>,
 ) {
   companion object {
     // Progress updates are only sent once in this time frame. The latest event is always sent
-    const val EVENT_DEBOUNCE_DELAY_MS: Long = 100
+    const val EVENT_DEBOUNCE_DELAY_MS: Long = 200
     val ACCEPTABLE_STATUS_CODES = listOf(200, 201, 202, 204, 308)
     val RETRYABLE_STATUS_CODES = listOf(408, 502, 503, 504)
   }
@@ -38,11 +37,11 @@ internal class ChunkWorker(
   private var updateCallersJob: Job? = null
 
   @Throws
-  suspend fun doUpload(): MuxUpload.State {
+  suspend fun upload(): MuxUpload.Progress {
     var tries = 0
     do {
       try {
-        val (finalState, httpResponse) = uploadInner()
+        val (finalState, httpResponse) = doUpload()
         tries++
         if (ACCEPTABLE_STATUS_CODES.contains(httpResponse.code)) {
           // End Case: Chunk success!
@@ -62,7 +61,7 @@ internal class ChunkWorker(
   }
 
   @Throws
-  private suspend fun uploadInner(): Pair<MuxUpload.State, Response> {
+  private suspend fun doUpload(): Pair<MuxUpload.Progress, Response> {
     val startTime = SystemClock.elapsedRealtime()
 
     return supervisorScope {
@@ -82,13 +81,13 @@ internal class ChunkWorker(
               updateCallersJob = async {
                 // Update callers at most once every EVENT_DEBOUNCE_DELAY
                 delay(EVENT_DEBOUNCE_DELAY_MS)
-                val currentState = MuxUpload.State(
+                val currentState = MuxUpload.Progress(
                   bytesUploaded = mostRecentUploadState?.uploadBytes ?: 0,
                   totalBytes = chunkSize,
                   startTime = startTime,
                   updatedTime = elapsedRealtime,
                 )
-                progressChannel.send(currentState)
+                progressChannel.emit(currentState)
                 // synchronize again since we're on a different worker inside async { }
                 synchronized(this) { updateCallersJob = null }
               } // ..async { ...
@@ -111,7 +110,7 @@ internal class ChunkWorker(
         httpClient.newCall(request).execute()
       }
       logger.v("MuxUpload", "Chunk Response: $httpResponse")
-      val finalState = MuxUpload.State(
+      val finalState = MuxUpload.Progress(
         bytesUploaded = chunkSize,
         totalBytes = chunkSize,
         startTime = startTime,
@@ -119,7 +118,7 @@ internal class ChunkWorker(
       )
       // Cancel progress updates and make sure no one is stuck listening for more
       updateCallersJob?.cancel()
-      progressChannel.send(finalState)
+      progressChannel.emit(finalState)
       Pair(finalState, httpResponse)
     } // supervisorScope
   } // suspend fun doUpload

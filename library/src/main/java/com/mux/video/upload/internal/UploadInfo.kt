@@ -3,7 +3,7 @@ package com.mux.video.upload.internal
 import android.net.Uri
 import com.mux.video.upload.api.MuxUpload
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.SharedFlow
 import java.io.File
 
 /**
@@ -14,17 +14,19 @@ import java.io.File
  * update the internal state of its jobs based on the content of this object
  */
 internal data class UploadInfo(
-  val remoteUri: Uri,
-  val file: File,
-  val videoMimeType: String,
-  val chunkSize: Int,
-  val retriesPerChunk: Int,
-  val retryBaseTimeMs: Long,
-  @JvmSynthetic internal val uploadJob: Deferred<Result<MuxUpload.State>>?,
-  @JvmSynthetic internal val successChannel: Channel<MuxUpload.State>?,
-  @JvmSynthetic internal val progressChannel: Channel<MuxUpload.State>?,
-  @JvmSynthetic internal val errorChannel: Channel<Exception>?,
-)
+  @JvmSynthetic internal val remoteUri: Uri,
+  @JvmSynthetic internal val file: File,
+  @JvmSynthetic internal val videoMimeType: String,
+  @JvmSynthetic internal val chunkSize: Int,
+  @JvmSynthetic internal val retriesPerChunk: Int,
+  @JvmSynthetic internal val retryBaseTimeMs: Long,
+  @JvmSynthetic internal val uploadJob: Deferred<Result<MuxUpload.Progress>>?,
+  @JvmSynthetic internal val successChannel: SharedFlow<MuxUpload.Progress>?,
+  @JvmSynthetic internal val progressChannel: SharedFlow<MuxUpload.Progress>?,
+  @JvmSynthetic internal val errorChannel: SharedFlow<Exception>?,
+) {
+  fun isRunning(): Boolean = uploadJob?.isActive ?: false
+}
 
 /**
  * Return a new [UploadInfo] with the given data overwritten. Any argument not provided will be
@@ -38,10 +40,10 @@ internal fun UploadInfo.update(
   chunkSize: Int = this.chunkSize,
   retriesPerChunk: Int = this.retriesPerChunk,
   retryBaseTimeMs: Long = this.retryBaseTimeMs,
-  uploadJob: Deferred<Result<MuxUpload.State>>? = this.uploadJob,
-  successChannel: Channel<MuxUpload.State>? = this.successChannel,
-  progressChannel: Channel<MuxUpload.State>? = this.progressChannel,
-  errorChannel: Channel<Exception>? = this.errorChannel,
+  uploadJob: Deferred<Result<MuxUpload.Progress>>? = this.uploadJob,
+  successChannel: SharedFlow<MuxUpload.Progress>? = this.successChannel,
+  progressChannel: SharedFlow<MuxUpload.Progress>? = this.progressChannel,
+  errorChannel: SharedFlow<Exception>? = this.errorChannel,
 ) = UploadInfo(
   remoteUri,
   file,
