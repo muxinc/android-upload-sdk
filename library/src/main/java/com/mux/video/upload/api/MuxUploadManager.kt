@@ -2,7 +2,6 @@ package com.mux.video.upload.api
 
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
-import com.mux.video.upload.internal.*
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.assertMainThread
 import com.mux.video.upload.internal.createUploadJob
@@ -33,8 +32,7 @@ object MuxUploadManager {
   @MainThread
   internal fun startJob(upload: UploadInfo, restart: Boolean = false): UploadInfo {
     assertMainThread()
-    val uploadInfo = insertOrUpdateUpload(upload, restart)
-    return uploadInfo
+    return insertOrUpdateUpload(upload, restart)
   }
 
   @JvmSynthetic

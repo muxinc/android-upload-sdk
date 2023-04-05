@@ -115,7 +115,7 @@ internal class UploadJobFactory private constructor(
               } // for (chunkProgress in chunkProgressChannel)
             }
 
-            val chunkResult = createWorker(chunk, uploadInfo, chunkProgressChannel).doUpload()
+            val chunkResult = createWorker(chunk, uploadInfo, chunkProgressChannel).upload()
             Log.d("UploadJobFactory", "Chunk number ${chunkNr++}")
 
             totalBytesSent += chunkResult.bytesUploaded

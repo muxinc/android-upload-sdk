@@ -21,6 +21,7 @@ internal data class UploadInfo(
   val retriesPerChunk: Int,
   val retryBaseTimeMs: Long,
   @JvmSynthetic internal val uploadJob: Deferred<Result<MuxUpload.State>>?,
+  // TODO: These must be SharedFlows!
   @JvmSynthetic internal val successChannel: Channel<MuxUpload.State>?,
   @JvmSynthetic internal val progressChannel: Channel<MuxUpload.State>?,
   @JvmSynthetic internal val errorChannel: Channel<Exception>?,

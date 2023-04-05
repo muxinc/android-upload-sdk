@@ -11,7 +11,6 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
 import okhttp3.Response
 import java.io.IOException
-import java.net.HttpRetryException
 
 /**
  * Uploads one single chunk, reporting progress as it goes, and returning the final state when the
@@ -27,7 +26,7 @@ internal class ChunkWorker(
 ) {
   companion object {
     // Progress updates are only sent once in this time frame. The latest event is always sent
-    const val EVENT_DEBOUNCE_DELAY_MS: Long = 100
+    const val EVENT_DEBOUNCE_DELAY_MS: Long = 200
     val ACCEPTABLE_STATUS_CODES = listOf(200, 201, 202, 204, 308)
     val RETRYABLE_STATUS_CODES = listOf(408, 502, 503, 504)
   }
@@ -38,11 +37,11 @@ internal class ChunkWorker(
   private var updateCallersJob: Job? = null
 
   @Throws
-  suspend fun doUpload(): MuxUpload.State {
+  suspend fun upload(): MuxUpload.State {
     var tries = 0
     do {
       try {
-        val (finalState, httpResponse) = uploadInner()
+        val (finalState, httpResponse) = doUpload()
         tries++
         if (ACCEPTABLE_STATUS_CODES.contains(httpResponse.code)) {
           // End Case: Chunk success!
@@ -62,7 +61,7 @@ internal class ChunkWorker(
   }
 
   @Throws
-  private suspend fun uploadInner(): Pair<MuxUpload.State, Response> {
+  private suspend fun doUpload(): Pair<MuxUpload.State, Response> {
     val startTime = SystemClock.elapsedRealtime()
 
     return supervisorScope {
