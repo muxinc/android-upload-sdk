@@ -2,13 +2,32 @@ package com.mux.video.upload.internal
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.mux.video.upload.api.MuxUpload
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.*
 
 @JvmSynthetic
 internal fun initializeUploadPersistence(appContext: Context) {
   UploadPersistence.prefs = appContext.applicationContext.getSharedPreferences("mux_upload", 0)
+}
+
+@JvmSynthetic
+internal fun writeUploadState(uploadInfo: UploadInfo, state: MuxUpload.State) {
+  UploadPersistence.write(
+    PersistenceEntry(
+      file = uploadInfo.file,
+      savedAtLocalMs = Date().time,
+      state = 0, // TODO
+      lastSuccessfulByte = state.bytesUploaded - 1
+    )
+  )
+}
+
+@JvmSynthetic
+internal fun forgetUploadState(uploadInfo: UploadInfo) {
+  UploadPersistence.removeForFile(uploadInfo.file)
 }
 
 /**
@@ -30,17 +49,30 @@ private object UploadPersistence {
     checkInitialized()
     val entries = fetchEntries()
     entries[entry.file.absolutePath] = entry
-
-    val entriesJson = JSONArray()
-    entries.forEach { entriesJson.put(it.value.toJson()) }
-    prefs.edit().putString(LIST_KEY, entriesJson.toString()).apply()
+    writeEntries(entries)
   }
 
   @Throws
   @Synchronized
-  fun readEntries(): Map<String, PersistenceEntry> {
+  fun removeForFile(file: File) {
+    checkInitialized()
+    val entries = readEntries()
+    entries -= file.absolutePath
+    writeEntries(entries)
+  }
+
+  @Throws
+  @Synchronized
+  fun readEntries(): MutableMap<String, PersistenceEntry> {
     checkInitialized()
     return readEntries()
+  }
+
+  @Throws
+  private fun writeEntries(entries: Map<String, PersistenceEntry>) {
+    val entriesJson = JSONArray()
+    entries.forEach { entriesJson.put(it.value.toJson()) }
+    prefs.edit().putString(LIST_KEY, entriesJson.toString()).apply()
   }
 
   @Throws

@@ -2,9 +2,11 @@ package com.mux.video.upload.api
 
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
+import com.mux.video.upload.internal.*
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.assertMainThread
 import com.mux.video.upload.internal.createUploadJob
+import com.mux.video.upload.internal.forgetUploadState
 import kotlinx.coroutines.MainScope
 import java.io.File
 
@@ -31,7 +33,8 @@ object MuxUploadManager {
   @MainThread
   internal fun startJob(upload: UploadInfo, restart: Boolean = false): UploadInfo {
     assertMainThread()
-    return insertOrUpdateUpload(upload, restart)
+    val uploadInfo = insertOrUpdateUpload(upload, restart)
+    return uploadInfo
   }
 
   @JvmSynthetic
@@ -41,6 +44,7 @@ object MuxUploadManager {
     uploadsByFilename[upload.file.absolutePath]?.let {
       cancelJobInner(it)
       uploadsByFilename -= it.file.absolutePath
+      forgetUploadState(upload)
     }
   }
 
@@ -49,6 +53,7 @@ object MuxUploadManager {
   internal fun jobFinished(upload: UploadInfo) {
     assertMainThread()
     uploadsByFilename -= upload.file.absolutePath
+    forgetUploadState(upload)
   }
 
   private fun cancelJobInner(upload: UploadInfo) {
