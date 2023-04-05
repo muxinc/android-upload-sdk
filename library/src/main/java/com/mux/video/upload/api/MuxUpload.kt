@@ -6,10 +6,7 @@ import androidx.core.util.Consumer
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.update
-import com.mux.video.upload.internal.writeUploadState
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.FlowCollector
-import kotlinx.coroutines.flow.SharedFlow
 import java.io.File
 
 /**
@@ -27,14 +24,14 @@ class MuxUpload private constructor(
 ) {
 
   val videoFile: File get() = uploadInfo.file
-  val currentState: State get() = lastKnownState ?: State(totalBytes = videoFile.length())
+  val currentState: Progress get() = lastKnownState ?: Progress(totalBytes = videoFile.length())
   // TODO: Add more (possibly all) properties read-only from UploadInfo
 
-  private val successConsumers: MutableList<Consumer<State>> = mutableListOf()
+  private val successConsumers: MutableList<Consumer<Progress>> = mutableListOf()
   private val failureConsumers: MutableList<Consumer<Exception>> = mutableListOf()
-  private val progressConsumers: MutableList<Consumer<State>> = mutableListOf()
+  private val progressConsumers: MutableList<Consumer<Progress>> = mutableListOf()
   private var observerJob: Job? = null
-  private var lastKnownState: State? = null
+  private var lastKnownState: Progress? = null
 
   private val callbackScope: CoroutineScope = MainScope()
   private val logger get() = MuxUploadSdk.logger
@@ -78,14 +75,14 @@ class MuxUpload private constructor(
 
   @Throws
   @Suppress("unused")
-  suspend fun awaitSuccess(): State {
+  suspend fun awaitSuccess(): Progress {
     return coroutineScope {
       startInner(coroutineScope = this)
       uploadInfo.uploadJob?.let { job ->
         val result = job.await()
         result.exceptionOrNull()?.let { throw it }
         result.getOrThrow()
-      } ?: State(0, uploadInfo.file.length())
+      } ?: Progress(0, uploadInfo.file.length())
     }
   }
 
@@ -125,12 +122,12 @@ class MuxUpload private constructor(
   }
 
   @MainThread
-  fun addSuccessConsumer(cb: Consumer<State>) {
+  fun addSuccessConsumer(cb: Consumer<Progress>) {
     successConsumers += cb
   }
 
   @MainThread
-  fun removeSuccessConsumer(cb: Consumer<State>) {
+  fun removeSuccessConsumer(cb: Consumer<Progress>) {
     successConsumers -= cb
   }
 
@@ -145,12 +142,12 @@ class MuxUpload private constructor(
   }
 
   @MainThread
-  fun addProgressConsumer(cb: Consumer<State>) {
+  fun addProgressConsumer(cb: Consumer<Progress>) {
     progressConsumers += cb
   }
 
   @MainThread
-  fun removeProgressConsumer(cb: Consumer<State>) {
+  fun removeProgressConsumer(cb: Consumer<Progress>) {
     progressConsumers -= cb
   }
 
@@ -184,7 +181,10 @@ class MuxUpload private constructor(
     observerJob = newObserveProgressJob(uploadInfo)
   }
 
-  data class State(
+  /**
+   * The
+   */
+  data class Progress(
     val bytesUploaded: Long = 0,
     val totalBytes: Long = 0,
     val startTime: Long = 0,

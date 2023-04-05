@@ -6,7 +6,6 @@ import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.internal.network.asCountingRequestBody
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
@@ -23,7 +22,7 @@ internal class ChunkWorker(
   val maxRetries: Int,
   val videoMimeType: String,
   val remoteUri: Uri,
-  val progressChannel: MutableSharedFlow<MuxUpload.State>,
+  val progressChannel: MutableSharedFlow<MuxUpload.Progress>,
 ) {
   companion object {
     // Progress updates are only sent once in this time frame. The latest event is always sent
@@ -38,7 +37,7 @@ internal class ChunkWorker(
   private var updateCallersJob: Job? = null
 
   @Throws
-  suspend fun upload(): MuxUpload.State {
+  suspend fun upload(): MuxUpload.Progress {
     var tries = 0
     do {
       try {
@@ -62,7 +61,7 @@ internal class ChunkWorker(
   }
 
   @Throws
-  private suspend fun doUpload(): Pair<MuxUpload.State, Response> {
+  private suspend fun doUpload(): Pair<MuxUpload.Progress, Response> {
     val startTime = SystemClock.elapsedRealtime()
 
     return supervisorScope {
@@ -82,7 +81,7 @@ internal class ChunkWorker(
               updateCallersJob = async {
                 // Update callers at most once every EVENT_DEBOUNCE_DELAY
                 delay(EVENT_DEBOUNCE_DELAY_MS)
-                val currentState = MuxUpload.State(
+                val currentState = MuxUpload.Progress(
                   bytesUploaded = mostRecentUploadState?.uploadBytes ?: 0,
                   totalBytes = chunkSize,
                   startTime = startTime,
@@ -111,7 +110,7 @@ internal class ChunkWorker(
         httpClient.newCall(request).execute()
       }
       logger.v("MuxUpload", "Chunk Response: $httpResponse")
-      val finalState = MuxUpload.State(
+      val finalState = MuxUpload.Progress(
         bytesUploaded = chunkSize,
         totalBytes = chunkSize,
         startTime = startTime,

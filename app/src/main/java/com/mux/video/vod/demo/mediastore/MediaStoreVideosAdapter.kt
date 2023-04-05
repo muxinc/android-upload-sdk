@@ -9,13 +9,12 @@ import androidx.recyclerview.widget.RecyclerView.ViewHolder
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.databinding.ListItemUploadingVideoBinding
 import java.text.DecimalFormat
-import java.util.*
 
 class MediaStoreVideosAdapter(
   private var items: List<MuxUpload>,
 ) : RecyclerView.Adapter<MediaStoreVideoViewHolder>() {
 
-  private var progressConsumer: Consumer<MuxUpload.State>? = null
+  private var progressConsumer: Consumer<MuxUpload.Progress>? = null
 
   override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MediaStoreVideoViewHolder {
     val viewBinding =

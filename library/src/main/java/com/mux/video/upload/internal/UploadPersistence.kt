@@ -14,7 +14,7 @@ internal fun initializeUploadPersistence(appContext: Context) {
 }
 
 @JvmSynthetic
-internal fun writeUploadState(uploadInfo: UploadInfo, state: MuxUpload.State) {
+internal fun writeUploadState(uploadInfo: UploadInfo, state: MuxUpload.Progress) {
   UploadPersistence.write(
     UploadEntry(
       file = uploadInfo.file,
