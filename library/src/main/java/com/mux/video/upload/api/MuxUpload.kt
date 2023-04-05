@@ -6,7 +6,9 @@ import androidx.core.util.Consumer
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.update
+import com.mux.video.upload.internal.writeUploadState
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.SharedFlow
 import java.io.File
 
@@ -31,6 +33,7 @@ class MuxUpload private constructor(
   private val successConsumers: MutableList<Consumer<State>> = mutableListOf()
   private val failureConsumers: MutableList<Consumer<Exception>> = mutableListOf()
   private val progressConsumers: MutableList<Consumer<State>> = mutableListOf()
+  private var observerJob: Job? = null
   private var lastKnownState: State? = null
 
   private val callbackScope: CoroutineScope = MainScope()
@@ -151,24 +154,34 @@ class MuxUpload private constructor(
     progressConsumers -= cb
   }
 
-  private fun <T> SharedFlow<T>.forwardEvents(
-    consumers: List<Consumer<T>>,
-    butFirst: ((T) -> Unit)? = null
-  ) {
-    callbackScope.launch {
-      // This creates thread & memory isolation because our FlowCollector is only owned by *this*
-      //  Object & CoroutineContext, and not the Flow we created it from
-      collect { t ->
-        butFirst?.invoke(t)
-        consumers.forEach { it.accept(t) }
+  private fun newObserveProgressJob(upload: UploadInfo): Job {
+    // This job has up to three children, one for each of the state flows on UploadInfo
+    return callbackScope.launch {
+      upload.errorChannel?.let { flow ->
+        launch { flow.collect { error -> failureConsumers.forEach { it.accept(error) } } }
+      }
+      upload.successChannel?.let { flow ->
+        launch {
+          flow.collect { state ->
+            lastKnownState = state
+            successConsumers.forEach { it.accept(state) }
+          }
+        }
+      }
+      upload.progressChannel?.let { flow ->
+        launch {
+          flow.collect { state ->
+            lastKnownState = state
+            progressConsumers.forEach { it.accept(state) }
+          }
+        }
       }
     }
   }
 
   private fun maybeObserveUpload(uploadInfo: UploadInfo) {
-    uploadInfo.successChannel?.forwardEvents(successConsumers) { lastKnownState = it }
-    uploadInfo.progressChannel?.forwardEvents(progressConsumers) { lastKnownState = it }
-    uploadInfo.errorChannel?.forwardEvents(failureConsumers)
+    observerJob?.cancel("switching observers")
+    observerJob = newObserveProgressJob(uploadInfo)
   }
 
   data class State(
@@ -179,7 +192,7 @@ class MuxUpload private constructor(
   )
 
   /**
-   * Builds instances of this object
+   * Builds instances of [MuxUpload]
    *
    * @param uploadUri the URL obtained from the Direct video up
    */
@@ -202,21 +215,25 @@ class MuxUpload private constructor(
       errorChannel = null
     )
 
+    @Suppress("unused")
     fun manageUploadTask(autoManage: Boolean): Builder {
       manageTask = autoManage;
       return this
     }
 
+    @Suppress("unused")
     fun chunkSize(sizeBytes: Int): Builder {
       uploadInfo.update(chunkSize = sizeBytes)
       return this
     }
 
+    @Suppress("unused")
     fun retriesPerChunk(retries: Int): Builder {
       uploadInfo.update(retriesPerChunk = retries)
       return this
     }
 
+    @Suppress("unused")
     fun backoffBaseTime(backoffTimeMillis: Long): Builder {
       uploadInfo.update(retryBaseTimeMs = backoffTimeMillis)
       return this
