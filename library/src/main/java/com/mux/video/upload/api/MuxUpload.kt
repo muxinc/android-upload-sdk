@@ -27,9 +27,8 @@ class MuxUpload private constructor(
   val currentState: Progress get() = lastKnownState ?: Progress(totalBytes = videoFile.length())
   // TODO: Add more (possibly all) properties read-only from UploadInfo
 
-  private val successConsumers: MutableList<Consumer<Progress>> = mutableListOf()
-  private val failureConsumers: MutableList<Consumer<Exception>> = mutableListOf()
-  private val progressConsumers: MutableList<Consumer<Progress>> = mutableListOf()
+  private var resultListeners = mutableListOf<EventListener<Result<Progress>>>()
+  private var progressListeners = mutableListOf<EventListener<Progress>>()
   private var observerJob: Job? = null
   private var lastKnownState: Progress? = null
 
@@ -121,47 +120,52 @@ class MuxUpload private constructor(
     observerJob?.cancel("user requested cancel")
   }
 
+  /**
+   * Adds a listener for progress updates on this upload
+   */
   @MainThread
-  fun addSuccessConsumer(cb: Consumer<Progress>) {
-    successConsumers += cb
+  fun addProgressListener(listener: EventListener<Progress>) {
+    progressListeners += listener
+    lastKnownState?.let { listener.onEvent(it) }
+  }
+
+  /**
+   * Removes the given listener for progress updates
+   */
+  @MainThread
+  fun removeProgressListener(listener: EventListener<Progress>) {
+    progressListeners -= listener
+  }
+
+  /**
+   * Adds a listener for success or failure updates on this upload
+   */
+  @MainThread
+  fun addResultListener(listener: EventListener<Result<Progress>>) {
+    resultListeners += listener
+    lastKnownState?.let {
+      if (it.bytesUploaded >= it.totalBytes) {
+        listener.onEvent(Result.success(it))
+      }
+    }
   }
 
   @MainThread
-  fun removeSuccessConsumer(cb: Consumer<Progress>) {
-    successConsumers -= cb
-  }
-
-  @MainThread
-  fun addFailureConsumer(cb: Consumer<Exception>) {
-    failureConsumers += cb
-  }
-
-  @MainThread
-  fun removeFailureConsumer(cb: Consumer<Exception>) {
-    failureConsumers -= cb
-  }
-
-  @MainThread
-  fun addProgressConsumer(cb: Consumer<Progress>) {
-    progressConsumers += cb
-  }
-
-  @MainThread
-  fun removeProgressConsumer(cb: Consumer<Progress>) {
-    progressConsumers -= cb
+  fun removeResultListener(listener: EventListener<Result<Progress>>) {
+    resultListeners -= listener
   }
 
   private fun newObserveProgressJob(upload: UploadInfo): Job {
     // This job has up to three children, one for each of the state flows on UploadInfo
     return callbackScope.launch {
       upload.errorChannel?.let { flow ->
-        launch { flow.collect { error -> failureConsumers.forEach { it.accept(error) } } }
+        launch { flow.collect { error -> resultListeners.forEach { it.onEvent(Result.failure(error)) } } }
       }
       upload.successChannel?.let { flow ->
         launch {
           flow.collect { state ->
             lastKnownState = state
-            successConsumers.forEach { it.accept(state) }
+            resultListeners.forEach { it.onEvent(Result.success(state)) }
           }
         }
       }
@@ -169,7 +173,7 @@ class MuxUpload private constructor(
         launch {
           flow.collect { state ->
             lastKnownState = state
-            progressConsumers.forEach { it.accept(state) }
+            progressListeners.forEach { it.onEvent(state) }
           }
         }
       }
@@ -182,7 +186,7 @@ class MuxUpload private constructor(
   }
 
   /**
-   * The
+   * The current progress of an upload, in terms of time elapsed and data transmitted
    */
   data class Progress(
     val bytesUploaded: Long = 0,
@@ -190,6 +194,14 @@ class MuxUpload private constructor(
     val startTime: Long = 0,
     val updatedTime: Long = 0,
   )
+
+  /**
+   * Listens for events from this object and handles them. Use with [addProgressListener] or
+   * [addResultListener]
+   */
+  fun interface EventListener<EventType> {
+    fun onEvent(event: EventType)
+  }
 
   /**
    * Builds instances of [MuxUpload]

@@ -7,6 +7,7 @@ import android.os.Build
 import android.provider.MediaStore
 import android.provider.MediaStore.Video.VideoColumns
 import android.util.Log
+import android.widget.Toast
 import androidx.core.text.htmlEncode
 import androidx.core.util.Consumer
 import androidx.lifecycle.AndroidViewModel
@@ -44,15 +45,19 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
       Log.d(javaClass.simpleName, "Copied file to $copiedFile")
 
       val upl = MuxUpload.Builder(MediaStoreVideosActivity.PUT_URL, copiedFile).build()
-      upl.addProgressConsumer(Consumer {
+      upl.addProgressListener {
         Log.v(javaClass.simpleName, "Upload progress: ${it.bytesUploaded} / ${it.totalBytes}")
         innerUploads.postValue(uploadList)
-      })
-      upl.addSuccessConsumer(Consumer {
-        Log.w(javaClass.simpleName, "YAY! Uploaded the file: $contentUri")
-        Log.i(javaClass.simpleName, "final state is $it")
-        innerUploads.postValue(uploadList)
-      })
+      }
+      upl.addResultListener {
+        if (it.isSuccess) {
+          Log.w(javaClass.simpleName, "YAY! Uploaded the file: $contentUri")
+          Log.i(javaClass.simpleName, "final state is $it")
+          innerUploads.postValue(uploadList)
+        } else {
+          innerUploads.postValue(uploadList)
+        }
+      }
       uploadList += upl
       innerUploads.postValue(uploadList)
 
