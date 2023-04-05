@@ -13,10 +13,12 @@ import java.io.FileInputStream
 import java.util.*
 
 /**
- * Creates a new Upload Job for this
+ * Creates a new Upload Job for the given [UploadInfo]. The job is started as soon as it is created.
+ * To pause a job, save its last-known state in UploadPersistence and cancel the [Job] in the
+ * [UploadInfo] returned by this function
  */
 @JvmSynthetic
-internal fun createUploadJob(upload: UploadInfo): UploadInfo {
+internal fun startUploadJob(upload: UploadInfo): UploadInfo {
   MuxUploadSdk.logger.d("MuxUpload", "Creating job for: $upload")
   return MuxUploadSdk.uploadJobFactory()
     .createUploadJob(upload, CoroutineScope(Dispatchers.Default))
@@ -25,8 +27,7 @@ internal fun createUploadJob(upload: UploadInfo): UploadInfo {
 /**
  * Creates upload coroutine jobs, which handle uploading a single file and reporting/delegating
  * the state of the upload. To cancel, just call [Deferred.cancel]
- *
- * Create instances of this class via [createUploadJob]
+ * This class is not intended to be used from outside the SDK
  */
 internal class UploadJobFactory private constructor(
   val createWorker: (ChunkWorker.Chunk, UploadInfo, Channel<MuxUpload.State>) -> ChunkWorker =
@@ -37,11 +38,6 @@ internal class UploadJobFactory private constructor(
   companion object {
     @JvmSynthetic
     internal fun create() = UploadJobFactory()
-
-    @JvmSynthetic
-    internal fun create(
-      workerFactory: (ChunkWorker.Chunk, UploadInfo, Channel<MuxUpload.State>) -> ChunkWorker
-    ) = UploadJobFactory(workerFactory)
 
     @Suppress("unused") // It's used by method-reference, which the linter doesn't see
     @JvmSynthetic

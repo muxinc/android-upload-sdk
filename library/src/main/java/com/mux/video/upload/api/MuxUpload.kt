@@ -86,10 +86,22 @@ class MuxUpload private constructor(
     }
   }
 
+  /**
+   * Pauses the upload. If the upload was already paused, this method has no effect
+   * You can resume the upload where it left off by calling [start]
+   */
+  @Suppress("MemberVisibilityCanBePrivate")
   fun pause() {
-    logger.w("MuxUpload", "pause() is not implemented yet")
+    if (autoManage) {
+      MuxUploadManager.pauseJob(uploadInfo)
+    }
   }
 
+  /**
+   * Cancels this upload. The upload job will be canceled and it will not be possible to start this
+   * job again where it left off
+   */
+  @Suppress("MemberVisibilityCanBePrivate")
   fun cancel() {
     if (autoManage) {
       MuxUploadManager.cancelJob(uploadInfo)

@@ -2,9 +2,10 @@ package com.mux.video.upload.api
 
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
+import com.mux.video.upload.internal.*
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.assertMainThread
-import com.mux.video.upload.internal.createUploadJob
+import com.mux.video.upload.internal.startUploadJob
 import com.mux.video.upload.internal.forgetUploadState
 import kotlinx.coroutines.MainScope
 import java.io.File
@@ -37,6 +38,22 @@ object MuxUploadManager {
 
   @JvmSynthetic
   @MainThread
+  internal fun pauseJob(upload: UploadInfo) {
+    assertMainThread()
+    // Paused jobs stay in the manager and remain persisted
+    uploadsByFilename[upload.file.absolutePath]?.let {
+      cancelJobInner(it)
+      uploadsByFilename[upload.file.absolutePath] = upload.update(
+        uploadJob = null,
+        progressChannel = null,
+        errorChannel = null,
+        successChannel = null,
+      )
+    }
+  }
+
+  @JvmSynthetic
+  @MainThread
   internal fun cancelJob(upload: UploadInfo) {
     assertMainThread()
     uploadsByFilename[upload.file.absolutePath]?.let {
@@ -63,11 +80,11 @@ object MuxUploadManager {
     var finalUpload = uploadsByFilename[filename]
     // Use the old job if possible (unless requested otherwise)
     if (finalUpload?.uploadJob == null) {
-      finalUpload = createUploadJob(upload)
+      finalUpload = startUploadJob(upload)
     } else {
       if (restart) {
         cancelJobInner(upload)
-        finalUpload = createUploadJob(upload)
+        finalUpload = startUploadJob(upload)
       }
     }
     uploadsByFilename += upload.file.absolutePath to finalUpload
