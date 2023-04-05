@@ -156,7 +156,7 @@ internal class UploadJobFactory private constructor(
     )
   }
 
-  private fun calculateStartingByte(file: UploadInfo): Long  = readLastByteForFile(file)
+  private fun calculateStartingByte(file: UploadInfo): Long = readLastByteForFile(file)
 
   private fun <T> callbackFlow() = MutableSharedFlow<T>()
 }

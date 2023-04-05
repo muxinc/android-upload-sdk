@@ -36,7 +36,7 @@ internal fun readLastByteForFile(upload: UploadInfo): Long {
 
 @JvmSynthetic
 internal fun forgetUploadState(uploadInfo: UploadInfo) {
-  UploadPersistence.removeForFile(uploadInfo.file)
+  UploadPersistence.removeForFile(uploadInfo)
 }
 
 /**
@@ -63,10 +63,10 @@ private object UploadPersistence {
 
   @Throws
   @Synchronized
-  fun removeForFile(file: File) {
+  fun removeForFile(upload: UploadInfo) {
     checkInitialized()
     val entries = readEntries()
-    entries -= file.absolutePath
+    entries -= upload.file.absolutePath
     writeEntries(entries)
   }
 
