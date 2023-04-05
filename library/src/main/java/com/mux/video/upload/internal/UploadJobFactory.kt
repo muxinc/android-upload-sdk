@@ -22,7 +22,6 @@ import java.util.*
  */
 @JvmSynthetic
 internal fun startUploadJob(upload: UploadInfo): UploadInfo {
-  MuxUploadSdk.logger.d("MuxUpload", "Creating job for: $upload")
   return MuxUploadSdk.uploadJobFactory()
     .createUploadJob(upload, CoroutineScope(Dispatchers.Default))
 }
@@ -68,7 +67,6 @@ internal class UploadJobFactory private constructor(
 
     val uploadJob = outerScope.async {
       try {
-        var chunkNr = 0
         val startTime = SystemClock.elapsedRealtime()
         var totalBytesSent: Long = calculateStartingByte(uploadInfo)
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
@@ -115,7 +113,6 @@ internal class UploadJobFactory private constructor(
             }
 
             val chunkResult = createWorker(chunk, uploadInfo, chunkProgressChannel).upload()
-            Log.d("UploadJobFactory", "Chunk number ${chunkNr++}")
 
             totalBytesSent += chunkResult.bytesUploaded
             val intermediateProgress = MuxUpload.Progress(
