@@ -103,7 +103,7 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
     return destFile
   }
 
-  // TODO: Don't need
+  // Might need something like this
   private suspend fun fetchVideos(): List<UploadingVideo> {
     fun ownerPackageName(cursor: Cursor): String {
       return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
