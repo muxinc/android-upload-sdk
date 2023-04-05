@@ -4,6 +4,7 @@ import android.net.Uri
 import com.mux.video.upload.api.MuxUpload
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.SharedFlow
 import java.io.File
 
 /**
@@ -21,11 +22,12 @@ internal data class UploadInfo(
   val retriesPerChunk: Int,
   val retryBaseTimeMs: Long,
   @JvmSynthetic internal val uploadJob: Deferred<Result<MuxUpload.State>>?,
-  // TODO: These must be SharedFlows!
-  @JvmSynthetic internal val successChannel: Channel<MuxUpload.State>?,
-  @JvmSynthetic internal val progressChannel: Channel<MuxUpload.State>?,
-  @JvmSynthetic internal val errorChannel: Channel<Exception>?,
-)
+  @JvmSynthetic internal val successChannel: SharedFlow<MuxUpload.State>?,
+  @JvmSynthetic internal val progressChannel: SharedFlow<MuxUpload.State>?,
+  @JvmSynthetic internal val errorChannel: SharedFlow<Exception>?,
+) {
+  fun isRunning(): Boolean = uploadJob?.isActive ?: false
+}
 
 /**
  * Return a new [UploadInfo] with the given data overwritten. Any argument not provided will be
@@ -40,9 +42,9 @@ internal fun UploadInfo.update(
   retriesPerChunk: Int = this.retriesPerChunk,
   retryBaseTimeMs: Long = this.retryBaseTimeMs,
   uploadJob: Deferred<Result<MuxUpload.State>>? = this.uploadJob,
-  successChannel: Channel<MuxUpload.State>? = this.successChannel,
-  progressChannel: Channel<MuxUpload.State>? = this.progressChannel,
-  errorChannel: Channel<Exception>? = this.errorChannel,
+  successChannel: SharedFlow<MuxUpload.State>? = this.successChannel,
+  progressChannel: SharedFlow<MuxUpload.State>? = this.progressChannel,
+  errorChannel: SharedFlow<Exception>? = this.errorChannel,
 ) = UploadInfo(
   remoteUri,
   file,

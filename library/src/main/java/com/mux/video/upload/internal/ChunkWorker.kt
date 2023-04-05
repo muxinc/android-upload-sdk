@@ -7,6 +7,7 @@ import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.internal.network.asCountingRequestBody
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
 import okhttp3.Response
@@ -22,7 +23,7 @@ internal class ChunkWorker(
   val maxRetries: Int,
   val videoMimeType: String,
   val remoteUri: Uri,
-  val progressChannel: Channel<MuxUpload.State>,
+  val progressChannel: MutableSharedFlow<MuxUpload.State>,
 ) {
   companion object {
     // Progress updates are only sent once in this time frame. The latest event is always sent
@@ -87,7 +88,7 @@ internal class ChunkWorker(
                   startTime = startTime,
                   updatedTime = elapsedRealtime,
                 )
-                progressChannel.send(currentState)
+                progressChannel.emit(currentState)
                 // synchronize again since we're on a different worker inside async { }
                 synchronized(this) { updateCallersJob = null }
               } // ..async { ...
@@ -118,7 +119,7 @@ internal class ChunkWorker(
       )
       // Cancel progress updates and make sure no one is stuck listening for more
       updateCallersJob?.cancel()
-      progressChannel.send(finalState)
+      progressChannel.emit(finalState)
       Pair(finalState, httpResponse)
     } // supervisorScope
   } // suspend fun doUpload

@@ -38,18 +38,21 @@ object MuxUploadManager {
 
   @JvmSynthetic
   @MainThread
-  internal fun pauseJob(upload: UploadInfo) {
+  internal fun pauseJob(upload: UploadInfo): UploadInfo {
     assertMainThread()
     // Paused jobs stay in the manager and remain persisted
     uploadsByFilename[upload.file.absolutePath]?.let {
       cancelJobInner(it)
-      uploadsByFilename[upload.file.absolutePath] = upload.update(
+      val pausedUpload = upload.update(
         uploadJob = null,
         progressChannel = null,
         errorChannel = null,
         successChannel = null,
       )
+      uploadsByFilename[pausedUpload.file.absolutePath] = pausedUpload
+      return pausedUpload
     }
+    return upload
   }
 
   @JvmSynthetic

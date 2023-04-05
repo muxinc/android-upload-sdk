@@ -8,6 +8,9 @@ import com.mux.video.upload.api.MuxUploadManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.collect
 import java.io.BufferedInputStream
 import java.io.FileInputStream
 import java.util.*
@@ -30,7 +33,7 @@ internal fun startUploadJob(upload: UploadInfo): UploadInfo {
  * This class is not intended to be used from outside the SDK
  */
 internal class UploadJobFactory private constructor(
-  val createWorker: (ChunkWorker.Chunk, UploadInfo, Channel<MuxUpload.State>) -> ChunkWorker =
+  val createWorker: (ChunkWorker.Chunk, UploadInfo, MutableSharedFlow<MuxUpload.State>) -> ChunkWorker =
     this::createWorkerForSlice
 ) {
   private val logger get() = MuxUploadSdk.logger
@@ -44,7 +47,7 @@ internal class UploadJobFactory private constructor(
     private fun createWorkerForSlice(
       chunk: ChunkWorker.Chunk,
       uploadInfo: UploadInfo,
-      progressChannel: Channel<MuxUpload.State>
+      progressChannel: MutableSharedFlow<MuxUpload.State>
     ): ChunkWorker =
       ChunkWorker(
         chunk = chunk,
@@ -57,9 +60,9 @@ internal class UploadJobFactory private constructor(
 
   fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope): UploadInfo {
     logger
-    val successChannel = callbackChannel<MuxUpload.State>()
-    val overallProgressChannel = callbackChannel<MuxUpload.State>()
-    val errorChannel = callbackChannel<Exception>()
+    val successChannel = callbackFlow<MuxUpload.State>()
+    val overallProgressChannel = callbackFlow<MuxUpload.State>()
+    val errorChannel = callbackFlow<Exception>()
     val fileStream = BufferedInputStream(FileInputStream(uploadInfo.file))
     val fileSize = uploadInfo.file.length()
 
@@ -94,21 +97,21 @@ internal class UploadJobFactory private constructor(
             sliceData = chunkBuffer,
           )
 
-          val chunkProgressChannel = callbackChannel<MuxUpload.State>()
+          val chunkProgressChannel = callbackFlow<MuxUpload.State>()
           var updateProgressJob: Job? = null
           try {
             // Bounce progress updates to callers
             updateProgressJob = launch {
-              for (chunkProgress in chunkProgressChannel) {
-                overallProgressChannel.send(
+              chunkProgressChannel.collect { chunkProgress ->
+                overallProgressChannel.emit(
                   MuxUpload.State(
                     bytesUploaded = chunkProgress.bytesUploaded + totalBytesSent,
                     totalBytes = fileSize,
                     startTime = startTime,
                     updatedTime = chunkProgress.updatedTime
                   )
-                ) // overallProgress.send(
-              } // for (chunkProgress in chunkProgressChannel)
+                ) // overallProgressChannel.emit(
+              } // chunkProgressChannel.collect {
             }
 
             val chunkResult = createWorker(chunk, uploadInfo, chunkProgressChannel).upload()
@@ -121,7 +124,7 @@ internal class UploadJobFactory private constructor(
               updatedTime = chunkResult.updatedTime,
               startTime = startTime
             )
-            overallProgressChannel.send(intermediateProgress)
+            overallProgressChannel.emit(intermediateProgress)
           } finally {
             updateProgressJob?.cancel()
           }
@@ -132,11 +135,11 @@ internal class UploadJobFactory private constructor(
           startTime = startTime,
           updatedTime = SystemClock.elapsedRealtime()
         )
-        successChannel.send(finalState)
+        successChannel.emit(finalState)
         Result.success(finalState)
       } catch (e: Exception) {
         MuxUploadSdk.logger.e("MuxUpload", "Upload of ${uploadInfo.file} failed", e)
-        errorChannel.trySend(e)
+        errorChannel.emit(e)
         Result.failure(e)
       } finally {
         @Suppress("BlockingMethodInNonBlockingContext") // the streams we use don't block on close
@@ -153,6 +156,6 @@ internal class UploadJobFactory private constructor(
     )
   }
 
-  private fun <T> callbackChannel() =
-    Channel<T>(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST) { }
+  private fun <T> callbackFlow() = MutableSharedFlow<T>()
+    //Channel<T>(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST) { }
 }

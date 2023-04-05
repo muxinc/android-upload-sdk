@@ -7,8 +7,7 @@ import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.update
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.SharedFlow
 import java.io.File
 
 /**
@@ -34,7 +33,7 @@ class MuxUpload private constructor(
   private val progressConsumers: MutableList<Consumer<State>> = mutableListOf()
   private var lastKnownState: State? = null
 
-  private val mainScope: CoroutineScope = MainScope()
+  private val callbackScope: CoroutineScope = MainScope()
   private val logger get() = MuxUploadSdk.logger
 
   init {
@@ -75,6 +74,7 @@ class MuxUpload private constructor(
   }
 
   @Throws
+  @Suppress("unused")
   suspend fun awaitSuccess(): State {
     return coroutineScope {
       startInner(coroutineScope = this)
@@ -92,9 +92,18 @@ class MuxUpload private constructor(
    */
   @Suppress("MemberVisibilityCanBePrivate")
   fun pause() {
-    if (autoManage) {
+    uploadInfo = if (autoManage) {
       MuxUploadManager.pauseJob(uploadInfo)
+    } else {
+      uploadInfo.uploadJob?.cancel()
+      uploadInfo.update(
+        uploadJob = null,
+        successChannel = null,
+        errorChannel = null,
+        progressChannel = null,
+      )
     }
+    callbackScope.cancel("user requested pause")
   }
 
   /**
@@ -108,7 +117,8 @@ class MuxUpload private constructor(
     } else {
       uploadInfo.uploadJob?.cancel("user requested cancel")
     }
-    mainScope.cancel("user requested cancel")
+    lastKnownState = null
+    callbackScope.cancel("user requested cancel")
   }
 
   @MainThread
@@ -141,15 +151,14 @@ class MuxUpload private constructor(
     progressConsumers -= cb
   }
 
-  private fun <T> Channel<T>.forwardEvents(
+  private fun <T> SharedFlow<T>.forwardEvents(
     consumers: List<Consumer<T>>,
     butFirst: ((T) -> Unit)? = null
   ) {
-    mainScope.launch {
+    callbackScope.launch {
       // This creates thread & memory isolation because our FlowCollector is only owned by *this*
-      //  CoroutineContext, and not the Channel or Flow derived form it (see ChannelFlow.collect())
-      //  and execution + reference scope is limited to this object after canceling mainScope
-      receiveAsFlow().collect { t ->
+      //  Object & CoroutineContext, and not the Flow we created it from
+      collect { t ->
         butFirst?.invoke(t)
         consumers.forEach { it.accept(t) }
       }
