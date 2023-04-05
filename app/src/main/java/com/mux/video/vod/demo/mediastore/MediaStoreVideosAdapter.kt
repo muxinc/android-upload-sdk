@@ -12,6 +12,7 @@ import java.text.DecimalFormat
 
 class MediaStoreVideosAdapter(
   private var items: List<MuxUpload>,
+  private var viewModel: MediaStoreVideosViewModel,
 ) : RecyclerView.Adapter<MediaStoreVideoViewHolder>() {
 
   private var progressConsumer: Consumer<MuxUpload.Progress>? = null
@@ -45,6 +46,20 @@ class MediaStoreVideosAdapter(
     holder.viewBinding.mediastoreVideoDate.text =
       "${listItem.currentState.bytesUploaded} bytes in ${elapsedTime / 1000F} s elapsed "
     holder.viewBinding.mediastoreVideoFilesize.text = "${formattedRate} KBytes/s"
+
+    if (listItem.currentState.isRunning) {
+      holder.viewBinding.mediastoreVideoPause.setImageResource(android.R.drawable.ic_media_pause)
+    } else {
+      holder.viewBinding.mediastoreVideoPause.setImageResource(android.R.drawable.ic_media_play)
+    }
+
+    holder.viewBinding.mediastoreVideoPause.setOnClickListener {
+      if (listItem.currentState.isRunning) {
+        listItem.pause()
+      } else {
+        listItem.start()
+      }
+    }
   }
 }
 

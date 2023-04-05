@@ -106,7 +106,8 @@ internal class UploadJobFactory private constructor(
                     bytesUploaded = chunkProgress.bytesUploaded + totalBytesSent,
                     totalBytes = fileSize,
                     startTime = startTime,
-                    updatedTime = chunkProgress.updatedTime
+                    updatedTime = chunkProgress.updatedTime,
+                    isRunning = true,
                   )
                 ) // overallProgressChannel.emit(
               } // chunkProgressChannel.collect {
@@ -119,7 +120,8 @@ internal class UploadJobFactory private constructor(
               bytesUploaded = totalBytesSent,
               totalBytes = fileSize,
               updatedTime = chunkResult.updatedTime,
-              startTime = startTime
+              startTime = startTime,
+              isRunning = true,
             )
             overallProgressChannel.emit(intermediateProgress)
           } finally {
@@ -130,7 +132,8 @@ internal class UploadJobFactory private constructor(
           bytesUploaded = fileSize,
           totalBytes = fileSize,
           startTime = startTime,
-          updatedTime = SystemClock.elapsedRealtime()
+          updatedTime = SystemClock.elapsedRealtime(),
+          isRunning = true,
         )
         successChannel.emit(finalState)
         Result.success(finalState)

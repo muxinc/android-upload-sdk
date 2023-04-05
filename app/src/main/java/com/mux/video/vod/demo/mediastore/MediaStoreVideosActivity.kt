@@ -58,7 +58,7 @@ class MediaStoreVideosActivity : AppCompatActivity() {
   }
 
   private fun handleListUpdate(list: List<MuxUpload>) {
-    listAdapter = MediaStoreVideosAdapter(list)
+    listAdapter = MediaStoreVideosAdapter(list, viewModel)
     binding.videoListList.includeRecyclerView.adapter = listAdapter
   }
 
