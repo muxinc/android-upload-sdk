@@ -47,7 +47,7 @@ Uploads created this way can be paused or resumed at will, even after the app is
 system
 
 ```kotlin
-fun beginUpload(contentUri: Uri) {
+fun beginUpload(myUploadUrl: String) {
   viewModelScope.launch {
     val upl = MuxUpload.Builder(myUploadUrl, myVideoFile).build()
     upl.addProgressListener { innerUploads.postValue(uploadList) }
