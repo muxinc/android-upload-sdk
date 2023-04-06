@@ -22,7 +22,7 @@ internal class ChunkWorker private constructor(
   private val maxRetries: Int,
   private val videoMimeType: String,
   private val remoteUri: Uri,
-  private val progressChannel: MutableSharedFlow<MuxUpload.Progress>,
+  private val progressFlow: MutableSharedFlow<MuxUpload.Progress>,
 ) {
   companion object {
     // Progress updates are only sent once in this time frame. The latest event is always sent
@@ -36,8 +36,8 @@ internal class ChunkWorker private constructor(
       maxRetries: Int,
       videoMimeType: String,
       remoteUri: Uri,
-      progressChannel: MutableSharedFlow<MuxUpload.Progress>,
-    ): ChunkWorker = ChunkWorker(chunk, maxRetries, videoMimeType, remoteUri, progressChannel)
+      progressFlow: MutableSharedFlow<MuxUpload.Progress>,
+    ): ChunkWorker = ChunkWorker(chunk, maxRetries, videoMimeType, remoteUri, progressFlow)
   }
 
   private val logger get() = MuxUploadSdk.logger
@@ -84,7 +84,7 @@ internal class ChunkWorker private constructor(
           val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
           // This process happens really fast, so we debounce the callbacks using a coroutine.
           // If there's no job to update callers, create one. That job delays for a set duration
-          // then sends a message out on the progress channel with the most-recent known progress
+          // then sends a message out on the progress flow with the most-recent known progress
           synchronized(this) { // Synchronize checking/creating update jobs
             mostRecentUploadState = RecentState(elapsedRealtime, bytes)
             if (updateCallersJob == null) {
@@ -97,7 +97,7 @@ internal class ChunkWorker private constructor(
                   startTime = startTime,
                   updatedTime = elapsedRealtime,
                 )
-                progressChannel.emit(currentState)
+                progressFlow.emit(currentState)
                 // synchronize again since we're on a different worker inside async { }
                 synchronized(this) { updateCallersJob = null }
               } // ..async { ...
@@ -128,7 +128,7 @@ internal class ChunkWorker private constructor(
       )
       // Cancel progress updates and make sure no one is stuck listening for more
       updateCallersJob?.cancel()
-      progressChannel.emit(finalState)
+      progressFlow.emit(finalState)
       Pair(finalState, httpResponse)
     } // supervisorScope
   } // suspend fun doUpload

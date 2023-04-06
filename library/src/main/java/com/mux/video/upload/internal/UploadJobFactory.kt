@@ -41,21 +41,21 @@ internal class UploadJobFactory private constructor(
     private fun createWorkerForSlice(
       chunk: ChunkWorker.Chunk,
       uploadInfo: UploadInfo,
-      progressChannel: MutableSharedFlow<MuxUpload.Progress>
+      progressFlow: MutableSharedFlow<MuxUpload.Progress>
     ): ChunkWorker = ChunkWorker.create(
         chunk = chunk,
         maxRetries = uploadInfo.retriesPerChunk,
         videoMimeType = uploadInfo.videoMimeType,
         remoteUri = uploadInfo.remoteUri,
-        progressChannel = progressChannel,
+        progressFlow = progressFlow,
       )
   }
 
   fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope): UploadInfo {
     logger
-    val successChannel = callbackFlow<MuxUpload.Progress>()
-    val overallProgressChannel = callbackFlow<MuxUpload.Progress>()
-    val errorChannel = callbackFlow<Exception>()
+    val successFlow = callbackFlow<MuxUpload.Progress>()
+    val overallProgressFlow = callbackFlow<MuxUpload.Progress>()
+    val errorFlow = callbackFlow<Exception>()
     val fileStream = BufferedInputStream(FileInputStream(uploadInfo.file))
     val fileSize = uploadInfo.file.length()
 
@@ -95,13 +95,13 @@ internal class UploadJobFactory private constructor(
             sliceData = chunkBuffer,
           )
 
-          val chunkProgressChannel = callbackFlow<MuxUpload.Progress>()
+          val chunkProgressFlow = callbackFlow<MuxUpload.Progress>()
           var updateProgressJob: Job? = null
           try {
             // Bounce progress updates to callers
             updateProgressJob = launch {
-              chunkProgressChannel.collect { chunkProgress ->
-                overallProgressChannel.emit(
+              chunkProgressFlow.collect { chunkProgress ->
+                overallProgressFlow.emit(
                   MuxUpload.Progress(
                     bytesUploaded = chunkProgress.bytesUploaded + totalBytesSent,
                     totalBytes = fileSize,
@@ -112,7 +112,7 @@ internal class UploadJobFactory private constructor(
               } // chunkProgressChannel.collect {
             }
 
-            val chunkResult = createWorker(chunk, uploadInfo, chunkProgressChannel).upload()
+            val chunkResult = createWorker(chunk, uploadInfo, chunkProgressFlow).upload()
 
             totalBytesSent += chunkResult.bytesUploaded
             val intermediateProgress = MuxUpload.Progress(
@@ -121,20 +121,20 @@ internal class UploadJobFactory private constructor(
               updatedTime = chunkResult.updatedTime,
               startTime = startTime,
             )
-            overallProgressChannel.emit(intermediateProgress)
+            overallProgressFlow.emit(intermediateProgress)
           } finally {
             updateProgressJob?.cancel()
           }
         } while (totalBytesSent < fileSize)
         val finalState = createFinalState(fileSize, startTime)
-        successChannel.emit(finalState)
+        successFlow.emit(finalState)
         MainScope().launch { MuxUploadManager.jobFinished(uploadInfo) }
         Result.success(finalState)
       } catch (e: Exception) {
         MuxUploadSdk.logger.e("MuxUpload", "Upload of ${uploadInfo.file} failed", e)
         val finalState = createFinalState(fileSize, startTime)
-        overallProgressChannel.emit(finalState)
-        errorChannel.emit(e)
+        overallProgressFlow.emit(finalState)
+        errorFlow.emit(e)
         MainScope().launch { MuxUploadManager.jobFinished(uploadInfo, e !is CancellationException) }
         Result.failure(e)
       } finally {
@@ -144,9 +144,9 @@ internal class UploadJobFactory private constructor(
     }
 
     return uploadInfo.update(
-      successChannel = successChannel,
-      progressChannel = overallProgressChannel,
-      errorChannel = errorChannel,
+      successFlow = successFlow,
+      progressFlow = overallProgressFlow,
+      errorFlow = errorFlow,
       uploadJob = uploadJob,
     )
   }
