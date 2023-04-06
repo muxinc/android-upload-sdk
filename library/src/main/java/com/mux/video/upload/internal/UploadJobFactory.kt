@@ -42,8 +42,7 @@ internal class UploadJobFactory private constructor(
       chunk: ChunkWorker.Chunk,
       uploadInfo: UploadInfo,
       progressChannel: MutableSharedFlow<MuxUpload.Progress>
-    ): ChunkWorker =
-      ChunkWorker(
+    ): ChunkWorker = ChunkWorker.create(
         chunk = chunk,
         maxRetries = uploadInfo.retriesPerChunk,
         videoMimeType = uploadInfo.videoMimeType,

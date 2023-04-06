@@ -17,18 +17,27 @@ import java.io.IOException
  * upload completes. The worker is only responsible for doing the upload and accurately reporting
  * state/errors. Owning objects handle errors, delegate
  */
-internal class ChunkWorker(
-  val chunk: Chunk,
-  val maxRetries: Int,
-  val videoMimeType: String,
-  val remoteUri: Uri,
-  val progressChannel: MutableSharedFlow<MuxUpload.Progress>,
+internal class ChunkWorker private constructor(
+  private val chunk: Chunk,
+  private val maxRetries: Int,
+  private val videoMimeType: String,
+  private val remoteUri: Uri,
+  private val progressChannel: MutableSharedFlow<MuxUpload.Progress>,
 ) {
   companion object {
     // Progress updates are only sent once in this time frame. The latest event is always sent
     const val EVENT_DEBOUNCE_DELAY_MS: Long = 200
     val ACCEPTABLE_STATUS_CODES = listOf(200, 201, 202, 204, 308)
     val RETRYABLE_STATUS_CODES = listOf(408, 502, 503, 504)
+
+    @JvmSynthetic
+    internal fun create(
+      chunk: Chunk,
+      maxRetries: Int,
+      videoMimeType: String,
+      remoteUri: Uri,
+      progressChannel: MutableSharedFlow<MuxUpload.Progress>,
+    ): ChunkWorker = ChunkWorker(chunk, maxRetries, videoMimeType, remoteUri, progressChannel)
   }
 
   private val logger get() = MuxUploadSdk.logger
@@ -41,23 +50,24 @@ internal class ChunkWorker(
     var tries = 0
     do {
       try {
-        val (finalState, httpResponse) = doUpload()
         tries++
+        val (finalState, httpResponse) = doUpload()
         if (ACCEPTABLE_STATUS_CODES.contains(httpResponse.code)) {
           // End Case: Chunk success!
           return finalState
         } else if (RETRYABLE_STATUS_CODES.contains(httpResponse.code)) {
-          throw IOException("${httpResponse.code}: ${httpResponse.message}:" +
-                  "\n${httpResponse.body?.bytes()?.decodeToString()}")
+          throw IOException(
+            "${httpResponse.code}: ${httpResponse.message}:" +
+                    "\n${httpResponse.body?.bytes()?.decodeToString()}"
+          )
         }
       } catch (e: Exception) {
-        tries++
-        if(tries > maxRetries) {
+        if (tries > maxRetries) {
           // End Case: Retries exceeded
           throw e
         }
       }
-    } while(true)
+    } while (true)
   }
 
   @Throws
