@@ -3,10 +3,6 @@ package com.mux.video.upload.api
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.*
-import com.mux.video.upload.internal.UploadInfo
-import com.mux.video.upload.internal.assertMainThread
-import com.mux.video.upload.internal.startUploadJob
-import com.mux.video.upload.internal.forgetUploadState
 import kotlinx.coroutines.*
 import java.io.File
 

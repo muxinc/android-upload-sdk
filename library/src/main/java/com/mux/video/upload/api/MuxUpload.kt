@@ -3,6 +3,7 @@ package com.mux.video.upload.api
 import android.net.Uri
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
+import com.mux.video.upload.api.MuxUpload.Builder
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.update
 import kotlinx.coroutines.*

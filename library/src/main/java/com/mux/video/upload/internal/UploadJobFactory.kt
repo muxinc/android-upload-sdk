@@ -43,12 +43,12 @@ internal class UploadJobFactory private constructor(
       uploadInfo: UploadInfo,
       progressFlow: MutableSharedFlow<MuxUpload.Progress>
     ): ChunkWorker = ChunkWorker.create(
-        chunk = chunk,
-        maxRetries = uploadInfo.retriesPerChunk,
-        videoMimeType = uploadInfo.videoMimeType,
-        remoteUri = uploadInfo.remoteUri,
-        progressFlow = progressFlow,
-      )
+      chunk = chunk,
+      maxRetries = uploadInfo.retriesPerChunk,
+      videoMimeType = uploadInfo.videoMimeType,
+      remoteUri = uploadInfo.remoteUri,
+      progressFlow = progressFlow,
+    )
   }
 
   fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope): UploadInfo {
@@ -66,7 +66,7 @@ internal class UploadJobFactory private constructor(
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
 
         // If we're resuming, we must skip to the current file pos
-        if(totalBytesSent != 0L) {
+        if (totalBytesSent != 0L) {
           withContext(Dispatchers.IO) { fileStream.skip(totalBytesSent) }
         }
 
