@@ -66,6 +66,8 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
    */
   @Throws
   private suspend fun copyIntoTempFile(contentUri: Uri): File {
+    // Create a unique name for our temp file. There are a ton of ways to do this, but this one is
+    //  pretty easy to implement and protects from unsafe characters
     val basename = android.util.Base64.encode(
       contentUri.pathSegments.joinToString(separator = "-").encodeToByteArray(),
       0
