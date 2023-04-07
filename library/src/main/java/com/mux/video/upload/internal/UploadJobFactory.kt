@@ -126,6 +126,7 @@ internal class UploadJobFactory private constructor(
             updateProgressJob?.cancel()
           }
         } while (totalBytesSent < fileSize)
+
         val finalState = createFinalState(fileSize, startTime)
         successFlow.emit(finalState)
         MainScope().launch { MuxUploadManager.jobFinished(uploadInfo) }
