@@ -61,7 +61,7 @@ internal class UploadJobFactory private constructor(
     val fileSize = uploadInfo.file.length()
 
     val uploadJob = outerScope.async {
-      val startTime = SystemClock.elapsedRealtime()
+      val startTime = System.currentTimeMillis()
       try {
         var totalBytesSent: Long = getAlreadyTransferredBytes(uploadInfo)
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
@@ -157,7 +157,7 @@ internal class UploadJobFactory private constructor(
       bytesUploaded = fileSize,
       totalBytes = fileSize,
       startTime = startTime,
-      updatedTime = SystemClock.elapsedRealtime()
+      updatedTime = System.currentTimeMillis(),
     )
   }
 

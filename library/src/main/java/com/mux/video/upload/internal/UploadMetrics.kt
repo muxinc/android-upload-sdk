@@ -51,7 +51,7 @@ internal class UploadMetrics private constructor() {
       .url("https://mobile.muxanalytics.com")
       .method("POST", eventJson.toRequestBody("application/json".toMediaType()))
       .build()
-    
+
     // The HTTP Client will log if this fails or succeeeds
     withContext(Dispatchers.IO) {
       MuxUploadSdk.httpClient().newCall(request).execute()
