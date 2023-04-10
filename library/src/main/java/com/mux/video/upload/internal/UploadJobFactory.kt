@@ -1,6 +1,7 @@
 package com.mux.video.upload.internal
 
 import android.os.SystemClock
+import com.mux.video.upload.BuildConfig
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
@@ -132,12 +133,17 @@ internal class UploadJobFactory private constructor(
 
         // We made it!
         val finalState = createFinalState(fileSize, startTime)
-        // report this upload (asynchronously)
-        launch { metrics.reportUpload(
-          startTimeMillis = finalState.startTime,
-          endTimeMillis = finalState.updatedTime,
-          uploadInfo = uploadInfo,
-        ) }
+        // report this upload asynchronously (unless a debug build of the SDK)
+        @Suppress("KotlinConstantConditions")
+        if (BuildConfig.BUILD_TYPE != "debug") {
+          launch {
+            metrics.reportUpload(
+              startTimeMillis = finalState.startTime,
+              endTimeMillis = finalState.updatedTime,
+              uploadInfo = uploadInfo,
+            )
+          }
+        }
 
         // finish up
         successChannel.emit(finalState)
