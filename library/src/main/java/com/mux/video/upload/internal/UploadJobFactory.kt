@@ -59,6 +59,7 @@ internal class UploadJobFactory private constructor(
     val errorChannel = callbackFlow<Exception>()
     val fileStream = BufferedInputStream(FileInputStream(uploadInfo.file))
     val fileSize = uploadInfo.file.length()
+    val metrics = UploadMetrics.create()
 
     val uploadJob = outerScope.async {
       val startTime = System.currentTimeMillis()
@@ -71,6 +72,7 @@ internal class UploadJobFactory private constructor(
           withContext(Dispatchers.IO) { fileStream.skip(totalBytesSent) }
         }
 
+        // Upload each chunk starting from the current head of the stream
         do {
           // The last chunk will almost definitely be smaller than a whole chunk
           val bytesLeft = fileSize - totalBytesSent
@@ -127,7 +129,17 @@ internal class UploadJobFactory private constructor(
             updateProgressJob?.cancel()
           }
         } while (totalBytesSent < fileSize)
+
+        // We made it!
         val finalState = createFinalState(fileSize, startTime)
+        // report this upload (asynchronously)
+        launch { metrics.reportUpload(
+          startTimeMillis = finalState.startTime,
+          endTimeMillis = finalState.updatedTime,
+          uploadInfo = uploadInfo,
+        ) }
+
+        // finish up
         successChannel.emit(finalState)
         MainScope().launch { MuxUploadManager.jobFinished(uploadInfo) }
         Result.success(finalState)
