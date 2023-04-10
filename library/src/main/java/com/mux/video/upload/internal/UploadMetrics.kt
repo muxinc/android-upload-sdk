@@ -47,15 +47,18 @@ internal class UploadMetrics private constructor() {
       regionCode = Locale.getDefault().country
     ).toJson()
 
+    // For this case, redirect-following is desired
+    val httpClient = MuxUploadSdk.httpClient().newBuilder()
+      .followRedirects(true)
+      .followRedirects(true)
+      .build()
     val request = Request.Builder()
       .url("https://mobile.muxanalytics.com")
       .method("POST", eventJson.toRequestBody("application/json".toMediaType()))
       .build()
 
-    // The HTTP Client will log if this fails or succeeeds
-    withContext(Dispatchers.IO) {
-      MuxUploadSdk.httpClient().newCall(request).execute()
-    }
+    // The HTTP Client will log if this fails or succeeds
+    withContext(Dispatchers.IO) { httpClient.newCall(request).execute() }
   }
 
   companion object {
