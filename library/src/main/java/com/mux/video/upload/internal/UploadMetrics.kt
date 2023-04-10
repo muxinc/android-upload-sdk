@@ -8,6 +8,9 @@ import com.mux.video.upload.BuildConfig
 import com.mux.video.upload.MuxUploadSdk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.*
 
@@ -30,7 +33,7 @@ internal class UploadMetrics private constructor() {
       }
     }
 
-    val event = UploadEvent(
+    val eventJson = UploadEvent(
       startTimeMillis = startTimeMillis,
       endTimeMillis = endTimeMillis,
       fileSize = uploadInfo.file.length(),
@@ -42,7 +45,17 @@ internal class UploadMetrics private constructor() {
       appName = appName,
       appVersion = appVersion,
       regionCode = Locale.getDefault().country
-    )
+    ).toJson()
+
+    val request = Request.Builder()
+      .url("https://mobile.muxanalytics.com")
+      .method("POST", eventJson.toRequestBody("application/json".toMediaType()))
+      .build()
+    
+    // The HTTP Client will log if this fails or succeeeds
+    withContext(Dispatchers.IO) {
+      MuxUploadSdk.httpClient().newCall(request).execute()
+    }
   }
 
   companion object {
