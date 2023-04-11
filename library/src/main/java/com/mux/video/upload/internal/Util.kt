@@ -1,7 +1,6 @@
 package com.mux.video.upload.internal
 
 import android.os.Looper
-import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Asserts that we are on the main thread, crashing if not.
@@ -11,7 +10,7 @@ import java.util.concurrent.atomic.AtomicReference
 @JvmSynthetic
 @Throws
 internal fun assertMainThread() {
-  if(Looper.myLooper()?.equals(Looper.getMainLooper()) != true) {
+  if (Looper.myLooper()?.equals(Looper.getMainLooper()) != true) {
     throw IllegalStateException("This can only be called from the main thread")
   }
 }

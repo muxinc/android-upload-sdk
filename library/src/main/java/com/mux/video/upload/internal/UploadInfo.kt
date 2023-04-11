@@ -21,9 +21,9 @@ internal data class UploadInfo(
   @JvmSynthetic internal val retriesPerChunk: Int,
   @JvmSynthetic internal val retryBaseTimeMs: Long,
   @JvmSynthetic internal val uploadJob: Deferred<Result<MuxUpload.Progress>>?,
-  @JvmSynthetic internal val successChannel: SharedFlow<MuxUpload.Progress>?,
-  @JvmSynthetic internal val progressChannel: SharedFlow<MuxUpload.Progress>?,
-  @JvmSynthetic internal val errorChannel: SharedFlow<Exception>?,
+  @JvmSynthetic internal val successFlow: SharedFlow<MuxUpload.Progress>?,
+  @JvmSynthetic internal val progressFlow: SharedFlow<MuxUpload.Progress>?,
+  @JvmSynthetic internal val errorFlow: SharedFlow<Exception>?,
 ) {
   fun isRunning(): Boolean = uploadJob?.isActive ?: false
 }
@@ -41,9 +41,9 @@ internal fun UploadInfo.update(
   retriesPerChunk: Int = this.retriesPerChunk,
   retryBaseTimeMs: Long = this.retryBaseTimeMs,
   uploadJob: Deferred<Result<MuxUpload.Progress>>? = this.uploadJob,
-  successChannel: SharedFlow<MuxUpload.Progress>? = this.successChannel,
-  progressChannel: SharedFlow<MuxUpload.Progress>? = this.progressChannel,
-  errorChannel: SharedFlow<Exception>? = this.errorChannel,
+  successFlow: SharedFlow<MuxUpload.Progress>? = this.successFlow,
+  progressFlow: SharedFlow<MuxUpload.Progress>? = this.progressFlow,
+  errorFlow: SharedFlow<Exception>? = this.errorFlow,
 ) = UploadInfo(
   remoteUri,
   file,
@@ -52,7 +52,7 @@ internal fun UploadInfo.update(
   retriesPerChunk,
   retryBaseTimeMs,
   uploadJob,
-  successChannel,
-  progressChannel,
-  errorChannel
+  successFlow,
+  progressFlow,
+  errorFlow
 )
