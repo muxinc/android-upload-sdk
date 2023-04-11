@@ -87,8 +87,6 @@ internal class UploadMetrics private constructor() {
 }
 
 private data class UploadEvent(
-  // Should just be "upload"
-  val type: String = "upload",
   // Video-Specific
   val startTimeMillis: Long,
   val endTimeMillis: Long,
@@ -105,7 +103,7 @@ private data class UploadEvent(
 ) {
   fun toJson(): String {
     return JSONObject().apply {
-      put("type", type)
+      put("type", "upload")
       put("start_time", startTimeMillis)
       put("end_time", endTimeMillis)
       put("file_size", fileSize)
