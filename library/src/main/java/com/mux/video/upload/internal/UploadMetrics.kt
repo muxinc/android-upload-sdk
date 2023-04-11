@@ -50,7 +50,7 @@ internal class UploadMetrics private constructor() {
     // For this case, redirect-following is desired
     val httpClient = MuxUploadSdk.httpClient().newBuilder()
       .followRedirects(true)
-      .followRedirects(true)
+      .followSslRedirects(true)
       .build()
     val request = Request.Builder()
       .url("https://mobile.muxanalytics.com")
@@ -120,4 +120,3 @@ private data class UploadEvent(
     }.toString()
   }
 }
-
