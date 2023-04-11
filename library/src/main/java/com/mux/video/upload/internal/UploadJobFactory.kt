@@ -135,7 +135,7 @@ internal class UploadJobFactory private constructor(
         val finalState = createFinalState(fileSize, startTime)
         // report this upload asynchronously (unless a debug build of the SDK)
         @Suppress("KotlinConstantConditions")
-        if (BuildConfig.BUILD_TYPE != "debug") {
+        if (BuildConfig.BUILD_TYPE != "debug" && !uploadInfo.optOut) {
           launch {
             metrics.reportUpload(
               startTimeMillis = finalState.startTime,
