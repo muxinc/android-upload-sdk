@@ -2,8 +2,8 @@ package com.mux.video.upload.api
 
 import android.net.Uri
 import androidx.annotation.MainThread
-import androidx.core.util.Consumer
 import com.mux.video.upload.MuxUploadSdk
+import com.mux.video.upload.api.MuxUpload.Builder
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.update
 import kotlinx.coroutines.*
@@ -111,9 +111,9 @@ class MuxUpload private constructor(
       uploadInfo.uploadJob?.cancel()
       uploadInfo.update(
         uploadJob = null,
-        successChannel = null,
-        errorChannel = null,
-        progressChannel = null,
+        successFlow = null,
+        errorFlow = null,
+        progressFlow = null,
       )
     }
     lastKnownState?.let { state -> progressListeners.forEach { it.onEvent(state) } }
@@ -172,10 +172,10 @@ class MuxUpload private constructor(
   private fun newObserveProgressJob(upload: UploadInfo): Job {
     // This job has up to three children, one for each of the state flows on UploadInfo
     return callbackScope.launch {
-      upload.errorChannel?.let { flow ->
+      upload.errorFlow?.let { flow ->
         launch { flow.collect { error -> resultListeners.forEach { it.onEvent(Result.failure(error)) } } }
       }
-      upload.successChannel?.let { flow ->
+      upload.successFlow?.let { flow ->
         launch {
           flow.collect { state ->
             lastKnownState = state
@@ -183,7 +183,7 @@ class MuxUpload private constructor(
           }
         }
       }
-      upload.progressChannel?.let { flow ->
+      upload.progressFlow?.let { flow ->
         launch {
           flow.collect { state ->
             lastKnownState = state
@@ -235,10 +235,11 @@ class MuxUpload private constructor(
       chunkSize = 8 * 1024 * 1024, // GCP recommends at least 8M chunk size
       retriesPerChunk = 3,
       retryBaseTimeMs = 500,
+      optOut = false,
       uploadJob = null,
-      successChannel = null,
-      progressChannel = null,
-      errorChannel = null
+      successFlow = null,
+      progressFlow = null,
+      errorFlow = null
     )
 
     @Suppress("unused")
@@ -251,6 +252,11 @@ class MuxUpload private constructor(
     fun chunkSize(sizeBytes: Int): Builder {
       uploadInfo.update(chunkSize = sizeBytes)
       return this
+    }
+
+    @Suppress("unused")
+    fun optOutOfEventTracking(optOut: Boolean) {
+      uploadInfo.update(optOut = optOut)
     }
 
     @Suppress("unused")

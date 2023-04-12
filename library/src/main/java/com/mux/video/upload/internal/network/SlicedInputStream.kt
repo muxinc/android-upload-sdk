@@ -1,6 +1,5 @@
 package com.mux.video.upload.internal.network
 
-import android.util.Log
 import java.io.FilterInputStream
 import java.io.InputStream
 
@@ -90,7 +89,7 @@ private class SlicedInputStream(
   }
 
   override fun skip(n: Long): Long {
-    return if(n + readPos >= sliceLen) {
+    return if (n + readPos >= sliceLen) {
       // Don't skip past the end of the slice
       // Skip to exactly the end of the slice
       super.skip(sliceLen - readPos).also { readPos += it }

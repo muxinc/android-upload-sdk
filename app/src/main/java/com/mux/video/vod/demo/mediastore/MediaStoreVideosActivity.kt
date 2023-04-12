@@ -13,7 +13,6 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.databinding.ActivityVideoListBinding
-import com.mux.video.vod.demo.mediastore.model.UploadingVideo
 
 class MediaStoreVideosActivity : AppCompatActivity() {
 

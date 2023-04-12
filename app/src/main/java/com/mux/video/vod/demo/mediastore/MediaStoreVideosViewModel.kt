@@ -7,18 +7,13 @@ import android.os.Build
 import android.provider.MediaStore
 import android.provider.MediaStore.Video.VideoColumns
 import android.util.Log
-import android.widget.Toast
-import androidx.core.text.htmlEncode
-import androidx.core.util.Consumer
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.mux.video.upload.api.MuxUpload
-import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.mediastore.model.UploadingVideo
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.joda.time.DateTime
@@ -26,8 +21,6 @@ import org.joda.time.DateTimeZone
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.util.*
-import kotlin.collections.ArrayList
 
 /**
  * Queries the device's content provider for saved videos to upload
@@ -73,6 +66,8 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
    */
   @Throws
   private suspend fun copyIntoTempFile(contentUri: Uri): File {
+    // Create a unique name for our temp file. There are a ton of ways to do this, but this one is
+    //  pretty easy to implement and protects from unsafe characters
     val basename = android.util.Base64.encode(
       contentUri.pathSegments.joinToString(separator = "-").encodeToByteArray(),
       0

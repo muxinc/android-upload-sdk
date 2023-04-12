@@ -84,7 +84,7 @@ class CountingRequestBodyTests : AbsRobolectricTest() {
     log(tag = "testDataIntegrity", message = "Dumping all data")
     writtenData
       .map { String(it, Charsets.US_ASCII) }
-      .forEach { log(tag="testDataIntegrity", message= it) }
+      .forEach { log(tag = "testDataIntegrity", message = it) }
 
     val allWittenData = writtenData
       .map { String(it, Charsets.US_ASCII) }
