@@ -3,6 +3,7 @@ package com.mux.video.upload
 import android.content.Context
 import android.util.Log
 import com.mux.video.upload.internal.UploadJobFactory
+import com.mux.video.upload.internal.UploadMetrics
 import com.mux.video.upload.internal.initializeUploadPersistence
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -56,11 +57,8 @@ object MuxUploadSdk {
 
   @Suppress("unused")
   fun initialize(appContext: Context) {
-    // TODO: Collect caller app metrics, get the cache directory, etc.
-    //  Also, try not to save the appContext. Context.applicationContext is safe to hold statically
-    //  but it makes compiler warnings
-
     initializeUploadPersistence(appContext)
+    UploadMetrics.initialize(appContext)
   }
 
   /**

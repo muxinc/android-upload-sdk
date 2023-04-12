@@ -1,6 +1,7 @@
 package com.mux.video.upload.internal
 
 import android.os.SystemClock
+import com.mux.video.upload.BuildConfig
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
@@ -58,9 +59,10 @@ internal class UploadJobFactory private constructor(
     val errorFlow = callbackFlow<Exception>()
     val fileStream = BufferedInputStream(FileInputStream(uploadInfo.file))
     val fileSize = uploadInfo.file.length()
+    val metrics = UploadMetrics.create()
 
     val uploadJob = outerScope.async {
-      val startTime = SystemClock.elapsedRealtime()
+      val startTime = System.currentTimeMillis()
       try {
         var totalBytesSent: Long = getAlreadyTransferredBytes(uploadInfo)
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
@@ -70,6 +72,7 @@ internal class UploadJobFactory private constructor(
           withContext(Dispatchers.IO) { fileStream.skip(totalBytesSent) }
         }
 
+        // Upload each chunk starting from the current head of the stream
         do {
           // The last chunk will almost definitely be smaller than a whole chunk
           val bytesLeft = fileSize - totalBytesSent
@@ -127,9 +130,23 @@ internal class UploadJobFactory private constructor(
           }
         } while (totalBytesSent < fileSize)
 
+        // We made it!
         val finalState = createFinalState(fileSize, startTime)
-        successFlow.emit(finalState)
+        // report this upload asynchronously (unless a debug build of the SDK)
+        @Suppress("KotlinConstantConditions")
+        if (BuildConfig.BUILD_TYPE != "debug" && !uploadInfo.optOut) {
+          launch {
+            metrics.reportUpload(
+              startTimeMillis = finalState.startTime,
+              endTimeMillis = finalState.updatedTime,
+              uploadInfo = uploadInfo,
+            )
+          }
+        }
+
+        // finish up
         MainScope().launch { MuxUploadManager.jobFinished(uploadInfo) }
+        successFlow.emit(finalState)
         Result.success(finalState)
       } catch (e: Exception) {
         MuxUploadSdk.logger.e("MuxUpload", "Upload of ${uploadInfo.file} failed", e)
@@ -157,7 +174,7 @@ internal class UploadJobFactory private constructor(
       bytesUploaded = fileSize,
       totalBytes = fileSize,
       startTime = startTime,
-      updatedTime = SystemClock.elapsedRealtime()
+      updatedTime = System.currentTimeMillis(),
     )
   }
 

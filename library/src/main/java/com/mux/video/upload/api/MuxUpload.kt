@@ -235,6 +235,7 @@ class MuxUpload private constructor(
       chunkSize = 8 * 1024 * 1024, // GCP recommends at least 8M chunk size
       retriesPerChunk = 3,
       retryBaseTimeMs = 500,
+      optOut = false,
       uploadJob = null,
       successFlow = null,
       progressFlow = null,
@@ -251,6 +252,11 @@ class MuxUpload private constructor(
     fun chunkSize(sizeBytes: Int): Builder {
       uploadInfo.update(chunkSize = sizeBytes)
       return this
+    }
+
+    @Suppress("unused")
+    fun optOutOfEventTracking(optOut: Boolean) {
+      uploadInfo.update(optOut = optOut)
     }
 
     @Suppress("unused")

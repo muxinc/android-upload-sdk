@@ -72,7 +72,7 @@ internal class ChunkWorker private constructor(
 
   @Throws
   private suspend fun doUpload(): Pair<MuxUpload.Progress, Response> {
-    val startTime = SystemClock.elapsedRealtime()
+    val startTime = System.currentTimeMillis()
 
     return supervisorScope {
       val stream = chunk.sliceData
@@ -81,7 +81,7 @@ internal class ChunkWorker private constructor(
 
       val putBody =
         stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), chunkSize) { bytes ->
-          val elapsedRealtime = SystemClock.elapsedRealtime() // Do this before switching threads
+          val elapsedRealtime = System.currentTimeMillis()
           // This process happens really fast, so we debounce the callbacks using a coroutine.
           // If there's no job to update callers, create one. That job delays for a set duration
           // then sends a message out on the progress flow with the most-recent known progress
@@ -124,7 +124,7 @@ internal class ChunkWorker private constructor(
         bytesUploaded = chunkSize,
         totalBytes = chunkSize,
         startTime = startTime,
-        updatedTime = SystemClock.elapsedRealtime()
+        updatedTime = System.currentTimeMillis()
       )
       // Cancel progress updates and make sure no one is stuck listening for more
       updateCallersJob?.cancel()
