@@ -9,18 +9,12 @@ import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.MutableState
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.tooling.preview.Preview
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 
 class CreateUploadActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -38,8 +32,7 @@ class CreateUploadActivity : ComponentActivity() {
 
 @Composable
 fun ScreenContent(closeThisScreen: () -> Unit = {}) {
-  // TODO: So when the viewmodel says the file is available (listen from here I guess) then we can
-  //  call Ap
+  // TODO: Listen to ViewModel here
   return Scaffold(
     topBar = { AppBar(closeThisScreen, true /*TODO*/) },
   ) { contentPadding ->
