@@ -11,10 +11,9 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
 
-
     <application
-        android:allowBackup="true"
         android:name=".UploadExampleApp"
+        android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
@@ -23,6 +22,11 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.MuxVideoVODUploadSDK"
         tools:targetApi="31">
+        <activity
+            android:name=".CreateUploadActivity"
+            android:exported="false"
+            android:label="@string/title_activity_create_upload"
+            android:theme="@style/Theme.MuxVideoVODUploadSDK" />
         <activity
             android:name=".mediastore.UploadListActivity"
             android:exported="true"

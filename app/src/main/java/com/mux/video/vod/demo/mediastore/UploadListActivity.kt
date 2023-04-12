@@ -57,7 +57,7 @@ class UploadListActivity : AppCompatActivity() {
   }
 
   private fun handleListUpdate(list: List<MuxUpload>) {
-    listAdapter = UploadListAdapter(list, viewModel)
+    listAdapter = UploadListAdapter(list)
     binding.videoListList.includeRecyclerView.adapter = listAdapter
   }
 
