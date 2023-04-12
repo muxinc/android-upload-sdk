@@ -25,7 +25,7 @@ import java.io.FileOutputStream
 /**
  * Queries the device's content provider for saved videos to upload
  */
-class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel(app) {
+class UploadListViewModel(private val app: Application) : AndroidViewModel(app) {
 
   val uploads: LiveData<List<MuxUpload>> by this::innerUploads
   private val innerUploads = MutableLiveData<List<MuxUpload>>(listOf())
@@ -37,7 +37,7 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
       val copiedFile = copyIntoTempFile(contentUri)
       Log.d(javaClass.simpleName, "Copied file to $copiedFile")
 
-      val upl = MuxUpload.Builder(MediaStoreVideosActivity.PUT_URL, copiedFile).build()
+      val upl = MuxUpload.Builder(UploadListActivity.PUT_URL, copiedFile).build()
       upl.addProgressListener {
         //Log.v(javaClass.simpleName, "Upload progress: ${it.bytesUploaded} / ${it.totalBytes}")
         innerUploads.postValue(uploadList)

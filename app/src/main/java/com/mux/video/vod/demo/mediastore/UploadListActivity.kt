@@ -14,7 +14,7 @@ import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.databinding.ActivityVideoListBinding
 
-class MediaStoreVideosActivity : AppCompatActivity() {
+class UploadListActivity : AppCompatActivity() {
 
   companion object {
     // For now, you have to paste this from the direct-upload response
@@ -23,8 +23,8 @@ class MediaStoreVideosActivity : AppCompatActivity() {
   }
 
   private lateinit var binding: ActivityVideoListBinding
-  private lateinit var listAdapter: MediaStoreVideosAdapter
-  private val viewModel by viewModels<MediaStoreVideosViewModel>()
+  private lateinit var listAdapter: UploadListAdapter
+  private val viewModel by viewModels<UploadListViewModel>()
   private val requestPermissions =
     registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions())
     { grantedPermissions ->
@@ -57,7 +57,7 @@ class MediaStoreVideosActivity : AppCompatActivity() {
   }
 
   private fun handleListUpdate(list: List<MuxUpload>) {
-    listAdapter = MediaStoreVideosAdapter(list, viewModel)
+    listAdapter = UploadListAdapter(list, viewModel)
     binding.videoListList.includeRecyclerView.adapter = listAdapter
   }
 
