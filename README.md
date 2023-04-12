@@ -48,17 +48,14 @@ system
 
 ```kotlin
 fun beginUpload(myUploadUrl: String) {
-  viewModelScope.launch {
-    val upl = MuxUpload.Builder(myUploadUrl, myVideoFile).build()
-    upl.addProgressListener { innerUploads.postValue(uploadList) }
-    upl.addResultListener {
-      if (it.isSuccess) {
-        notifyUploadSuccess()
-      } else {
-        notifyUploadFail()
-      }
+  val upl = MuxUpload.Builder(myUploadUrl, myVideoFile).build()
+  upl.addProgressListener { innerUploads.postValue(uploadList) }
+  upl.addResultListener {
+    if (it.isSuccess) {
+      notifyUploadSuccess()
+    } else {
+      notifyUploadFail()
     }
-    upl.start()
   }
 }
 ```
