@@ -38,9 +38,23 @@ To start an upload, you must first create
 an [upload URL](https://docs.mux.com/guides/video/upload-files-directly). Then, pass return that
 direct-upload PUT URL to your app, so the app can begin the upload process
 
-### App-Side: Start your Upload
+### App-Side: Use the SDK
 
-Once you have your [upload URL](https://docs.mux.com/guides/video/upload-files-directly), create
+#### Initialize the Upload SDK
+
+The Upload SDK must be initialized at least once from your app in order to work properly. If you try
+to start or manage uploads without initializing the SDK, it will crash. The SDK does not hold a
+long-lived reference to the context you pass in, so any Context should be suitable.
+
+```kotlin
+// In, eg, a custom Application.onCreate()
+MuxUploadSdk.initialize(appContext = this)
+```
+
+#### Start your Upload
+
+Once you've initialized the SDK and created
+your [upload URL](https://docs.mux.com/guides/video/upload-files-directly), you can create
 a `MuxUpload` for your video file, that uploads to that URL. After that you just call start()
 
 Uploads created this way can be paused or resumed at will, even after the app is killed by the
