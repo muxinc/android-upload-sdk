@@ -1,4 +1,4 @@
-package com.mux.video.vod.demo.mediastore
+package com.mux.video.vod.demo.upload
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -10,7 +10,7 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
-import com.mux.video.vod.demo.mediastore.ui.theme.MuxUploadSDKForAndroidTheme
+import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
 
 class CreateUploadActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -24,6 +24,11 @@ class CreateUploadActivity : ComponentActivity() {
       }
     }
   }
+}
+
+@Composable
+fun ScreenContent() {
+
 }
 
 @Composable

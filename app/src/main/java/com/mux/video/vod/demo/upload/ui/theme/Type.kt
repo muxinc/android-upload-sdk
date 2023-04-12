@@ -1,4 +1,4 @@
-package com.mux.video.vod.demo.mediastore.ui.theme
+package com.mux.video.vod.demo.upload.ui.theme
 
 import androidx.compose.material.Typography
 import androidx.compose.ui.text.TextStyle

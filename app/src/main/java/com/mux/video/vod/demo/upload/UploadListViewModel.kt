@@ -1,4 +1,4 @@
-package com.mux.video.vod.demo.mediastore
+package com.mux.video.vod.demo.upload
 
 import android.app.Application
 import android.database.Cursor
@@ -12,7 +12,7 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.mux.video.upload.api.MuxUpload
-import com.mux.video.vod.demo.mediastore.model.UploadingVideo
+import com.mux.video.vod.demo.upload.model.UploadingVideo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext

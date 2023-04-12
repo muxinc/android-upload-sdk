@@ -1,4 +1,4 @@
-package com.mux.video.vod.demo.mediastore
+package com.mux.video.vod.demo.upload
 
 import android.annotation.TargetApi
 import android.content.pm.PackageManager

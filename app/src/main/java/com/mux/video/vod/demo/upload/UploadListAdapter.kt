@@ -1,9 +1,8 @@
-package com.mux.video.vod.demo.mediastore
+package com.mux.video.vod.demo.upload
 
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.core.util.Consumer
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.RecyclerView.ViewHolder
 import com.mux.video.upload.api.MuxUpload

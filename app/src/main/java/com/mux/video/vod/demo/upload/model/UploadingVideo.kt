@@ -1,4 +1,4 @@
-package com.mux.video.vod.demo.mediastore.model
+package com.mux.video.vod.demo.upload.model
 
 import com.mux.video.upload.api.MuxUpload
 import java.io.File
