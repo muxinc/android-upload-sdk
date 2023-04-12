@@ -104,8 +104,8 @@ private data class UploadEvent(
   fun toJson(): String {
     return JSONObject().apply {
       put("type", "upload")
-      put("start_time", startTimeMillis)
-      put("end_time", endTimeMillis)
+      put("start_time", startTimeMillis / 1000.0)
+      put("end_time", endTimeMillis / 1000.0)
       put("file_size", fileSize)
       put("video_duration", videoDuration)
       put("sdk_version", sdkVersion)
