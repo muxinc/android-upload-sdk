@@ -14,9 +14,9 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.databinding.ActivityVideoListBinding
-import com.mux.video.vod.demo.upload.viewmodel.PlainViewExampleViewModel
+import com.mux.video.vod.demo.upload.viewmodel.UploadListViewModel
 
-class PlainViewActivity : AppCompatActivity() {
+class UploadListActivity : AppCompatActivity() {
 
   companion object {
     // For now, you have to paste this from the direct-upload response
@@ -26,7 +26,7 @@ class PlainViewActivity : AppCompatActivity() {
 
   private lateinit var binding: ActivityVideoListBinding
   private lateinit var listAdapter: UploadListAdapter
-  private val viewModel by viewModels<PlainViewExampleViewModel>()
+  private val viewModel by viewModels<UploadListViewModel>()
   private val requestPermissions =
     registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions())
     { grantedPermissions ->
@@ -36,11 +36,11 @@ class PlainViewActivity : AppCompatActivity() {
         maybeRequestPermissionsApi33()
       }
     }
-  private val openDocument =
-    registerForActivityResult(ActivityResultContracts.OpenDocument()) { docUri ->
-      Log.d(javaClass.simpleName, "Got doc with URI $docUri")
-      viewModel.beginUpload(docUri!!)
-    }
+//  private val openDocument =
+//    registerForActivityResult(ActivityResultContracts.OpenDocument()) { docUri ->
+//      Log.d(javaClass.simpleName, "Got doc with URI $docUri")
+//      viewModel.beginUpload(docUri!!)
+//    }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -57,6 +57,12 @@ class PlainViewActivity : AppCompatActivity() {
     }
 
     //maybeRequestPermissions()
+  }
+
+  @Override
+  override fun onStart() {
+    super.onStart()
+    viewModel.refreshList()
   }
 
   private fun handleListUpdate(list: List<MuxUpload>) {

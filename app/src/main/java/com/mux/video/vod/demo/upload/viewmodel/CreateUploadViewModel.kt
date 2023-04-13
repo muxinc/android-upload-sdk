@@ -13,7 +13,7 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.mux.video.upload.api.MuxUpload
-import com.mux.video.vod.demo.upload.PlainViewActivity
+import com.mux.video.vod.demo.upload.UploadListActivity
 import com.mux.video.vod.demo.upload.model.MediaStoreVideo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -61,7 +61,7 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
   fun beginUpload() {
     if(((videoState.value?.prepareState) ?: PrepareState.NONE) == PrepareState.READY) {
       MuxUpload.Builder(
-        PlainViewActivity.PUT_URL,
+        UploadListActivity.PUT_URL,
         videoState.value!!.chosenFile!!
       ).build().start()
     }
