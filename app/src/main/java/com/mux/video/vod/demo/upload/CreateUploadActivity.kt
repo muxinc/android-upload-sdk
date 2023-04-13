@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Alignment.Companion.CenterVertically
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.paint
 import androidx.compose.ui.graphics.Color
@@ -200,6 +201,7 @@ fun BodyContent(state: CreateUploadViewModel.ScreenState, modifier: Modifier = M
 
 @Composable
 fun AppBar(closeThisScreen: () -> Unit, videoFile: File?) {
+  val enableAction = videoFile != null
   TopAppBar(
     title = { Text(text = stringResource(R.string.title_activity_create_upload)) },
     navigationIcon = {
@@ -219,11 +221,17 @@ fun AppBar(closeThisScreen: () -> Unit, videoFile: File?) {
       TextButton(onClick = {
         handleCreateUpload()
         closeThisScreen()
-      }) {
+      },
+      enabled = enableAction) {
         Text(
           text = stringResource(id = R.string.action_create_upload),
-          style = TextStyle(
-            color = MaterialTheme.colors.onPrimary
+          style = TextStyle( color = MaterialTheme.colors.onPrimary ),
+          modifier = Modifier.alpha(
+            if (enableAction) {
+              1.0F
+            } else {
+              0.6F
+            }
           )
         )
       }
