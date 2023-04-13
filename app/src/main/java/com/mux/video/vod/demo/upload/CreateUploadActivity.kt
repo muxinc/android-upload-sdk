@@ -1,11 +1,9 @@
 package com.mux.video.vod.demo.upload
 
-import android.graphics.Bitmap
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.*
@@ -23,7 +21,7 @@ import com.mux.video.vod.demo.upload.viewmodel.CreateUploadViewModel
 
 class CreateUploadActivity : ComponentActivity() {
 
-  val viewModel by viewModels<CreateUploadViewModel>()
+  private val viewModel by viewModels<CreateUploadViewModel>()
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -31,7 +29,13 @@ class CreateUploadActivity : ComponentActivity() {
       MuxUploadSDKForAndroidTheme {
         // A surface container using the 'background' color from the theme
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colors.background) {
-          ScreenContent(closeThisScreen = { finish() }, viewModel = viewModel)
+          val state = viewModel.videoState.observeAsState(
+            CreateUploadViewModel.ScreenState(
+              CreateUploadViewModel.PrepareState.NONE, null
+            )
+          )
+
+          ScreenContent(closeThisScreen = { finish() }, screenState = state.value)
         }
       }
     }
@@ -39,19 +43,24 @@ class CreateUploadActivity : ComponentActivity() {
 }
 
 @Composable
-fun ScreenContent(closeThisScreen: () -> Unit = {}, viewModel: CreateUploadViewModel) {
-  val thumbnail = viewModel.videoThumb.observeAsState()
-  val
-
+fun ScreenContent(
+  closeThisScreen: () -> Unit = {},
+  screenState: CreateUploadViewModel.ScreenState
+) {
   return Scaffold(
-    topBar = { AppBar(closeThisScreen, true /*TODO*/) },
+    topBar = {
+      AppBar(
+        closeThisScreen,
+        screenState.prepareState == CreateUploadViewModel.PrepareState.READY
+      )
+    },
   ) { contentPadding ->
-    BodyContent(thumbnail.value, Modifier.padding(contentPadding))
+    BodyContent(screenState, Modifier.padding(contentPadding))
   }
 }
 
 @Composable
-fun BodyContent(thumb: Bitmap?, modifier: Modifier = Modifier) {
+fun BodyContent(state: CreateUploadViewModel.ScreenState, modifier: Modifier = Modifier) {
   Text("asflkjh")
 }
 
@@ -60,10 +69,12 @@ fun AppBar(closeThisScreen: () -> Unit, fileAvailable: Boolean) {
   TopAppBar(
     title = { Text(text = stringResource(R.string.title_activity_create_upload)) },
     navigationIcon = {
-      IconButton(onClick = {
-        closeThisScreen() // Since we're not using Compose for everything, improvise the nav
-      },
-      enabled = fileAvailable) {
+      IconButton(
+        onClick = {
+          closeThisScreen() // Since we're not using Compose for everything, improvise the nav
+        },
+        enabled = fileAvailable
+      ) {
         Icon(
           Icons.Filled.Close,
           contentDescription = stringResource(id = android.R.string.cancel)
@@ -90,7 +101,12 @@ fun AppBar(closeThisScreen: () -> Unit, fileAvailable: Boolean) {
 @Composable
 fun DefaultPreview() {
   MuxUploadSDKForAndroidTheme {
-    ScreenContent()
+    ScreenContent(
+      screenState = CreateUploadViewModel.ScreenState(
+        prepareState = CreateUploadViewModel.PrepareState.NONE,
+        thumbnail = null
+      )
+    )
   }
 }
 
