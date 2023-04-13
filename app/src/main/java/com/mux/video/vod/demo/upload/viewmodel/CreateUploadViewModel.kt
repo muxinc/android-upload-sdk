@@ -50,7 +50,7 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
           null
         }
       } // val thumbnailBitmap = ...
-      videoStateLiveData.postValue(ScreenState(PrepareState.READY, thumbnailBitmap))
+      videoStateLiveData.postValue(ScreenState(PrepareState.READY, videoFile, thumbnailBitmap))
     } // prepareJob = viewModelScope.launch { ...
   }
 
@@ -175,6 +175,7 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
 
   data class ScreenState(
     val prepareState: PrepareState,
-    val thumbnail: Bitmap?
+    val chosenFile: File? = null,
+    val thumbnail: Bitmap? = null,
   )
 }
