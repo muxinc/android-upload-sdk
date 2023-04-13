@@ -75,12 +75,18 @@ fun RequestPermissionsEffect(context: Context) {
   if (!permissionsState.value) {
     LaunchedEffect(key1 = launcher) {
       MainScope().launch {
-        launcher.launch(
-          arrayOf(
-            android.Manifest.permission.READ_EXTERNAL_STORAGE,
-            android.Manifest.permission.READ_MEDIA_VIDEO
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+          launcher.launch(
+            arrayOf(
+              android.Manifest.permission.READ_EXTERNAL_STORAGE,
+              android.Manifest.permission.READ_MEDIA_VIDEO
+            )
           )
-        )
+        } else {
+          launcher.launch(
+            arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+          )
+        }
       }
     }
   }
