@@ -12,6 +12,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
+import com.mux.video.upload.api.MuxUpload
+import com.mux.video.vod.demo.upload.PlainViewActivity
 import com.mux.video.vod.demo.upload.model.MediaStoreVideo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -50,8 +52,19 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
           null
         }
       } // val thumbnailBitmap = ...
+      // TODO: Fake a backend service for creating uploads
+
       videoStateLiveData.postValue(ScreenState(PrepareState.READY, videoFile, thumbnailBitmap))
     } // prepareJob = viewModelScope.launch { ...
+  }
+
+  fun beginUpload() {
+    if(((videoState.value?.prepareState) ?: PrepareState.NONE) == PrepareState.READY) {
+      MuxUpload.Builder(
+        PlainViewActivity.PUT_URL,
+        videoState.value!!.chosenFile!!
+      ).build().start()
+    }
   }
 
   /**

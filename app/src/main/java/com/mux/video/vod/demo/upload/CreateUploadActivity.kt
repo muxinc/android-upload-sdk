@@ -242,6 +242,7 @@ fun BodyContent(state: CreateUploadViewModel.ScreenState, modifier: Modifier = M
 
 @Composable
 fun AppBar(closeThisScreen: () -> Unit, videoFile: File?) {
+  val viewModel: CreateUploadViewModel = viewModel()
   val enableAction = videoFile != null
   TopAppBar(
     title = { Text(text = stringResource(R.string.title_activity_create_upload)) },
@@ -261,7 +262,7 @@ fun AppBar(closeThisScreen: () -> Unit, videoFile: File?) {
     actions = {
       TextButton(
         onClick = {
-          handleCreateUpload()
+          viewModel.beginUpload()
           closeThisScreen()
         },
         enabled = enableAction

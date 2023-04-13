@@ -28,7 +28,7 @@
             android:label="@string/title_activity_create_upload"
             android:theme="@style/Theme.MuxVideoVODUploadSDK" />
         <activity
-            android:name=".upload.UploadListActivity"
+            android:name=".upload.PlainViewActivity"
             android:exported="true"
             android:label="@string/title_activity_scrolling"
             android:theme="@style/Theme.MuxVideoVODUploadSDK.NoActionBar">

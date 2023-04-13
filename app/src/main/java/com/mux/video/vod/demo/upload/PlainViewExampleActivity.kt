@@ -14,9 +14,9 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.databinding.ActivityVideoListBinding
-import com.mux.video.vod.demo.upload.viewmodel.UploadListViewModel
+import com.mux.video.vod.demo.upload.viewmodel.PlainViewExampleViewModel
 
-class UploadListActivity : AppCompatActivity() {
+class PlainViewActivity : AppCompatActivity() {
 
   companion object {
     // For now, you have to paste this from the direct-upload response
@@ -26,7 +26,7 @@ class UploadListActivity : AppCompatActivity() {
 
   private lateinit var binding: ActivityVideoListBinding
   private lateinit var listAdapter: UploadListAdapter
-  private val viewModel by viewModels<UploadListViewModel>()
+  private val viewModel by viewModels<PlainViewExampleViewModel>()
   private val requestPermissions =
     registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions())
     { grantedPermissions ->
