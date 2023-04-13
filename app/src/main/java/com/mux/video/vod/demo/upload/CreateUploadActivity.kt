@@ -73,7 +73,7 @@ fun RequestPermissionsEffect(context: Context) {
         grantedPermissions.values.reduce { hasAll, hasThisOne -> hasThisOne && hasAll }
     }
   if (!permissionsState.value) {
-    LaunchedEffect(key1 = launcher) {
+    LaunchedEffect(key1 = Object()) {
       MainScope().launch {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
           launcher.launch(
