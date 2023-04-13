@@ -23,7 +23,7 @@
         android:theme="@style/Theme.MuxVideoVODUploadSDK"
         tools:targetApi="31">
         <activity
-            android:name=".CreateUploadActivity"
+            android:name=".upload.CreateUploadActivity"
             android:exported="false"
             android:label="@string/title_activity_create_upload"
             android:theme="@style/Theme.MuxVideoVODUploadSDK" />

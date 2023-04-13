@@ -102,7 +102,7 @@ fun ScreenContent(
       AppBar(closeThisScreen, screenState.chosenFile)
     },
   ) { contentPadding ->
-    BodyContent(screenState, Modifier.padding(contentPadding))
+    BodyContent(screenState, Modifier.padding(contentPadding).padding(16.dp))
   }
 }
 
@@ -141,7 +141,7 @@ fun BodyContent(state: CreateUploadViewModel.ScreenState, modifier: Modifier = M
           )
         } else {
           Text(
-            text = "Chose a file to upload",
+            text = "Click to choose a video to upload",
             modifier = stateTxtModifier,
             fontSize = 24.sp
           )

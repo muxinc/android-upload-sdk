@@ -1,6 +1,7 @@
 package com.mux.video.vod.demo.upload
 
 import android.annotation.TargetApi
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -51,7 +52,8 @@ class UploadListActivity : AppCompatActivity() {
     setSupportActionBar(findViewById(R.id.toolbar))
     binding.toolbarLayout.title = title
     binding.fab.setOnClickListener { view ->
-      openDocument.launch(arrayOf("video/*"))
+      //openDocument.launch(arrayOf("video/*"))
+      startActivity(Intent(this, CreateUploadActivity::class.java))
     }
 
     maybeRequestPermissions()
