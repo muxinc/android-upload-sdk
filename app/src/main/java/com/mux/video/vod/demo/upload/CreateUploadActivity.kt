@@ -147,17 +147,18 @@ fun BodyContent(state: CreateUploadViewModel.ScreenState, modifier: Modifier = M
             fontSize = 24.sp
           )
         } else {
-          val text = buildAnnotatedString {
-            withStyle( style = SpanStyle(color = Color.Blue, fontWeight = FontWeight.SemiBold) ) {
-              append("Click")
-            }
-            append(" to choose a video for upload")
-          }
           TextButton(onClick = { /*TODO*/ }) {
             Text(
-              text = text,
+              text = buildAnnotatedString {
+                withStyle( style = SpanStyle(color = Color.Blue, fontWeight = FontWeight.SemiBold) ) {
+                  append("Click")
+                }
+                withStyle(style = SpanStyle(color = MaterialTheme.colors.onBackground)) {
+                  append(" to choose a video for upload")
+                }
+              },
               modifier = stateTxtModifier,
-              fontSize = 24.sp
+              fontSize = 24.sp,
             )
           }
         }
@@ -255,7 +256,7 @@ private fun hasPermissions(context: Context): Boolean {
   val hasExternalStorage = ContextCompat.checkSelfPermission(
     context,
     android.Manifest.permission.READ_EXTERNAL_STORAGE
-  ) == PackageManager.PERMISSION_DENIED
+  ) == PackageManager.PERMISSION_GRANTED
   return hasVideo && hasExternalStorage
 }
 
