@@ -31,8 +31,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -102,7 +106,10 @@ fun ScreenContent(
       AppBar(closeThisScreen, screenState.chosenFile)
     },
   ) { contentPadding ->
-    BodyContent(screenState, Modifier.padding(contentPadding).padding(16.dp))
+    BodyContent(screenState,
+      Modifier
+        .padding(contentPadding)
+        .padding(16.dp))
   }
 }
 
@@ -140,11 +147,19 @@ fun BodyContent(state: CreateUploadViewModel.ScreenState, modifier: Modifier = M
             fontSize = 24.sp
           )
         } else {
-          Text(
-            text = "Click to choose a video to upload",
-            modifier = stateTxtModifier,
-            fontSize = 24.sp
-          )
+          val text = buildAnnotatedString {
+            withStyle( style = SpanStyle(color = Color.Blue, fontWeight = FontWeight.SemiBold) ) {
+              append("Click")
+            }
+            append(" to choose a video for upload")
+          }
+          TextButton(onClick = { /*TODO*/ }) {
+            Text(
+              text = text,
+              modifier = stateTxtModifier,
+              fontSize = 24.sp
+            )
+          }
         }
       }
     } // Box
