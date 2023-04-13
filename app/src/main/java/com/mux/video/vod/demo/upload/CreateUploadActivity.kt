@@ -311,7 +311,3 @@ private fun hasPermissions(context: Context): Boolean {
   ) == PackageManager.PERMISSION_GRANTED
   return hasVideo && hasExternalStorage
 }
-
-private fun handleCreateUpload() {
-  // TODO: Make the ViewModel start the MuxUpload and then close the screen
-}
