@@ -56,7 +56,7 @@ class UploadListActivity : AppCompatActivity() {
       startActivity(Intent(this, CreateUploadActivity::class.java))
     }
 
-    maybeRequestPermissions()
+    //maybeRequestPermissions()
   }
 
   private fun handleListUpdate(list: List<MuxUpload>) {

@@ -2,6 +2,7 @@ package com.mux.video.vod.demo.upload
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -17,11 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Alignment.Companion.CenterVertically
 import androidx.compose.ui.Modifier
@@ -42,9 +40,11 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
 import com.mux.video.vod.demo.upload.viewmodel.CreateUploadViewModel
+import com.mux.video.vod.demo.upload.viewmodel.UploadListViewModel
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import java.io.File
@@ -57,7 +57,11 @@ class CreateUploadActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     setContent {
       MuxUploadSDKForAndroidTheme {
-        RequestPermissionsEffect(this)
+        if(!hasPermissions(this)) {
+          RequestPermissionsEffect(this)
+        } else {
+          GetContentEffect(viewModel = viewModel)
+        }
 
         val state = viewModel.videoState.observeAsState(
           CreateUploadViewModel.ScreenState(CreateUploadViewModel.PrepareState.NONE, null)
@@ -92,8 +96,23 @@ fun RequestPermissionsEffect(context: Context) {
             arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
           )
         }
-      }
+      } // MainScope().launch {
+    } // LaunchedEffect
+  } // if (!permissionState)
+}
+
+@Composable
+fun GetContentEffect(viewModel: CreateUploadViewModel) {
+  val contentUri = remember { mutableStateOf<Uri?>(null) }
+  val getContent =
+    rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+      contentUri.value = uri
+      uri?.let { viewModel.prepareForUpload(it) }
     }
+  if(contentUri.value == null) {
+    LaunchedEffect(key1 = Object()) {
+      MainScope().launch { getContent.launch(arrayOf("video/*")) }
+  }
   }
 }
 
@@ -107,10 +126,12 @@ fun ScreenContent(
       AppBar(closeThisScreen, screenState.chosenFile)
     },
   ) { contentPadding ->
-    BodyContent(screenState,
+    BodyContent(
+      screenState,
       Modifier
         .padding(contentPadding)
-        .padding(16.dp))
+        .padding(16.dp)
+    )
   }
 }
 
@@ -148,13 +169,26 @@ fun BodyContent(state: CreateUploadViewModel.ScreenState, modifier: Modifier = M
             fontSize = 16.sp
           )
         } else {
-          TextButton(onClick = { /*TODO*/ }) {
+          val viewModel: CreateUploadViewModel = viewModel()
+          val requestContent = remember { mutableStateOf(false) }
+          if (requestContent.value) {
+            requestContent.value = false
+            GetContentEffect(viewModel = viewModel)
+          }
+          TextButton(onClick = {
+            requestContent.value = viewModel.videoState.value?.chosenFile == null
+          }) {
             Text(
               text = buildAnnotatedString {
-                withStyle( style = SpanStyle(color = Color.Blue, fontWeight = FontWeight.SemiBold) ) {
+                withStyle(style = SpanStyle(color = Color.Blue, fontWeight = FontWeight.SemiBold)) {
                   append("Click")
                 }
-                withStyle(style = SpanStyle(color = MaterialTheme.colors.onBackground, fontWeight = FontWeight.Normal)) {
+                withStyle(
+                  style = SpanStyle(
+                    color = MaterialTheme.colors.onBackground,
+                    fontWeight = FontWeight.Normal
+                  )
+                ) {
                   append(" to choose a video for upload")
                 }
               },
@@ -218,14 +252,16 @@ fun AppBar(closeThisScreen: () -> Unit, videoFile: File?) {
       }
     },
     actions = {
-      TextButton(onClick = {
-        handleCreateUpload()
-        closeThisScreen()
-      },
-      enabled = enableAction) {
+      TextButton(
+        onClick = {
+          handleCreateUpload()
+          closeThisScreen()
+        },
+        enabled = enableAction
+      ) {
         Text(
           text = stringResource(id = R.string.action_create_upload),
-          style = TextStyle( color = MaterialTheme.colors.onPrimary ),
+          style = TextStyle(color = MaterialTheme.colors.onPrimary),
           modifier = Modifier.alpha(
             if (enableAction) {
               1.0F
