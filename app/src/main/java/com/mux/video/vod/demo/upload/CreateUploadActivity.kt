@@ -1,8 +1,13 @@
 package com.mux.video.vod.demo.upload
 
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -13,7 +18,10 @@ import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Alignment.Companion.CenterVertically
 import androidx.compose.ui.Modifier
@@ -28,9 +36,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
 import com.mux.video.vod.demo.upload.viewmodel.CreateUploadViewModel
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.launch
 import java.io.File
 
 class CreateUploadActivity : ComponentActivity() {
@@ -41,14 +52,35 @@ class CreateUploadActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     setContent {
       MuxUploadSDKForAndroidTheme {
-        // A surface container using the 'background' color from the theme
-        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colors.background) {
-          val state = viewModel.videoState.observeAsState(
-            CreateUploadViewModel.ScreenState(CreateUploadViewModel.PrepareState.NONE, null)
-          )
+        RequestPermissionsEffect(this)
 
-          ScreenContent(closeThisScreen = { finish() }, screenState = state.value)
-        }
+        val state = viewModel.videoState.observeAsState(
+          CreateUploadViewModel.ScreenState(CreateUploadViewModel.PrepareState.NONE, null)
+        )
+        ScreenContent(closeThisScreen = { finish() }, screenState = state.value)
+      }
+    }
+  }
+}
+
+@Composable
+fun RequestPermissionsEffect(context: Context) {
+  val permissionsState = remember { mutableStateOf(hasPermissions(context)) }
+  val launcher =
+    rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grantedPermissions: Map<String, Boolean>? ->
+      grantedPermissions!! // The system shouldn't ever give us null here
+      permissionsState.value =
+        grantedPermissions.values.reduce { hasAll, hasThisOne -> hasThisOne && hasAll }
+    }
+  if (!permissionsState.value) {
+    LaunchedEffect(key1 = launcher) {
+      MainScope().launch {
+        launcher.launch(
+          arrayOf(
+            android.Manifest.permission.READ_EXTERNAL_STORAGE,
+            android.Manifest.permission.READ_MEDIA_VIDEO
+          )
+        )
       }
     }
   }
@@ -188,6 +220,22 @@ fun DefaultPreview() {
       ),
     )
   }
+}
+
+private fun hasPermissions(context: Context): Boolean {
+  val hasVideo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    ContextCompat.checkSelfPermission(
+      context,
+      android.Manifest.permission.READ_MEDIA_VIDEO
+    ) == PackageManager.PERMISSION_GRANTED
+  } else {
+    true
+  }
+  val hasExternalStorage = ContextCompat.checkSelfPermission(
+    context,
+    android.Manifest.permission.READ_EXTERNAL_STORAGE
+  ) == PackageManager.PERMISSION_DENIED
+  return hasVideo && hasExternalStorage
 }
 
 private fun handleCreateUpload() {
