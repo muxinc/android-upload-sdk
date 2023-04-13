@@ -13,6 +13,7 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.mux.video.upload.api.MuxUpload
+import com.mux.video.vod.demo.backend.ImaginaryBackend
 import com.mux.video.vod.demo.upload.UploadListActivity
 import com.mux.video.vod.demo.upload.model.MediaStoreVideo
 import kotlinx.coroutines.Dispatchers
@@ -36,32 +37,43 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
   fun prepareForUpload(contentUri: Uri) {
     videoStateLiveData.value = ScreenState(PrepareState.PREPARING, null)
 
-    prepareJob?.cancel()
     prepareJob = viewModelScope.launch {
-      val videoFile = copyIntoTempFile(contentUri)
-      val thumbnailBitmap = withContext(Dispatchers.IO) {
-        try {
-          MediaMetadataRetriever().use {
-            it.setDataSource(videoFile.absolutePath)
-            // TODO: Version-specific
-            //it.getFrameAtIndex(0)
-            it.getFrameAtTime(0)
+      try {
+        val uploadUri = ImaginaryBackend.createUploadUrl().let { Uri.parse(it) }
+        val videoFile = copyIntoTempFile(contentUri)
+        val thumbnailBitmap = withContext(Dispatchers.IO) {
+          try {
+            MediaMetadataRetriever().use {
+              it.setDataSource(videoFile.absolutePath)
+              // TODO: Version-specific
+              //it.getFrameAtIndex(0)
+              it.getFrameAtTime(0)
+            }
+          } catch (e: Exception) {
+            Log.d("CreateUploadViewModel", "Error getting thumb bitmap")
+            null
           }
-        } catch (e: Exception) {
-          Log.d("CreateUploadViewModel", "Error getting thumb bitmap")
-          null
-        }
-      } // val thumbnailBitmap = ...
-      // TODO: Fake a backend service for creating uploads
+        } // val thumbnailBitmap = ...
 
-      videoStateLiveData.postValue(ScreenState(PrepareState.READY, videoFile, thumbnailBitmap))
+        videoStateLiveData.postValue(
+          ScreenState(
+            PrepareState.READY,
+            videoFile,
+            thumbnailBitmap,
+            uploadUri
+          )
+        )
+      } catch (e: Exception) {
+        videoStateLiveData.value = ScreenState(PrepareState.ERROR, null)
+      }
     } // prepareJob = viewModelScope.launch { ...
   }
 
   fun beginUpload() {
-    if(((videoState.value?.prepareState) ?: PrepareState.NONE) == PrepareState.READY) {
+    if (((videoState.value?.prepareState) ?: PrepareState.NONE) == PrepareState.READY) {
+      // If the state is READY, these values are expected to be filled
       MuxUpload.Builder(
-        UploadListActivity.PUT_URL,
+        videoState.value!!.uploadUri!!,
         videoState.value!!.chosenFile!!
       ).build().start()
     }
@@ -107,7 +119,6 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
     return destFile
   }
 
-  // Might need something like this
   private suspend fun fetchVideos(): List<MediaStoreVideo> {
     fun ownerPackageName(cursor: Cursor): String {
       return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -190,5 +201,6 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
     val prepareState: PrepareState,
     val chosenFile: File? = null,
     val thumbnail: Bitmap? = null,
+    val uploadUri: Uri? = null
   )
 }

@@ -1,6 +1,11 @@
 package com.mux.video.vod.demo.backend
 
+import com.google.gson.Gson
 import okhttp3.Credentials
+import okhttp3.OkHttpClient
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.converter.scalars.ScalarsConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.Header
 import retrofit2.http.Headers
@@ -12,20 +17,37 @@ import retrofit2.http.POST
  * Mux's servers. This class only serves the purposes of the example, and would be too insecure for
  * you to replicate in your own app.
  *
- * In real life, you should *not* do this interaction client-side! the keys used are too sensitive.
+ * In real life, you should *not* do this interaction client-side! The keys used are too sensitive.
  */
-class ImaginaryBackend {
+object ImaginaryBackend {
 
-  companion object {
-    // In order to use the example app, you must paste your own access token credentials in here.
-    //  Don't use this strategy in your own apps, create the uploads on your own backend service
-    const val ACCESS_TOKEN_ID = "YOUR ACCESS TOKEN ID"
-    const val ACCESS_TOKEN_SECRET = "YOUR ACCESS TOKEN SECRET"
+  private val muxVideoBackend: ImaginaryWebapp by lazy {
+    val gson = Gson()
+    val muxHttpClient = OkHttpClient.Builder().build() // basic config is just fine
+
+    Retrofit.Builder()
+      .baseUrl("https://api.mux.com/video/")
+      .addConverterFactory(ScalarsConverterFactory.create())
+      .addConverterFactory(GsonConverterFactory.create(gson))
+      .client(muxHttpClient)
+      .build().create(ImaginaryWebapp::class.java)
   }
+
+  @Throws
+  suspend fun createUploadUrl(): String {
+    val post = VideoUploadPost()
+    val response = muxVideoBackend.postUploads(basicCredential(), post)
+    return response.data.url
+  }
+
+  // note: You shouldn't do basic auth with hard-coded keys in a real app
   private fun basicCredential(): String = Credentials.basic(ACCESS_TOKEN_ID, ACCESS_TOKEN_SECRET)
+
+  private const val ACCESS_TOKEN_ID = "YOUR ACCESS TOKEN ID"
+  private const val ACCESS_TOKEN_SECRET = "YOUR ACCESS TOKEN SECRET"
 }
 
-private interface ImaginaryCustomerWebapp {
+private interface ImaginaryWebapp {
   /**
    * Creates a new Upload on the Mux backend. This does not upload the video itself. It just creates
    * a new asset and provides an authenticated URL to a resume-able upload.
