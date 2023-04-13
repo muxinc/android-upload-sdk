@@ -5,8 +5,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -81,28 +83,34 @@ fun BodyContent(state: CreateUploadViewModel.ScreenState, modifier: Modifier = M
           .size(96.dp)
       )
       Spacer(modifier = Modifier.size(16.dp))
-      val stateTxtModifier = Modifier.fillMaxWidth().align(CenterVertically)
-      if (state.chosenFile != null) {
-        Text(
-          text = "Will upload video file: ${state.chosenFile.name}",
-          modifier = stateTxtModifier,
-          fontSize = 24.sp
-        )
-      } else if (state.prepareState == CreateUploadViewModel.PrepareState.ERROR) {
-        Text(
-          text = "Error preparing this video for upload",
-          modifier = stateTxtModifier,
-          fontSize = 24.sp
-        )
-      } else {
-        Text(
-          text = "Chose a file to upload",
-          modifier = stateTxtModifier,
-          fontSize = 24.sp
-        )
+      val stateTxtModifier = Modifier
+        .fillMaxWidth()
+        .align(CenterVertically)
+      Box(
+        modifier = stateTxtModifier
+      ) {
+        if (state.chosenFile != null) {
+          Text(
+            text = "Will upload video file: ${state.chosenFile.name}",
+            modifier = stateTxtModifier,
+            fontSize = 24.sp
+          )
+        } else if (state.prepareState == CreateUploadViewModel.PrepareState.ERROR) {
+          Text(
+            text = "Error preparing this video for upload",
+            modifier = stateTxtModifier,
+            fontSize = 24.sp
+          )
+        } else {
+          Text(
+            text = "Chose a file to upload",
+            modifier = stateTxtModifier,
+            fontSize = 24.sp
+          )
+        }
       }
-    }
-    // TODO: Some text or something
+    } // Box
+    Spacer(modifier = Modifier.size(16.dp))
     if (state.thumbnail != null) {
       val imageBitmap = state.thumbnail.asImageBitmap()
       Box(
@@ -114,6 +122,11 @@ fun BodyContent(state: CreateUploadViewModel.ScreenState, modifier: Modifier = M
           .wrapContentSize(Alignment.Center)
           .fillMaxWidth()
           .height(256.dp)
+          .border(
+            width = 1.dp,
+            color = Color.LightGray,
+            shape = RoundedCornerShape(12.dp),
+          )
       ) {
         val emoji = if (state.prepareState == CreateUploadViewModel.PrepareState.ERROR) {
           "❌"
