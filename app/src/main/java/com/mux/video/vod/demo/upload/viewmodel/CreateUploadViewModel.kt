@@ -25,16 +25,14 @@ import java.io.FileOutputStream
 
 class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app) {
 
-  val videoState: LiveData<VideoState> by this::videoStateLiveData
-  private val videoStateLiveData = MutableLiveData(VideoState.NONE)
-
-  val videoThumb: LiveData<Bitmap?> by this::videoThumbLiveData
-  private val videoThumbLiveData = MutableLiveData<Bitmap?>(null)
+  val videoState: LiveData<ScreenState> by this::videoStateLiveData
+  private val videoStateLiveData =
+    MutableLiveData(ScreenState(prepareState = PrepareState.NONE, thumbnail = null))
 
   private var prepareJob: Job? = null
 
   fun prepareForUpload(contentUri: Uri) {
-    videoStateLiveData.value = VideoState.PREPARING
+    videoStateLiveData.value = ScreenState(PrepareState.PREPARING, null)
 
     prepareJob?.cancel()
     prepareJob = viewModelScope.launch {
@@ -43,6 +41,7 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
         try {
           MediaMetadataRetriever().use {
             it.setDataSource(videoFile.absolutePath)
+            // TODO: Version-specific
             //it.getFrameAtIndex(0)
             it.getFrameAtTime(0)
           }
@@ -51,8 +50,7 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
           null
         }
       } // val thumbnailBitmap = ...
-      videoThumbLiveData.postValue(thumbnailBitmap)
-      videoStateLiveData.postValue(VideoState.READY)
+      videoStateLiveData.postValue(ScreenState(PrepareState.READY, thumbnailBitmap))
     } // prepareJob = viewModelScope.launch { ...
   }
 
@@ -173,5 +171,10 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
     return getString(colIdx)
   }
 
-  enum class VideoState { NONE, PREPARING, READY }
+  enum class PrepareState { NONE, PREPARING, ERROR, READY }
+
+  data class ScreenState(
+    val prepareState: PrepareState,
+    val thumbnail: Bitmap?
+  )
 }
