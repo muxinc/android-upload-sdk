@@ -138,13 +138,13 @@ fun BodyContent(state: CreateUploadViewModel.ScreenState, modifier: Modifier = M
           Text(
             text = "Will upload video file: ${state.chosenFile.name}",
             modifier = stateTxtModifier,
-            fontSize = 24.sp
+            fontSize = 16.sp
           )
         } else if (state.prepareState == CreateUploadViewModel.PrepareState.ERROR) {
           Text(
             text = "Error preparing this video for upload",
             modifier = stateTxtModifier,
-            fontSize = 24.sp
+            fontSize = 16.sp
           )
         } else {
           TextButton(onClick = { /*TODO*/ }) {
@@ -153,12 +153,12 @@ fun BodyContent(state: CreateUploadViewModel.ScreenState, modifier: Modifier = M
                 withStyle( style = SpanStyle(color = Color.Blue, fontWeight = FontWeight.SemiBold) ) {
                   append("Click")
                 }
-                withStyle(style = SpanStyle(color = MaterialTheme.colors.onBackground)) {
+                withStyle(style = SpanStyle(color = MaterialTheme.colors.onBackground, fontWeight = FontWeight.Normal)) {
                   append(" to choose a video for upload")
                 }
               },
               modifier = stateTxtModifier,
-              fontSize = 24.sp,
+              fontSize = 16.sp,
             )
           }
         }
