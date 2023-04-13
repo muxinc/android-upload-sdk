@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -18,8 +19,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Alignment.Companion.CenterVertically
 import androidx.compose.ui.Modifier
@@ -29,6 +33,7 @@ import androidx.compose.ui.draw.paint
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -44,7 +49,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
 import com.mux.video.vod.demo.upload.viewmodel.CreateUploadViewModel
-import com.mux.video.vod.demo.upload.viewmodel.UploadListViewModel
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import java.io.File
@@ -57,7 +61,7 @@ class CreateUploadActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     setContent {
       MuxUploadSDKForAndroidTheme {
-        if(!hasPermissions(this)) {
+        if (!hasPermissions(this)) {
           RequestPermissionsEffect(this)
         } else {
           GetContentEffect(viewModel = viewModel)
@@ -109,10 +113,10 @@ fun GetContentEffect(viewModel: CreateUploadViewModel) {
       contentUri.value = uri
       uri?.let { viewModel.prepareForUpload(it) }
     }
-  if(contentUri.value == null) {
+  if (contentUri.value == null) {
     LaunchedEffect(key1 = Object()) {
       MainScope().launch { getContent.launch(arrayOf("video/*")) }
-  }
+    }
   }
 }
 
@@ -202,8 +206,11 @@ fun BodyContent(state: CreateUploadViewModel.ScreenState, modifier: Modifier = M
     Spacer(modifier = Modifier.size(16.dp))
     if (state.thumbnail != null) {
       val imageBitmap = state.thumbnail.asImageBitmap()
-      Box(
-        modifier = Modifier.paint(painter = BitmapPainter(image = imageBitmap))
+      Image(
+        bitmap = imageBitmap,
+        contentDescription = "Preview of the video thumbnail",
+        contentScale = ContentScale.Crop,
+        modifier = Modifier.height(256.dp),
       )
     } else {
       Box(
