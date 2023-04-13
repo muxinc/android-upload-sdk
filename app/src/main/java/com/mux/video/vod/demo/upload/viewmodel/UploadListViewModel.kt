@@ -26,8 +26,10 @@ class UploadListViewModel(app: Application) : AndroidViewModel(app) {
   private var observeListJob: Job? = null
 
   fun refreshList() {
+    // The SDK ensures that there's only 1 upload job running for a file, so get/make as many
+    // MuxUploads as you like. You don't need to hold onto MuxUploads or clean them up.
     val recentUploads = MuxUploadManager.allUploadJobs()
-    uploadMap.clear()
+
     uploadMap.apply {
       recentUploads.forEach { put(it.videoFile, it) }
     }
