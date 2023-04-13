@@ -30,9 +30,7 @@ class CreateUploadActivity : ComponentActivity() {
         // A surface container using the 'background' color from the theme
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colors.background) {
           val state = viewModel.videoState.observeAsState(
-            CreateUploadViewModel.ScreenState(
-              CreateUploadViewModel.PrepareState.NONE, null
-            )
+            CreateUploadViewModel.ScreenState(CreateUploadViewModel.PrepareState.NONE, null)
           )
 
           ScreenContent(closeThisScreen = { finish() }, screenState = state.value)
@@ -51,7 +49,7 @@ fun ScreenContent(
     topBar = {
       AppBar(
         closeThisScreen,
-        screenState.prepareState == CreateUploadViewModel.PrepareState.READY
+        fileAvailable = screenState.prepareState == CreateUploadViewModel.PrepareState.READY
       )
     },
   ) { contentPadding ->
@@ -61,7 +59,7 @@ fun ScreenContent(
 
 @Composable
 fun BodyContent(state: CreateUploadViewModel.ScreenState, modifier: Modifier = Modifier) {
-  Text("asflkjh")
+  Text("asflkjh", modifier)
 }
 
 @Composable
@@ -71,7 +69,7 @@ fun AppBar(closeThisScreen: () -> Unit, fileAvailable: Boolean) {
     navigationIcon = {
       IconButton(
         onClick = {
-          closeThisScreen() // Since we're not using Compose for everything, improvise the nav
+          closeThisScreen()
         },
         enabled = fileAvailable
       ) {
@@ -105,7 +103,7 @@ fun DefaultPreview() {
       screenState = CreateUploadViewModel.ScreenState(
         prepareState = CreateUploadViewModel.PrepareState.NONE,
         thumbnail = null
-      )
+      ),
     )
   }
 }
