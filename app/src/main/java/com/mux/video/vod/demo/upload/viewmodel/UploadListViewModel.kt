@@ -9,7 +9,6 @@ import androidx.lifecycle.viewModelScope
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
 import com.mux.video.upload.api.UploadEventListener
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -37,8 +36,6 @@ class UploadListViewModel(app: Application) : AndroidViewModel(app) {
     }
   }
 
-  private var observeListJob: Job? = null
-
   fun refreshList() {
     MuxUploadManager.addUploadsUpdatedListener(listUpdateListener)
 
@@ -56,21 +53,17 @@ class UploadListViewModel(app: Application) : AndroidViewModel(app) {
 
   override fun onCleared() {
     super.onCleared()
-    observeListJob?.cancel()
     MuxUploadManager.removeUploadsUpdatedListener(listUpdateListener)
   }
 
   private fun observeUploads(recentUploads: List<MuxUpload>) {
-    observeListJob?.cancel()
-    observeListJob = viewModelScope.launch {
-      recentUploads.forEach { upload ->
-        upload.setProgressListener {
-          Log.d("UploadListViewModel", "upload progress: $it")
-          uploadMap[upload.videoFile] = upload
-          updateUiData(uploadMap.values.toList())
-        }
-      } // recentUploads.forEach
-    } // observeListJob = ...
+    recentUploads.forEach { upload ->
+      upload.setProgressListener {
+        Log.d("UploadListViewModel", "upload progress: $it")
+        uploadMap[upload.videoFile] = upload
+        updateUiData(uploadMap.values.toList())
+      }
+    } // recentUploads.forEach
   }
 
   private fun updateUiData(list: List<MuxUpload>) {

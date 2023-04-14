@@ -46,6 +46,7 @@ class PlainViewListExampleActivity : AppCompatActivity() {
     createUploadViewModel.videoState.observe(this) {
       if (it.prepareState == CreateUploadViewModel.PrepareState.READY) {
         createUploadViewModel.beginUpload()
+        listViewModel.refreshList()
       }
     }
 
