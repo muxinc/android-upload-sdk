@@ -42,12 +42,14 @@ class MuxUpload private constructor(
   /**
    * If the upload has failed, gets the error associated with the failure
    */
-  val error = uploadInfo.errorFlow?.replayCache?.lastOrNull()
+  val error get() = _error
+  private var _error: Exception? = null
 
   /**
    * Returns true if the upload was successful
    */
-  val isSuccessful = uploadInfo.successFlow?.replayCache?.isEmpty()?.not() ?: false
+  val isSuccessful get() = _successful
+  private var _successful: Boolean = false
 
   private var resultListeners = mutableListOf<UploadEventListener<Result<Progress>>>()
   private var progressListeners = mutableListOf<UploadEventListener<Progress>>()
@@ -182,12 +184,15 @@ class MuxUpload private constructor(
     // This job has up to three children, one for each of the state flows on UploadInfo
     return callbackScope.launch {
       upload.errorFlow?.let { flow ->
-        launch { flow.collect { error -> resultListeners.forEach { it.onEvent(Result.failure(error)) } } }
+        launch { flow.collect { error ->
+          _error = error
+          resultListeners.forEach { it.onEvent(Result.failure(error)) } } }
       }
       upload.successFlow?.let { flow ->
         launch {
           flow.collect { state ->
             lastKnownState = state
+            _successful = true
             resultListeners.forEach { it.onEvent(Result.success(state)) }
           }
         }
