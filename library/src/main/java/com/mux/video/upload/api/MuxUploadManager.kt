@@ -12,12 +12,14 @@ object MuxUploadManager {
 
   private val uploadsByFilename: MutableMap<String, UploadInfo> = mutableMapOf()
   private val observerJobsByFilename: MutableMap<String, Job> = mutableMapOf()
+  private val listeners: MutableSet<UploadEventListener<List<MuxUpload>>> = mutableSetOf()
   private val logger get() = MuxUploadSdk.logger
 
   /**
    * Finds an in-progress or paused upload and returns an object to track it, if it was
    * in progress
    */
+  @Suppress("unused")
   fun findUploadByFile(videoFile: File): MuxUpload? =
     uploadsByFilename[videoFile.absolutePath]?.let { MuxUpload.create(it) }
 
@@ -26,7 +28,26 @@ object MuxUploadManager {
    * don't need to hold these specific instances except where they're locally used. The upload jobs
    * will continue in parallel if they're auto-managed (see [MuxUpload.Builder.manageUploadTask])
    */
+  @Suppress("unused")
   fun allUploadJobs(): List<MuxUpload> = uploadsByFilename.values.map { MuxUpload.create(it) }
+
+  /**
+   * Adds an [UploadEventListener] for updates to the upload list
+   */
+  @MainThread
+  @Suppress("unused")
+  fun addUploadsUpdatedListener(listener: UploadEventListener<List<MuxUpload>>) {
+    listeners.add(listener)
+  }
+
+  /**
+   * Removes a previously-added [UploadEventListener] for updates to the upload list
+   */
+  @MainThread
+  @Suppress("unused")
+  fun removeUploadsUpdatedListener(listener: UploadEventListener<List<MuxUpload>>) {
+    listeners.remove(listener)
+  }
 
   /**
    * Adds a new job to this manager.
@@ -37,6 +58,7 @@ object MuxUploadManager {
   @MainThread
   internal fun startJob(upload: UploadInfo, restart: Boolean = false): UploadInfo {
     assertMainThread()
+    notifyListListeners()
     return insertOrUpdateUpload(upload, restart)
   }
 
@@ -56,6 +78,7 @@ object MuxUploadManager {
       uploadsByFilename[pausedUpload.file.absolutePath] = pausedUpload
       return pausedUpload
     }
+    notifyListListeners()
     return upload
   }
 
@@ -69,6 +92,7 @@ object MuxUploadManager {
       uploadsByFilename -= it.file.absolutePath
       forgetUploadState(upload)
     }
+    notifyListListeners()
   }
 
   @JvmSynthetic
@@ -79,6 +103,14 @@ object MuxUploadManager {
     uploadsByFilename -= upload.file.absolutePath
     if (forgetJob) {
       forgetUploadState(upload)
+    }
+    notifyListListeners()
+  }
+
+  private fun notifyListListeners() {
+    mainScope.launch {
+      val uploads = uploadsByFilename.values.map { MuxUpload.create(it) }
+      listeners.forEach { it.onEvent(uploads) }
     }
   }
 

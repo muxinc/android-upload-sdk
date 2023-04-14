@@ -49,8 +49,8 @@ class MuxUpload private constructor(
    */
   val isSuccessful = uploadInfo.successFlow?.replayCache?.isEmpty()?.not() ?: false
 
-  private var resultListeners = mutableListOf<EventListener<Result<Progress>>>()
-  private var progressListeners = mutableListOf<EventListener<Progress>>()
+  private var resultListeners = mutableListOf<UploadEventListener<Result<Progress>>>()
+  private var progressListeners = mutableListOf<UploadEventListener<Progress>>()
   private var observerJob: Job? = null
   private var lastKnownState: Progress? = null
 
@@ -147,7 +147,7 @@ class MuxUpload private constructor(
    * Adds a listener for progress updates on this upload
    */
   @MainThread
-  fun addProgressListener(listener: EventListener<Progress>) {
+  fun addProgressListener(listener: UploadEventListener<Progress>) {
     progressListeners += listener
     lastKnownState?.let { listener.onEvent(it) }
   }
@@ -156,7 +156,7 @@ class MuxUpload private constructor(
    * Removes the given listener for progress updates
    */
   @MainThread
-  fun removeProgressListener(listener: EventListener<Progress>) {
+  fun removeProgressListener(listener: UploadEventListener<Progress>) {
     progressListeners -= listener
   }
 
@@ -164,7 +164,7 @@ class MuxUpload private constructor(
    * Adds a listener for success or failure updates on this upload
    */
   @MainThread
-  fun addResultListener(listener: EventListener<Result<Progress>>) {
+  fun addResultListener(listener: UploadEventListener<Result<Progress>>) {
     resultListeners += listener
     lastKnownState?.let {
       if (it.bytesUploaded >= it.totalBytes) {
@@ -174,7 +174,7 @@ class MuxUpload private constructor(
   }
 
   @MainThread
-  fun removeResultListener(listener: EventListener<Result<Progress>>) {
+  fun removeResultListener(listener: UploadEventListener<Result<Progress>>) {
     resultListeners -= listener
   }
 
@@ -217,14 +217,6 @@ class MuxUpload private constructor(
     val startTime: Long = 0,
     val updatedTime: Long = 0,
   )
-
-  /**
-   * Listens for events from this object and handles them. Use with [addProgressListener] or
-   * [addResultListener]
-   */
-  fun interface EventListener<EventType> {
-    fun onEvent(event: EventType)
-  }
 
   /**
    * Builds instances of [MuxUpload]
