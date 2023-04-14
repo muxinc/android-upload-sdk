@@ -63,6 +63,7 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
           )
         )
       } catch (e: Exception) {
+        Log.e("CreateUploadViewModel", "Error preparing upload", e)
         videoStateLiveData.value = State(PrepareState.ERROR, null)
       }
     } // prepareJob = viewModelScope.launch { ...
@@ -74,14 +75,9 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
       MuxUpload.Builder(
         videoState.value!!.uploadUri!!,
         videoState.value!!.chosenFile!!
-      ).build().start()
-    }
-  }
-
-  fun prepareAndBeginUpload(uri: Uri) {
-    viewModelScope.launch {
-      prepareForUpload(uri)
-      beginUpload()
+      ).build()
+        // Force restart when creating brand new uploads (because we're making new Direct uploads)
+        .start(forceRestart = true)
     }
   }
 

@@ -95,6 +95,7 @@ object MuxUploadManager {
     } else {
       if (restart) {
         cancelJobInner(upload)
+        forgetUploadState(upload)
         newUpload = startUploadJob(upload)
       }
     }

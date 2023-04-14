@@ -26,11 +26,13 @@
             android:name=".upload.CreateUploadActivity"
             android:exported="false"
             android:label="@string/title_activity_create_upload"
+            android:taskAffinity=".compose"
             android:theme="@style/Theme.MuxVideoVODUploadSDK" />
         <activity
             android:name=".upload.UploadListActivity"
             android:exported="true"
             android:label="@string/title_main_activity"
+            android:taskAffinity=".compose"
             android:theme="@style/Theme.MuxVideoVODUploadSDK.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -42,6 +44,7 @@
             android:name=".upload.PlainViewListExampleActivity"
             android:exported="true"
             android:label="@string/title_plain_activity"
+            android:taskAffinity=".plain"
             android:theme="@style/Theme.MuxVideoVODUploadSDK.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

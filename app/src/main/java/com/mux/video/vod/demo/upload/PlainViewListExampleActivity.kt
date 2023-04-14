@@ -34,7 +34,7 @@ class PlainViewListExampleActivity : AppCompatActivity() {
   private val openDocument =
     registerForActivityResult(ActivityResultContracts.OpenDocument()) { docUri ->
       Log.d(javaClass.simpleName, "Got doc with URI $docUri")
-      createUploadViewModel.prepareAndBeginUpload(docUri!!)
+      docUri?.let { createUploadViewModel.prepareForUpload(docUri) }
     }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,6 +43,11 @@ class PlainViewListExampleActivity : AppCompatActivity() {
     setContentView(binding.root)
     binding.videoListList.includeRecyclerView.layoutManager = LinearLayoutManager(this)
     listViewModel.uploads.observe(this) { handleListUpdate(it) }
+    createUploadViewModel.videoState.observe(this) {
+      if (it.prepareState == CreateUploadViewModel.PrepareState.READY) {
+        createUploadViewModel.beginUpload()
+      }
+    }
 
     setSupportActionBar(findViewById(R.id.toolbar))
     binding.toolbarLayout.title = title
