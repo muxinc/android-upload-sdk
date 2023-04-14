@@ -30,7 +30,18 @@
         <activity
             android:name=".upload.UploadListActivity"
             android:exported="true"
-            android:label="@string/title_activity_scrolling"
+            android:label="@string/title_main_activity"
+            android:theme="@style/Theme.MuxVideoVODUploadSDK.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".upload.PlainViewListExampleActivity"
+            android:exported="true"
+            android:label="@string/title_plain_activity"
             android:theme="@style/Theme.MuxVideoVODUploadSDK.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

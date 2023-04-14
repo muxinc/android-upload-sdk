@@ -78,6 +78,13 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
     }
   }
 
+  fun prepareAndBeginUpload(uri: Uri) {
+    viewModelScope.launch {
+      prepareForUpload(uri)
+      beginUpload()
+    }
+  }
+
   /**
    * In order to upload a file from the device's media store, the file must be copied into the app's
    * temp directory. (Technically we could stream it from the source, but this prevents the other
