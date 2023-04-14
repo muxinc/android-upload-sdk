@@ -54,8 +54,6 @@ import java.io.File
 
 class CreateUploadActivity : ComponentActivity() {
 
-  private val viewModel by viewModels<CreateUploadViewModel>()
-
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     setContent {
@@ -63,9 +61,10 @@ class CreateUploadActivity : ComponentActivity() {
         if (!hasPermissions(this)) {
           RequestPermissionsEffect(this)
         } else {
-          GetContentEffect(viewModel = viewModel)
+          GetContentEffect()
         }
 
+        val viewModel: CreateUploadViewModel = viewModel()
         val state = viewModel.videoState.observeAsState(
           CreateUploadViewModel.State(CreateUploadViewModel.PrepareState.NONE, null)
         )
@@ -105,7 +104,8 @@ fun RequestPermissionsEffect(context: Context) {
 }
 
 @Composable
-fun GetContentEffect(viewModel: CreateUploadViewModel) {
+fun GetContentEffect() {
+  val viewModel: CreateUploadViewModel = viewModel()
   val contentUri = remember { mutableStateOf<Uri?>(null) }
   val getContent =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -176,7 +176,7 @@ fun BodyContent(state: CreateUploadViewModel.State, modifier: Modifier = Modifie
           val requestContent = remember { mutableStateOf(false) }
           if (requestContent.value) {
             requestContent.value = false
-            GetContentEffect(viewModel = viewModel)
+            GetContentEffect()
           }
           TextButton(onClick = {
             requestContent.value = viewModel.videoState.value?.chosenFile == null
@@ -239,7 +239,9 @@ fun BodyContent(state: CreateUploadViewModel.State, modifier: Modifier = Modifie
           }
           CreateUploadViewModel.PrepareState.PREPARING -> {
             CircularProgressIndicator(
-              modifier = Modifier.align(Alignment.Center).size(48.dp)
+              modifier = Modifier
+                .align(Alignment.Center)
+                .size(48.dp)
             )
           }
           else -> {
