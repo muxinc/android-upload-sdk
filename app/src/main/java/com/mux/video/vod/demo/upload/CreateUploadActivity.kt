@@ -60,8 +60,6 @@ class CreateUploadActivity : ComponentActivity() {
       MuxUploadSDKForAndroidTheme {
         if (!hasPermissions(this)) {
           RequestPermissionsEffect(this)
-        } else {
-          GetContentEffect()
         }
 
         val viewModel: CreateUploadViewModel = viewModel()
@@ -104,7 +102,7 @@ fun RequestPermissionsEffect(context: Context) {
 }
 
 @Composable
-fun GetContentEffect() {
+fun GetContentEffect(requestContent: Boolean?) {
   val viewModel: CreateUploadViewModel = viewModel()
   val contentUri = remember { mutableStateOf<Uri?>(null) }
   val getContent =
@@ -112,9 +110,10 @@ fun GetContentEffect() {
       contentUri.value = uri
       uri?.let { viewModel.prepareForUpload(it) }
     }
-  if (contentUri.value == null) {
+  if (contentUri.value == null && requestContent == true) {
     LaunchedEffect(key1 = Object()) {
       MainScope().launch { getContent.launch(arrayOf("video/*")) }
+      //getContent.launch(arrayOf("video/*"))
     }
   }
 }
@@ -174,10 +173,7 @@ fun BodyContent(state: CreateUploadViewModel.State, modifier: Modifier = Modifie
         } else {
           val viewModel: CreateUploadViewModel = viewModel()
           val requestContent = remember { mutableStateOf(false) }
-          if (requestContent.value) {
-            requestContent.value = false
-            GetContentEffect()
-          }
+          GetContentEffect(requestContent.value)
           TextButton(onClick = {
             requestContent.value = viewModel.videoState.value?.chosenFile == null
           }) {
