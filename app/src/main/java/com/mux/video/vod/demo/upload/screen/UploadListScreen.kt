@@ -1,6 +1,7 @@
 package com.mux.video.vod.demo.upload.screen
 
 import android.app.Activity
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -10,8 +11,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.compose.material.icons.filled.Upload
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -19,7 +20,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
@@ -28,16 +28,17 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.R
+import com.mux.video.vod.demo.upload.CreateUploadActivity
 import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
-import com.mux.video.vod.demo.upload.viewmodel.CreateUploadViewModel
 import com.mux.video.vod.demo.upload.viewmodel.UploadListViewModel
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.launch
 import java.text.DecimalFormat
 
 @Composable
 fun UploadListScreen() {
   val activity = LocalContext.current as Activity
   val closeScreen = { activity.finish() }
-
   ScreenContent(closeScreen)
 }
 
@@ -46,18 +47,29 @@ private fun ScreenContent(
   closeThisScreen: () -> Unit = {},
 ) {
   return Scaffold(
-    topBar = {
-      AppBar(closeThisScreen)
-    },
+    topBar = { AppBar(closeThisScreen) },
+    floatingActionButton = { CreateUploadFab() }
   ) { contentPadding ->
     BodyContent(
       Modifier
         .padding(contentPadding)
-        .padding(16.dp)
+        //.padding(16.dp)
     )
   }
 }
 
+@Composable
+private fun CreateUploadFab() {
+  val activity = LocalContext.current as Activity
+
+  FloatingActionButton(onClick = {
+    activity.startActivity(
+      Intent(activity, CreateUploadActivity::class.java)
+    )
+  }) {
+    Icon( Icons.Filled.Upload, contentDescription = "Start new upload")
+  }
+}
 
 @Composable
 private fun BodyContent(modifier: Modifier = Modifier) {
@@ -133,7 +145,6 @@ private fun ListItem(upload: MuxUpload) {
 
 @Composable
 private fun AppBar(closeThisScreen: () -> Unit) {
-  val viewModel: CreateUploadViewModel = viewModel()
   TopAppBar(
     title = { Text(text = stringResource(R.string.title_main_activity)) },
     navigationIcon = {
@@ -145,19 +156,6 @@ private fun AppBar(closeThisScreen: () -> Unit) {
         Icon(
           Icons.Filled.Close,
           contentDescription = stringResource(id = android.R.string.cancel),
-        )
-      }
-    },
-    actions = {
-      TextButton(
-        onClick = {
-          viewModel.beginUpload()
-          closeThisScreen()
-        },
-      ) {
-        Text(
-          text = stringResource(id = R.string.action_create_upload),
-          style = TextStyle(color = MaterialTheme.colors.onPrimary),
         )
       }
     },

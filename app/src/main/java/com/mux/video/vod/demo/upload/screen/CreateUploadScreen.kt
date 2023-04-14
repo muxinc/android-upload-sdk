@@ -124,7 +124,6 @@ private fun ScreenContent(
       screenState,
       Modifier
         .padding(contentPadding)
-        .padding(16.dp)
     )
   }
 }
@@ -135,6 +134,7 @@ private fun BodyContent(state: CreateUploadViewModel.State, modifier: Modifier =
     modifier = modifier
       .fillMaxWidth()
       .wrapContentSize(Alignment.TopStart)
+      .padding(16.dp)
   ) {
     Row {
       Box(
