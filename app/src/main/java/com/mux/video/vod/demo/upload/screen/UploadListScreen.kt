@@ -73,7 +73,6 @@ private fun CreateUploadFab() {
 
 @Composable
 private fun BodyContent(modifier: Modifier = Modifier) {
-  screenViewModel().refreshList() // todo: probably don't need to call this if the manager can be listened-to for this stuff
   Box(modifier = modifier.padding(16.dp)) {
     val currentItems = screenViewModel().uploadsFlow.collectAsState(initial = listOf())
     UploadList(currentItems.value)
@@ -82,6 +81,9 @@ private fun BodyContent(modifier: Modifier = Modifier) {
 
 @Composable
 private fun UploadList(items: List<MuxUpload>?) {
+  val viewModel = screenViewModel()
+  SideEffect { viewModel.refreshList() }
+
   if (items == null) {
     // ViewModel's not ready yet. This stage does not take long so just wait
     return

@@ -7,6 +7,7 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
+import com.mux.video.upload.api.UploadEventListener
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,9 +28,15 @@ class UploadListViewModel(app: Application) : AndroidViewModel(app) {
 
   private val uploadMap = mutableMapOf<File, MuxUpload>()
 
+  private val listUpdateListener: UploadEventListener<List<MuxUpload>> by lazy {
+    UploadEventListener { updateUiData(it) }
+  }
+
   private var observeListJob: Job? = null
 
   fun refreshList() {
+    MuxUploadManager.addUploadsUpdatedListener(listUpdateListener)
+
     // The SDK ensures that there's only 1 upload job running for a file, so get/make as many
     // MuxUploads as you like. You don't need to hold onto MuxUploads or clean them up.
     val recentUploads = MuxUploadManager.allUploadJobs()
@@ -49,6 +56,12 @@ class UploadListViewModel(app: Application) : AndroidViewModel(app) {
         }
       } // recentUploads.forEach
     } // observeListJob = ...
+  }
+
+  override fun onCleared() {
+    super.onCleared()
+    observeListJob?.cancel()
+    MuxUploadManager.removeUploadsUpdatedListener(listUpdateListener)
   }
 
   private fun updateUiData(list: List<MuxUpload>) {
