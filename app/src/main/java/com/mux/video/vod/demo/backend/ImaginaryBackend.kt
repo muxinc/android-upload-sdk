@@ -73,7 +73,7 @@ private interface ImaginaryWebapp {
  * Further documentation can be found here:
  *  https://docs.mux.com/api-reference/video#operation/create-direct-upload
  */
-data class VideoUploadPost(
+private data class VideoUploadPost(
   /**
    * List of new assets to create.
    */
@@ -88,7 +88,7 @@ data class VideoUploadPost(
 /**
  * Settings for the newly-created asset.
  */
-data class NewAssetSettings(
+private data class NewAssetSettings(
   /**
    * Possible values:
    *  "public": Public assets can be streamed without authentication
@@ -127,7 +127,7 @@ data class NewAssetSettings(
  * For more information, see:
  *  https://docs.mux.com/api-reference/video#operation/create-direct-upload
  */
-data class MuxVideoUpload(
+private data class MuxVideoUpload(
   /**
    * Resume-able PUT URL for the video file being uploaded
    */
@@ -168,7 +168,7 @@ data class MuxVideoUpload(
   val corsOrigin: String,
 )
 
-data class MuxVideoUploadError(
+private data class MuxVideoUploadError(
   val type: String,
   val message: String
 )
@@ -176,6 +176,6 @@ data class MuxVideoUploadError(
 /**
  * Wrapper for the upload response data
  */
-data class MuxVideoUploadResponse(
+private data class MuxVideoUploadResponse(
   val data: MuxVideoUpload
 )
