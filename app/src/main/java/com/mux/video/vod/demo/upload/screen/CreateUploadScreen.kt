@@ -55,9 +55,7 @@ fun CreateUploadScreen() {
   val context = LocalContext.current
   val activity = context as? Activity
 
-  if (!hasPermissions(context)) {
-    RequestPermissionsEffect(context)
-  }
+  RequestPermissionsEffect(context)
 
   val viewModel: CreateUploadViewModel = viewModel()
   val state = viewModel.videoState.observeAsState(
