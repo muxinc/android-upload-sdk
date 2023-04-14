@@ -32,7 +32,9 @@ class MuxUpload private constructor(
    * The most-currents state of the upload
    */
   val currentState: Progress
-    get() = lastKnownState ?: Progress(totalBytes = videoFile.length())
+    get() = lastKnownState ?: uploadInfo.progressFlow?.replayCache?.firstOrNull() ?: Progress(
+      totalBytes = videoFile.length()
+    )
 
   /**
    * True when the upload is running, false if it's paused, failed, or canceled

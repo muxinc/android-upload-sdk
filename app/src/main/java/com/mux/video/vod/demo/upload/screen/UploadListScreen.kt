@@ -118,7 +118,7 @@ private fun ListItem(upload: MuxUpload) {
         Log.d("UploadListScreen", "Elapsed $uploadTimeElapsed")
         Log.d("UploadListScreen", uploadState.toString())
         Log.d("UploadListScreen", "")
-        if(uploadState.startTime == 0L) {
+        if(uploadState.startTime != 0L) {
           //Thread.dumpStack()
         }
         val stateTxt = if (upload.isSuccessful) {

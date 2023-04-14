@@ -1,11 +1,11 @@
 package com.mux.video.upload.internal
 
-import android.os.SystemClock
 import com.mux.video.upload.BuildConfig
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import java.io.BufferedInputStream
 import java.io.FileInputStream
@@ -180,5 +180,10 @@ internal class UploadJobFactory private constructor(
 
   private fun getAlreadyTransferredBytes(file: UploadInfo): Long = readLastByteForFile(file)
 
-  private fun <T> callbackFlow() = MutableSharedFlow<T>()
+  private fun <T> callbackFlow() =
+    MutableSharedFlow<T>(
+      replay = 1,
+      extraBufferCapacity = 2, // Some slop for UI to miss events
+      onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
 }
