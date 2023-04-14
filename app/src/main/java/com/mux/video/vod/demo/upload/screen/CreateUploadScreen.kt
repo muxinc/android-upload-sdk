@@ -141,7 +141,7 @@ private fun BodyContent(state: CreateUploadViewModel.State, modifier: Modifier =
         modifier = Modifier
           .clip(CircleShape)
           .background(Color.Gray)
-          .size(96.dp)
+          .size(36.dp)
       )
       Spacer(modifier = Modifier.size(16.dp))
       val stateTxtModifier = Modifier

@@ -1,16 +1,16 @@
 package com.mux.video.vod.demo.upload.viewmodel
 
 import android.app.Application
-import android.net.Uri
-import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
-import com.mux.video.vod.demo.upload.UploadListActivity
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -19,8 +19,12 @@ import java.io.File
  */
 class UploadListViewModel(app: Application) : AndroidViewModel(app) {
 
-  val uploads: LiveData<List<MuxUpload>> by this::innerUploads
-  private val innerUploads = MutableLiveData<List<MuxUpload>>(listOf())
+  val uploads: LiveData<List<MuxUpload>> by this::_uploads
+  private val _uploads = MutableLiveData<List<MuxUpload>>(listOf())
+
+  val uploadsFlow: Flow<List<MuxUpload>> get() = _uploadsFlow
+  private val _uploadsFlow: MutableStateFlow<List<MuxUpload>> = MutableStateFlow(listOf())
+
   private val uploadMap = mutableMapOf<File, MuxUpload>()
 
   private var observeListJob: Job? = null
@@ -33,17 +37,23 @@ class UploadListViewModel(app: Application) : AndroidViewModel(app) {
     uploadMap.apply {
       recentUploads.forEach { put(it.videoFile, it) }
     }
-    innerUploads.value = uploadMap.values.toList()
+    val uploadList = uploadMap.values.toList()
+    updateUiData(uploadList)
 
     observeListJob?.cancel()
     observeListJob = viewModelScope.launch {
       recentUploads.forEach { upload ->
         upload.addProgressListener {
           uploadMap[upload.videoFile] = upload
-          innerUploads.value = uploadMap.values.toList()
+          updateUiData(uploadList)
         }
       } // recentUploads.forEach
     } // observeListJob = ...
+  }
+
+  private fun updateUiData(list: List<MuxUpload>) {
+    _uploads.value = list
+    _uploadsFlow.value = list
   }
 
   init {

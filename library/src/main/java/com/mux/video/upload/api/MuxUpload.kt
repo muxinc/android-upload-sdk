@@ -39,6 +39,16 @@ class MuxUpload private constructor(
    */
   val isRunning get() = uploadInfo.isRunning()
 
+  /**
+   * If the upload has failed, gets the error associated with the failure
+   */
+  val error = uploadInfo.errorFlow?.replayCache?.lastOrNull()
+
+  /**
+   * Returns true if the upload was successful
+   */
+  val isSuccessful = uploadInfo.successFlow?.replayCache?.isEmpty()?.not() ?: false
+
   private var resultListeners = mutableListOf<EventListener<Result<Progress>>>()
   private var progressListeners = mutableListOf<EventListener<Progress>>()
   private var observerJob: Job? = null
@@ -86,14 +96,13 @@ class MuxUpload private constructor(
 
   @Throws
   @Suppress("unused")
-  suspend fun awaitSuccess(): Progress {
+  suspend fun awaitSuccess(): Result<Progress> {
     return coroutineScope {
       startInner(coroutineScope = this)
       uploadInfo.uploadJob?.let { job ->
         val result = job.await()
-        result.exceptionOrNull()?.let { throw it }
-        result.getOrThrow()
-      } ?: Progress(0, uploadInfo.file.length())
+        result
+      } ?: Result.failure(Exception("Upload failed to start"))
     }
   }
 
