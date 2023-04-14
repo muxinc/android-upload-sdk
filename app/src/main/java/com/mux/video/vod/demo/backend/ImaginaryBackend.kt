@@ -35,7 +35,9 @@ object ImaginaryBackend {
 
   @Throws
   suspend fun createUploadUrl(): String {
-    val post = VideoUploadPost()
+    val post = VideoUploadPost(
+      assetSettings = listOf(NewAssetSettings())
+    )
     val response = muxVideoBackend.postUploads(basicCredential(), post)
     return response.data.url
   }
@@ -43,8 +45,8 @@ object ImaginaryBackend {
   // note: You shouldn't do basic auth with hard-coded keys in a real app
   private fun basicCredential(): String = Credentials.basic(ACCESS_TOKEN_ID, ACCESS_TOKEN_SECRET)
 
-  private const val ACCESS_TOKEN_ID = "YOUR ACCESS TOKEN ID"
-  private const val ACCESS_TOKEN_SECRET = "YOUR ACCESS TOKEN SECRET"
+  private const val ACCESS_TOKEN_ID = "990ad4f6-709e-4296-98dc-078498b979c7"
+  private const val ACCESS_TOKEN_SECRET = "je4hm5xjH3TabBYbVmCO3xLNCe/nT0Etqr0Z6E5yt361OOz/6B6UjA03ZNY2zgB1vaVVLAi3H7A"
 }
 
 private interface ImaginaryWebapp {
@@ -93,7 +95,7 @@ data class NewAssetSettings(
    *  "signed": Signed assets require authentication by token to be streamed.
    *      (see https://docs.mux.com/api-reference/video)
    */
-  val playbackPolicy: List<String> = listOf("public", "signed"),
+  val playbackPolicy: List<String> = listOf("public"),
   /**
    * Arbitrary data that can be passed along with the asset.
    * NOTE: The backend limits the length of this string to 255 characters.
