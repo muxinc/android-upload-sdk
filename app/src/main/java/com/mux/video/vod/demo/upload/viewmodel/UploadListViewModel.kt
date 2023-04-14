@@ -29,9 +29,10 @@ class UploadListViewModel(app: Application) : AndroidViewModel(app) {
   private val uploadMap = mutableMapOf<File, MuxUpload>()
 
   private val listUpdateListener: UploadEventListener<List<MuxUpload>> by lazy {
-    UploadEventListener {  uploads ->
-      uploads.forEach { uploadMap[it.videoFile] = it }
+    UploadEventListener {  newUploads ->
+      newUploads.forEach { uploadMap[it.videoFile] = it }
       updateUiData(uploadMap.values.toList())
+      refreshList()
     }
   }
 

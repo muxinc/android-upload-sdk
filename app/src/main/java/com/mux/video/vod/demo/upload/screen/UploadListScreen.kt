@@ -2,6 +2,7 @@ package com.mux.video.vod.demo.upload.screen
 
 import android.app.Activity
 import android.content.Intent
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -82,7 +83,7 @@ private fun BodyContent(modifier: Modifier = Modifier) {
 @Composable
 private fun UploadList(items: List<MuxUpload>?) {
   val viewModel = screenViewModel()
-  SideEffect { viewModel.refreshList() }
+  //SideEffect { viewModel.refreshList() }
 
   if (items == null) {
     // ViewModel's not ready yet. This stage does not take long so just wait
@@ -112,6 +113,13 @@ private fun ListItem(upload: MuxUpload) {
         val uploadState = upload.currentState
         val uploadTimeElapsed = uploadState.updatedTime - uploadState.startTime
         val dataRateEst = uploadState.bytesUploaded / uploadTimeElapsed.toDouble()
+        Log.d("UploadListScreen", "Upload rate est: $dataRateEst")
+        Log.d("UploadListScreen", "Elapsed $uploadTimeElapsed")
+        Log.d("UploadListScreen", uploadState.toString())
+        Log.d("UploadListScreen", "")
+        if(uploadState.startTime == 0L) {
+          Thread.dumpStack()
+        }
         val stateTxt = if (upload.isSuccessful) {
           "Done!"
         } else if (upload.error != null) {
