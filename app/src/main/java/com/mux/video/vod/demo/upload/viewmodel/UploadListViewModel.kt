@@ -24,9 +24,6 @@ class UploadListViewModel(app: Application) : AndroidViewModel(app) {
   val uploads: LiveData<List<MuxUpload>> by this::_uploads
   private val _uploads = MutableLiveData<List<MuxUpload>>(listOf())
 
-  val uploadsFlow: Flow<List<MuxUpload>> get() = _uploadsFlow.asSharedFlow()
-  private val _uploadsFlow: MutableSharedFlow<List<MuxUpload>> = MutableSharedFlow(replay = 1)
-
   private val uploadMap = mutableMapOf<File, MuxUpload>()
 
   private val listUpdateListener: UploadEventListener<List<MuxUpload>> by lazy {
@@ -68,8 +65,7 @@ class UploadListViewModel(app: Application) : AndroidViewModel(app) {
 
   private fun updateUiData(list: List<MuxUpload>) {
     Log.d("UploadListViewModel", "updated with list items $list")
-    _uploads.value = mutableListOf<MuxUpload>().apply { addAll(list) }.toImmutableList()
-    viewModelScope.launch { _uploadsFlow.emit(list) }
+    _uploads.value = list.toImmutableList()
   }
 
   init {
