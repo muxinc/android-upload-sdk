@@ -19,6 +19,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.Error
+import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.livedata.observeAsState
@@ -29,17 +31,14 @@ import androidx.compose.ui.Alignment.Companion.CenterVertically
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.paint
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -68,7 +67,7 @@ class CreateUploadActivity : ComponentActivity() {
         }
 
         val state = viewModel.videoState.observeAsState(
-          CreateUploadViewModel.ScreenState(CreateUploadViewModel.PrepareState.NONE, null)
+          CreateUploadViewModel.State(CreateUploadViewModel.PrepareState.NONE, null)
         )
         ScreenContent(closeThisScreen = { finish() }, screenState = state.value)
       }
@@ -123,7 +122,7 @@ fun GetContentEffect(viewModel: CreateUploadViewModel) {
 @Composable
 fun ScreenContent(
   closeThisScreen: () -> Unit = {},
-  screenState: CreateUploadViewModel.ScreenState
+  screenState: CreateUploadViewModel.State
 ) {
   return Scaffold(
     topBar = {
@@ -140,7 +139,7 @@ fun ScreenContent(
 }
 
 @Composable
-fun BodyContent(state: CreateUploadViewModel.ScreenState, modifier: Modifier = Modifier) {
+fun BodyContent(state: CreateUploadViewModel.State, modifier: Modifier = Modifier) {
   Column(
     modifier = modifier
       .fillMaxWidth()
@@ -204,6 +203,7 @@ fun BodyContent(state: CreateUploadViewModel.ScreenState, modifier: Modifier = M
       }
     } // Box
     Spacer(modifier = Modifier.size(16.dp))
+    // Thumbnail is next, or placeholders for error and not-chosen states
     if (state.thumbnail != null) {
       val imageBitmap = state.thumbnail.asImageBitmap()
       Image(
@@ -224,17 +224,22 @@ fun BodyContent(state: CreateUploadViewModel.ScreenState, modifier: Modifier = M
             shape = RoundedCornerShape(12.dp),
           )
       ) {
-        val emoji = if (state.prepareState == CreateUploadViewModel.PrepareState.ERROR) {
-          "❌"
+        val viewModel: CreateUploadViewModel = viewModel()
+        val videoState = viewModel.videoState.value
+
+        if (state.prepareState == CreateUploadViewModel.PrepareState.ERROR) {
+          Icon(
+            Icons.Outlined.Error,
+            contentDescription = "",
+            modifier = Modifier.align(Alignment.Center),
+          )
         } else {
-          "❓"
+          Icon(
+            Icons.Outlined.UploadFile,
+            contentDescription = "",
+            modifier = Modifier.alpha(0.6F).align(Alignment.Center),
+          )
         }
-        Text(
-          emoji,
-          fontSize = 36.sp,
-          textAlign = TextAlign.Center,
-          modifier = Modifier.align(Alignment.Center)
-        )
       }
     }
   }
@@ -288,7 +293,7 @@ fun AppBar(closeThisScreen: () -> Unit, videoFile: File?) {
 fun DefaultPreview() {
   MuxUploadSDKForAndroidTheme {
     ScreenContent(
-      screenState = CreateUploadViewModel.ScreenState(
+      screenState = CreateUploadViewModel.State(
         prepareState = CreateUploadViewModel.PrepareState.NONE,
         thumbnail = null
       ),

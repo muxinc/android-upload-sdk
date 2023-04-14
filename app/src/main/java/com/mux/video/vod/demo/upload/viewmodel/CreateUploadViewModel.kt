@@ -14,7 +14,6 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.backend.ImaginaryBackend
-import com.mux.video.vod.demo.upload.UploadListActivity
 import com.mux.video.vod.demo.upload.model.MediaStoreVideo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,14 +27,14 @@ import java.io.FileOutputStream
 
 class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app) {
 
-  val videoState: LiveData<ScreenState> by this::videoStateLiveData
+  val videoState: LiveData<State> by this::videoStateLiveData
   private val videoStateLiveData =
-    MutableLiveData(ScreenState(prepareState = PrepareState.NONE, thumbnail = null))
+    MutableLiveData(State(prepareState = PrepareState.NONE, thumbnail = null))
 
   private var prepareJob: Job? = null
 
   fun prepareForUpload(contentUri: Uri) {
-    videoStateLiveData.value = ScreenState(PrepareState.PREPARING, null)
+    videoStateLiveData.value = State(PrepareState.PREPARING, null)
 
     prepareJob = viewModelScope.launch {
       try {
@@ -56,7 +55,7 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
         } // val thumbnailBitmap = ...
 
         videoStateLiveData.postValue(
-          ScreenState(
+          State(
             PrepareState.READY,
             videoFile,
             thumbnailBitmap,
@@ -64,7 +63,7 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
           )
         )
       } catch (e: Exception) {
-        videoStateLiveData.value = ScreenState(PrepareState.ERROR, null)
+        videoStateLiveData.value = State(PrepareState.ERROR, null)
       }
     } // prepareJob = viewModelScope.launch { ...
   }
@@ -197,7 +196,7 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
 
   enum class PrepareState { NONE, PREPARING, ERROR, READY }
 
-  data class ScreenState(
+  data class State(
     val prepareState: PrepareState,
     val chosenFile: File? = null,
     val thumbnail: Bitmap? = null,
