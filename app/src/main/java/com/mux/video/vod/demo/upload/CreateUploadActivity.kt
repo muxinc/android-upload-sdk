@@ -227,21 +227,34 @@ fun BodyContent(state: CreateUploadViewModel.State, modifier: Modifier = Modifie
         val viewModel: CreateUploadViewModel = viewModel()
         val videoState = viewModel.videoState.value
 
-        if (state.prepareState == CreateUploadViewModel.PrepareState.ERROR) {
-          Icon(
-            Icons.Outlined.Error,
-            contentDescription = "",
-            modifier = Modifier.align(Alignment.Center),
-          )
-        } else {
-          Icon(
-            Icons.Outlined.UploadFile,
-            contentDescription = "",
-            modifier = Modifier.alpha(0.6F).align(Alignment.Center),
-          )
-        }
-      }
-    }
+        when (state.prepareState) {
+          CreateUploadViewModel.PrepareState.ERROR -> {
+            Icon(
+              Icons.Outlined.Error,
+              contentDescription = "",
+              modifier = Modifier
+                .align(Alignment.Center)
+                .size(48.dp),
+            )
+          }
+          CreateUploadViewModel.PrepareState.PREPARING -> {
+            CircularProgressIndicator(
+              modifier = Modifier.align(Alignment.Center).size(48.dp)
+            )
+          }
+          else -> {
+            Icon(
+              Icons.Outlined.UploadFile,
+              contentDescription = "",
+              modifier = Modifier
+                .alpha(0.6F)
+                .align(Alignment.Center)
+                .size(48.dp),
+            )
+          } // else ->
+        } // when (state.prepareState)
+      } // Box Content
+    } // Box
   }
 }
 
