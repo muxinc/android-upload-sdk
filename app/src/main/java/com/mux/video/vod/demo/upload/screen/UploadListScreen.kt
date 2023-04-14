@@ -5,11 +5,13 @@ import android.content.Intent
 import android.util.Log
 import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -114,13 +116,7 @@ private fun ListItem(upload: MuxUpload) {
         val uploadState = upload.currentState
         val uploadTimeElapsed = uploadState.updatedTime - uploadState.startTime
         val dataRateEst = uploadState.bytesUploaded / uploadTimeElapsed.toDouble()
-        Log.d("UploadListScreen", "Upload rate est: $dataRateEst")
-        Log.d("UploadListScreen", "Elapsed $uploadTimeElapsed")
-        Log.d("UploadListScreen", uploadState.toString())
-        Log.d("UploadListScreen", "")
-        if(uploadState.startTime != 0L) {
-          //Thread.dumpStack()
-        }
+
         val stateTxt = if (upload.isSuccessful) {
           "Done!"
         } else if (upload.error != null) {
@@ -148,8 +144,31 @@ private fun ListItem(upload: MuxUpload) {
           modifier = Modifier
             .fillMaxWidth()
             .align(Alignment.Center)
-        )
-      } // status text
+        ) // status text
+        Spacer(modifier = Modifier.padding(16.dp))
+        ListItemThumbnail(upload)
+      }
+    }
+  }
+}
+
+@Composable
+private fun ListItemThumbnail(upload: MuxUpload) {
+  Box(
+    modifier = Modifier
+      .wrapContentSize(Alignment.Center)
+      .fillMaxWidth()
+      .height(256.dp)
+      .border(
+        width = 1.dp,
+        color = Color.LightGray,
+        shape = RoundedCornerShape(12.dp),
+      )
+  ) {
+    if (upload.isSuccessful) {
+      // Video Thumb: Fulls-size
+    } else if (upload.error != null) {
+
     }
   }
 }

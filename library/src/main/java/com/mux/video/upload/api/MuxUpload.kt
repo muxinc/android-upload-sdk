@@ -44,7 +44,7 @@ class MuxUpload private constructor(
   /**
    * If the upload has failed, gets the error associated with the failure
    */
-  val error get() = _error
+  val error get() = _error ?: uploadInfo.errorFlow?.replayCache?.firstOrNull()
   private var _error: Exception? = null
 
   /**
