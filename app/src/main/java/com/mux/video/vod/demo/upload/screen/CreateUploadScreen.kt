@@ -105,7 +105,6 @@ private fun GetContentEffect(requestContent: Boolean?) {
   if (contentUri.value == null && requestContent == true) {
     LaunchedEffect(key1 = Object()) {
       MainScope().launch { getContent.launch(arrayOf("video/*")) }
-      //getContent.launch(arrayOf("video/*"))
     }
   }
 }

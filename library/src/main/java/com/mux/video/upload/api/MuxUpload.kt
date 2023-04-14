@@ -51,8 +51,8 @@ class MuxUpload private constructor(
   val isSuccessful get() = _successful
   private var _successful: Boolean = false
 
-  private var resultListeners = mutableListOf<UploadEventListener<Result<Progress>>>()
-  private var progressListeners = mutableListOf<UploadEventListener<Progress>>()
+  private var resultListener: UploadEventListener<Result<Progress>>? = null
+  private var progressListener: UploadEventListener<Progress>? = null
   private var observerJob: Job? = null
   private var lastKnownState: Progress? = null
 
@@ -127,7 +127,7 @@ class MuxUpload private constructor(
         progressFlow = null,
       )
     }
-    lastKnownState?.let { state -> progressListeners.forEach { it.onEvent(state) } }
+    lastKnownState?.let { state -> progressListener?.onEvent(state) }
   }
 
   /**
@@ -149,25 +149,17 @@ class MuxUpload private constructor(
    * Adds a listener for progress updates on this upload
    */
   @MainThread
-  fun addProgressListener(listener: UploadEventListener<Progress>) {
-    progressListeners += listener
-    lastKnownState?.let { listener.onEvent(it) }
-  }
-
-  /**
-   * Removes the given listener for progress updates
-   */
-  @MainThread
-  fun removeProgressListener(listener: UploadEventListener<Progress>) {
-    progressListeners -= listener
+  fun setProgressListener(listener: UploadEventListener<Progress>?) {
+    progressListener = listener
+    lastKnownState?.let { listener?.onEvent(it) }
   }
 
   /**
    * Adds a listener for success or failure updates on this upload
    */
   @MainThread
-  fun addResultListener(listener: UploadEventListener<Result<Progress>>) {
-    resultListeners += listener
+  fun setResultListener(listener: UploadEventListener<Result<Progress>>) {
+    resultListener = listener
     lastKnownState?.let {
       if (it.bytesUploaded >= it.totalBytes) {
         listener.onEvent(Result.success(it))
@@ -176,24 +168,28 @@ class MuxUpload private constructor(
   }
 
   @MainThread
-  fun removeResultListener(listener: UploadEventListener<Result<Progress>>) {
-    resultListeners -= listener
+  fun clearListeners() {
+    resultListener = null
+    progressListener = null
   }
 
   private fun newObserveProgressJob(upload: UploadInfo): Job {
     // This job has up to three children, one for each of the state flows on UploadInfo
     return callbackScope.launch {
       upload.errorFlow?.let { flow ->
-        launch { flow.collect { error ->
-          _error = error
-          resultListeners.forEach { it.onEvent(Result.failure(error)) } } }
+        launch {
+          flow.collect { error ->
+            _error = error
+            resultListener?.onEvent(Result.failure(error))
+          }
+        }
       }
       upload.successFlow?.let { flow ->
         launch {
           flow.collect { state ->
             lastKnownState = state
             _successful = true
-            resultListeners.forEach { it.onEvent(Result.success(state)) }
+            resultListener?.onEvent(Result.success(state))
           }
         }
       }
@@ -201,7 +197,7 @@ class MuxUpload private constructor(
         launch {
           flow.collect { state ->
             lastKnownState = state
-            progressListeners.forEach { it.onEvent(state) }
+            progressListener?.onEvent(state)
           }
         }
       }

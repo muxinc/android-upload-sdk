@@ -3,6 +3,7 @@ package com.mux.video.vod.demo.upload.screen
 import android.app.Activity
 import android.content.Intent
 import android.util.Log
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -14,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.runtime.*
+import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -75,24 +77,22 @@ private fun CreateUploadFab() {
 @Composable
 private fun BodyContent(modifier: Modifier = Modifier) {
   Box(modifier = modifier.padding(16.dp)) {
-    val currentItems = screenViewModel().uploadsFlow.collectAsState(initial = listOf())
-    UploadList(currentItems.value)
+    //val currentItems = screenViewModel().uploadsFlow.collectAsState(initial = listOf())
+    UploadList()
   }
 }
 
 @Composable
-private fun UploadList(items: List<MuxUpload>?) {
-  val viewModel = screenViewModel()
+private fun UploadList() {
+  val items = screenViewModel().uploads.observeAsState()
   //SideEffect { viewModel.refreshList() }
 
-  if (items == null) {
-    // ViewModel's not ready yet. This stage does not take long so just wait
-    return
-  }
-
   val listState = rememberLazyListState()
-  LazyColumn(state = listState) {
-    items(items) { ListItem(upload = it) }
+  ReportDrawnWhen { listState.layoutInfo.totalItemsCount > 0 }
+  items.value?.let { list ->
+    LazyColumn(state = listState) {
+      items(list) { ListItem(upload = it) }
+    }
   }
 }
 
@@ -118,7 +118,7 @@ private fun ListItem(upload: MuxUpload) {
         Log.d("UploadListScreen", uploadState.toString())
         Log.d("UploadListScreen", "")
         if(uploadState.startTime == 0L) {
-          Thread.dumpStack()
+          //Thread.dumpStack()
         }
         val stateTxt = if (upload.isSuccessful) {
           "Done!"

@@ -38,6 +38,7 @@ object MuxUploadManager {
   @Suppress("unused")
   fun addUploadsUpdatedListener(listener: UploadEventListener<List<MuxUpload>>) {
     listeners.add(listener)
+    listener.onEvent(uploadsByFilename.values.map { MuxUpload.create(it) })
   }
 
   /**
@@ -58,8 +59,9 @@ object MuxUploadManager {
   @MainThread
   internal fun startJob(upload: UploadInfo, restart: Boolean = false): UploadInfo {
     assertMainThread()
+    val updatedInfo = insertOrUpdateUpload(upload, restart)
     notifyListListeners()
-    return insertOrUpdateUpload(upload, restart)
+    return updatedInfo
   }
 
   @JvmSynthetic
@@ -126,8 +128,7 @@ object MuxUploadManager {
       newUpload = startUploadJob(upload)
     } else {
       if (restart) {
-        cancelJobInner(upload)
-        forgetUploadState(upload)
+        cancelJob(upload)
         newUpload = startUploadJob(upload)
       }
     }
