@@ -212,9 +212,6 @@ private fun BodyContent(state: CreateUploadViewModel.State, modifier: Modifier =
             shape = RoundedCornerShape(12.dp),
           )
       ) {
-        val viewModel: CreateUploadViewModel = viewModel()
-        val videoState = viewModel.videoState.value
-
         when (state.prepareState) {
           CreateUploadViewModel.PrepareState.ERROR -> {
             Icon(
@@ -293,7 +290,7 @@ private fun AppBar(closeThisScreen: () -> Unit, videoFile: File?) {
 
 @Preview(showBackground = true)
 @Composable
-private fun DefaultPreview() {
+fun DefaultPreview() {
   MuxUploadSDKForAndroidTheme {
     ScreenContent(
       screenState = CreateUploadViewModel.State(
@@ -308,14 +305,14 @@ private fun hasPermissions(context: Context): Boolean {
   val hasVideo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
     ContextCompat.checkSelfPermission(
       context,
-      android.Manifest.permission.READ_MEDIA_VIDEO
+      Manifest.permission.READ_MEDIA_VIDEO
     ) == PackageManager.PERMISSION_GRANTED
   } else {
     true
   }
   val hasExternalStorage = ContextCompat.checkSelfPermission(
     context,
-    android.Manifest.permission.READ_EXTERNAL_STORAGE
+    Manifest.permission.READ_EXTERNAL_STORAGE
   ) == PackageManager.PERMISSION_GRANTED
   return hasVideo && hasExternalStorage
 }
