@@ -73,7 +73,7 @@ private fun CreateUploadFab() {
 
 @Composable
 private fun BodyContent(modifier: Modifier = Modifier) {
-  // screenViewModel().refreshList() // todo: probably don't need to call this if the manager can be listened-to for this stuff
+  screenViewModel().refreshList() // todo: probably don't need to call this if the manager can be listened-to for this stuff
   Box(modifier = modifier.padding(16.dp)) {
     val currentItems = screenViewModel().uploadsFlow.collectAsState(initial = listOf())
     UploadList(currentItems.value)
