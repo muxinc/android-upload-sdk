@@ -167,12 +167,13 @@ private fun ListItemThumbnail(upload: MuxUpload) {
   ) {
     // TODO: Probs put the video thumb here. Need a suspend fun retrieveThumbnail
     // TODO: use retrieveThumbnail here, maybe also try `remember`
-    if (upload.isSuccessful) {
-      // Video Thumb: Fulls-size
-    } else if (upload.error != null) {
-      // V
-    } else if (upload.isRunning) {
 
+    if (upload.isSuccessful) {
+      // Video Thumb: Full-size + Play Button (eventually)
+    } else if (upload.error != null) {
+      // Video Thumb: Scrim + Retry
+    } else if (upload.isRunning) {
+      // Video Thumb: Scrim + Progress
     }
   }
 }

@@ -197,7 +197,14 @@ private fun BodyContent(state: CreateUploadViewModel.State, modifier: Modifier =
         bitmap = imageBitmap,
         contentDescription = "Preview of the video thumbnail",
         contentScale = ContentScale.Crop,
-        modifier = Modifier.height(256.dp),
+        modifier = Modifier
+          .height(256.dp)
+          .border(
+            width = 1.dp,
+            color = Color.LightGray,
+            shape = RoundedCornerShape(12.dp),
+          )
+          .clip(RoundedCornerShape(12.dp)),
       )
     } else {
       Box(
