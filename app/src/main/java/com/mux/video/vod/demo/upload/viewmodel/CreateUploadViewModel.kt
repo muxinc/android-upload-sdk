@@ -15,6 +15,7 @@ import androidx.lifecycle.viewModelScope
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.backend.ImaginaryBackend
 import com.mux.video.vod.demo.upload.model.MediaStoreVideo
+import com.mux.video.vod.demo.upload.model.extractThumbnail
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -40,19 +41,7 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
       try {
         val uploadUri = ImaginaryBackend.createUploadUrl().let { Uri.parse(it) }
         val videoFile = copyIntoTempFile(contentUri)
-        val thumbnailBitmap = withContext(Dispatchers.IO) {
-          try {
-            MediaMetadataRetriever().use {
-              it.setDataSource(videoFile.absolutePath)
-              // TODO: Version-specific
-              //it.getFrameAtIndex(0)
-              it.getFrameAtTime(0)
-            }
-          } catch (e: Exception) {
-            Log.d("CreateUploadViewModel", "Error getting thumb bitmap")
-            null
-          }
-        } // val thumbnailBitmap = ...
+        val thumbnailBitmap = extractThumbnail(videoFile) // val thumbnailBitmap = ...
 
         videoStateLiveData.postValue(
           State(

@@ -165,9 +165,13 @@ private fun ListItemThumbnail(upload: MuxUpload) {
         shape = RoundedCornerShape(12.dp),
       )
   ) {
+    // TODO: Probs put the video thumb here. Need a suspend fun retrieveThumbnail
+    // TODO: use retrieveThumbnail here, maybe also try `remember`
     if (upload.isSuccessful) {
       // Video Thumb: Fulls-size
     } else if (upload.error != null) {
+      // V
+    } else if (upload.isRunning) {
 
     }
   }
