@@ -56,7 +56,6 @@ class UploadListViewModel(app: Application) : AndroidViewModel(app) {
   private fun observeUploads(recentUploads: List<MuxUpload>) {
     recentUploads.forEach { upload ->
       upload.setProgressListener {
-        Log.d("UploadListViewModel", "upload progress: $it")
         uploadMap[upload.videoFile] = upload
         updateUiData(uploadMap.values.toList())
       }
@@ -64,7 +63,6 @@ class UploadListViewModel(app: Application) : AndroidViewModel(app) {
   }
 
   private fun updateUiData(list: List<MuxUpload>) {
-    Log.d("UploadListViewModel", "updated with list items $list")
     _uploads.value = list.toImmutableList()
   }
 

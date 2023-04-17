@@ -89,8 +89,8 @@ object MuxUploadManager {
   internal fun cancelJob(upload: UploadInfo) {
     assertMainThread()
     uploadsByFilename[upload.file.absolutePath]?.let {
-      cancelJobInner(it)
       observerJobsByFilename.remove(upload.file.absolutePath)?.cancel()
+      cancelJobInner(it)
       uploadsByFilename -= it.file.absolutePath
       forgetUploadState(upload)
     }
@@ -125,6 +125,9 @@ object MuxUploadManager {
     var newUpload = uploadsByFilename[filename]
     // Use the old job if possible (unless requested otherwise)
     if (newUpload?.uploadJob == null) {
+      if (restart) {
+        forgetUploadState(upload)
+      }
       newUpload = startUploadJob(upload)
     } else {
       if (restart) {

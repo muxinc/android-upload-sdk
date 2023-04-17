@@ -1,5 +1,6 @@
 package com.mux.video.upload.internal
 
+import android.util.Log
 import com.mux.video.upload.BuildConfig
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
@@ -65,6 +66,7 @@ internal class UploadJobFactory private constructor(
       val startTime = System.currentTimeMillis()
       try {
         var totalBytesSent: Long = getAlreadyTransferredBytes(uploadInfo)
+        Log.d("UploadJobFactory", "totalBytesSent: $totalBytesSent")
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
 
         // If we're resuming, we must skip to the current file pos
