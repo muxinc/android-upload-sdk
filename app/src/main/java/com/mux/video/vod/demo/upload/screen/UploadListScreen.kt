@@ -251,13 +251,20 @@ private fun ListItemThumbnail(upload: MuxUpload) {
       ) {
         Text(
           "Uploading",
-          style = TextStyle(color = Color.White, fontWeight = FontWeight.SemiBold),
+          style = TextStyle(color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp),
         )
         Spacer(modifier = Modifier.size(12.dp))
         val uploadProgress = uploadState.bytesUploaded / uploadState.totalBytes.toDouble()
         LinearProgressIndicator(
           progress = uploadProgress.toFloat(),
+          color = MaterialTheme.colors.secondary,
           modifier = Modifier.fillMaxWidth(0.55F)
+        )
+        Spacer(modifier = Modifier.size(6.dp))
+        Text(
+          text = "${uploadState.bytesUploaded} / ${uploadState.totalBytes}",
+          fontSize = 10.sp,
+          color = Color.LightGray
         )
       }
       val stateLine = buildAnnotatedString {
