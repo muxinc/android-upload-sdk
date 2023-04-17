@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.runtime.*
@@ -46,6 +47,7 @@ import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
 import com.mux.video.vod.demo.upload.viewmodel.UploadListViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import okhttp3.internal.toImmutableList
 import java.text.DecimalFormat
 
 @Composable
@@ -213,7 +215,7 @@ private fun ListItemThumbnail(upload: MuxUpload) {
       }
     }
 
-    if (upload.isSuccessful) {
+    if (upload.isSuccessful) { // Success/Play
       // Video Thumb: Full-size + Play Button
       Box(
         modifier = Modifier
@@ -231,9 +233,39 @@ private fun ListItemThumbnail(upload: MuxUpload) {
           .size(36.dp)
           .align(Alignment.Center)
       )
-    } else if (upload.error != null) {
+    } else if (upload.error != null) { // Error
       // Video Thumb: Scrim + Retry
-    } else if (upload.isRunning) {
+      val scrimColor = Color(red = 0, green = 0, blue = 0, alpha = (0.6F * 0xFF).toInt())
+      Box(
+        modifier = Modifier
+          .background(scrimColor)
+          .fillMaxSize()
+      )
+      Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+          .align(Alignment.Center)
+          .fillMaxWidth()
+      ) {
+        Icon(
+          Icons.Filled.Error,
+          contentDescription = "error",
+          tint = Color.White,
+          modifier = Modifier
+            .size(36.dp)
+        )
+        Spacer(modifier = Modifier.size(12.dp))
+        Text(
+          "Upload failed!",
+          style = TextStyle(color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp),
+        )
+        Text(
+          "Try again with another file",
+          style = TextStyle(color = Color.White, fontSize = 12.sp),
+        )
+      }
+
+    } else if (upload.isRunning) { // In-Progress State
       val uploadState = upload.currentState
       val uploadTimeElapsed = uploadState.updatedTime - uploadState.startTime
       val dataRateEst = uploadState.bytesUploaded / uploadTimeElapsed.toDouble()
