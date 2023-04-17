@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
@@ -23,16 +24,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.R
@@ -166,8 +170,9 @@ private fun ListItemThumbnail(upload: MuxUpload) {
       .border(
         width = 1.dp,
         color = Color.LightGray,
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(12.dp)
       )
+      .clip(RoundedCornerShape(12.dp)),
   ) {
     val imageBitmapState = remember { mutableStateOf<Bitmap?>(null) }
     val bitmap = imageBitmapState.value
@@ -192,7 +197,6 @@ private fun ListItemThumbnail(upload: MuxUpload) {
             color = Color.LightGray,
             shape = RoundedCornerShape(12.dp),
           )
-          .clip(RoundedCornerShape(12.dp)),
       )
     } else {
       Box(
@@ -205,19 +209,80 @@ private fun ListItemThumbnail(upload: MuxUpload) {
           )
           .clip(RoundedCornerShape(12.dp)),
       ) {
-        // empty box
+        // empty box while the thumb loads
       }
     }
 
     if (upload.isSuccessful) {
-      // Video Thumb: Full-size + Play Button (eventually)
+      // Video Thumb: Full-size + Play Button
+      Box(
+        modifier = Modifier
+          .size(48.dp)
+          .clip(CircleShape)
+          .align(Alignment.Center)
+          .background(MaterialTheme.colors.secondary)
+      )
+      // TODO: ImageButton for Play Screen
+      Image(
+        Icons.Filled.PlayArrow,
+        contentDescription = "Play video",
+        colorFilter = ColorFilter.tint(MaterialTheme.colors.onSecondary),
+        modifier = Modifier
+          .size(36.dp)
+          .align(Alignment.Center)
+      )
     } else if (upload.error != null) {
       // Video Thumb: Scrim + Retry
     } else if (upload.isRunning) {
-      // Video Thumb: Scrim + Progress
-    }
-  }
-}
+      val uploadState = upload.currentState
+      val uploadTimeElapsed = uploadState.updatedTime - uploadState.startTime
+      val dataRateEst = uploadState.bytesUploaded / uploadTimeElapsed.toDouble()
+      val scrimColor = Color(red = 0, green = 0, blue = 0, alpha = (0.6F * 0xFF).toInt())
+      Box(
+        modifier = Modifier
+          .background(scrimColor)
+          .fillMaxSize()
+      )
+      Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+          .align(Alignment.Center)
+          .fillMaxWidth()
+      ) {
+        Text(
+          "Uploading",
+          style = TextStyle(color = Color.White, fontWeight = FontWeight.SemiBold),
+        )
+        Spacer(modifier = Modifier.size(12.dp))
+        val uploadProgress = uploadState.bytesUploaded / uploadState.totalBytes.toDouble()
+        LinearProgressIndicator(
+          progress = uploadProgress.toFloat(),
+          modifier = Modifier.fillMaxWidth(0.55F)
+        )
+      }
+      val stateLine = buildAnnotatedString {
+        val df = DecimalFormat("#.00")
+        val formattedRate = df.format(dataRateEst)
+        val formattedTime = df.format(uploadTimeElapsed / 1000f)
+        withStyle(
+          style = SpanStyle(
+            fontWeight = FontWeight.Medium,
+          )
+        ) {
+          append("$formattedRate Kb/s")
+        }
+        append(" in ${formattedTime}s")
+      }
+      Text(
+        stateLine,
+        style = TextStyle(color = Color.White, fontSize = 16.sp),
+        modifier = Modifier
+          .padding(12.dp)
+          .align(Alignment.BottomStart)
+      )
+    } // overlay
+  } // outer Box
+} // ListItemThumbnail
 
 @Composable
 private fun AppBar(closeThisScreen: () -> Unit) {
