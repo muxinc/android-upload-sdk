@@ -1,6 +1,7 @@
-package com.mux.video.vod.demo.mediastore
+package com.mux.video.vod.demo.upload
 
 import android.annotation.TargetApi
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -13,18 +14,19 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.databinding.ActivityVideoListBinding
+import com.mux.video.vod.demo.upload.viewmodel.UploadListViewModel
 
-class MediaStoreVideosActivity : AppCompatActivity() {
+class UploadListActivity : AppCompatActivity() {
 
   companion object {
     // For now, you have to paste this from the direct-upload response
     const val PUT_URL =
-      "https://storage.googleapis.com/video-storage-gcp-us-east1-vop1-uploads/ivU3KeuN6aBRasvUQflUWG?Expires=1680730767&GoogleAccessId=uploads-gcp-us-east1-vop1%40mux-video-production.iam.gserviceaccount.com&Signature=x4H5Ce8517S1D5oWoGJ2Bf6xlpwtyUpdF6LiLpqyKlpVBiXPKB5ImlA3fti0CUWJJSsO1g5G8jpyeA%2FwFv7hEInDmWa9gyO3oGRKCynv5WfDtndsedRvUCrQQBJXsRWex5VLdK5imLwo1kwEjATGZSwIZ7oK3ciH2gNPG%2BTymmGlyrrCzWloQ0jYhhpQLjNFZL3iYm%2BMGalZdXkndSqTeX%2F1j8rMHBrZ3HLJxqt8RYn5xCMTLAPET2kp7LEW4Vrj8Cn0DgkBnY46hQzc3KjbvK4orAUMSacmqADRtT6w3jm9XcOZFXnqwfJphrNcEs%2FUmGgtMFi6z3oJUT6b9Pg6yg%3D%3D&upload_id=ADPycdvjKQvrueNuLUqPXj3uo_bLjJ9pHBgDxYfAllAT_GjiO2_4a35u8dtKNXd6ynqZpMplbHtzRd9TcjCcIPUfsaSoxBelRqNX"
+      "https://storage.googleapis.com/video-storage-gcp-us-east4-vop1-uploads/uUsEP6fMQ4wTO84T4XV63A?Expires=1681428358&GoogleAccessId=uploads-gcp-us-east1-vop1%40mux-video-production.iam.gserviceaccount.com&Signature=d4URl1B1ZZgPKB4ecMuRdBQun3%2BTcVtEptcBcequLSjjxlcYebFrI9B8E1T%2FBAcbKgE%2B6gBHKXfRLWQ2Sw%2BB9vc3MhzKNi7Ex7q5%2Bj%2BajmUGoOHmrpvmkiMQxj8MX4jT29jUTTrOMR7nE85bAe1UfpgMJO%2F5zqMW%2FaaC0FIrzKXvwfkzVj5kiJ8MGqdFgt%2Fe5gMOhF18VRKAKwiIZV6XciONcRQzFpY0jDdQzpd%2F%2BcYJizcWpUXDAzj%2BQjZpwX%2BscC0CQcZaRdWZVr2AvpTouAZTOk0nCIMnnQRVfuc126ETgnDhVweRKwAbZ49gq0i3JvtEM2eA3vaaHpgQ2I5dFA%3D%3D&upload_id=ADPycdsxumXKD0vChqQuUNC-zHyETEFRdMa8ebw7Pxj3PGwuiJzd5IEwbq8mkNCmZvFjPnXd1lkhllmR2fcXUVXt6ifIgackrlOo"
   }
 
   private lateinit var binding: ActivityVideoListBinding
-  private lateinit var listAdapter: MediaStoreVideosAdapter
-  private val viewModel by viewModels<MediaStoreVideosViewModel>()
+  private lateinit var listAdapter: UploadListAdapter
+  private val viewModel by viewModels<UploadListViewModel>()
   private val requestPermissions =
     registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions())
     { grantedPermissions ->
@@ -34,11 +36,11 @@ class MediaStoreVideosActivity : AppCompatActivity() {
         maybeRequestPermissionsApi33()
       }
     }
-  private val openDocument =
-    registerForActivityResult(ActivityResultContracts.OpenDocument()) { docUri ->
-      Log.d(javaClass.simpleName, "Got doc with URI $docUri")
-      viewModel.beginUpload(docUri!!)
-    }
+//  private val openDocument =
+//    registerForActivityResult(ActivityResultContracts.OpenDocument()) { docUri ->
+//      Log.d(javaClass.simpleName, "Got doc with URI $docUri")
+//      viewModel.beginUpload(docUri!!)
+//    }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -50,14 +52,21 @@ class MediaStoreVideosActivity : AppCompatActivity() {
     setSupportActionBar(findViewById(R.id.toolbar))
     binding.toolbarLayout.title = title
     binding.fab.setOnClickListener { view ->
-      openDocument.launch(arrayOf("video/*"))
+      //openDocument.launch(arrayOf("video/*"))
+      startActivity(Intent(this, CreateUploadActivity::class.java))
     }
 
-    maybeRequestPermissions()
+    //maybeRequestPermissions()
+  }
+
+  @Override
+  override fun onStart() {
+    super.onStart()
+    viewModel.refreshList()
   }
 
   private fun handleListUpdate(list: List<MuxUpload>) {
-    listAdapter = MediaStoreVideosAdapter(list, viewModel)
+    listAdapter = UploadListAdapter(list)
     binding.videoListList.includeRecyclerView.adapter = listAdapter
   }
 

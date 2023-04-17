@@ -1,21 +1,17 @@
-package com.mux.video.vod.demo.mediastore
+package com.mux.video.vod.demo.upload
 
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.core.util.Consumer
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.RecyclerView.ViewHolder
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.databinding.ListItemUploadingVideoBinding
 import java.text.DecimalFormat
 
-class MediaStoreVideosAdapter(
+class UploadListAdapter(
   private var items: List<MuxUpload>,
-  private var viewModel: MediaStoreVideosViewModel,
 ) : RecyclerView.Adapter<MediaStoreVideoViewHolder>() {
-
-  private var progressConsumer: Consumer<MuxUpload.Progress>? = null
 
   override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MediaStoreVideoViewHolder {
     val viewBinding =

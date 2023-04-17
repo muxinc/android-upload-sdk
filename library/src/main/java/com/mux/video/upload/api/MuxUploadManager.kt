@@ -15,11 +15,18 @@ object MuxUploadManager {
   private val logger get() = MuxUploadSdk.logger
 
   /**
-   * Finds an in-progress (or recently-failed) upload and returns an object to track it, if it was
+   * Finds an in-progress or paused upload and returns an object to track it, if it was
    * in progress
    */
   fun findUploadByFile(videoFile: File): MuxUpload? =
     uploadsByFilename[videoFile.absolutePath]?.let { MuxUpload.create(it) }
+
+  /**
+   * Finds all in-progress or paused uploads and returns [MuxUpload] objects representing them. You
+   * don't need to hold these specific instances except where they're locally used. The upload jobs
+   * will continue in parallel if they're auto-managed (see [MuxUpload.Builder.manageUploadTask])
+   */
+  fun allUploadJobs(): List<MuxUpload> = uploadsByFilename.values.map { MuxUpload.create(it) }
 
   /**
    * Adds a new job to this manager.
