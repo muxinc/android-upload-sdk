@@ -117,13 +117,13 @@ internal class UploadJobFactory private constructor(
               } // chunkProgressChannel.collect {
             }
 
-            val chunkResult = createWorker(chunk, uploadInfo, chunkProgressFlow).upload()
+            val chunkFinalState = createWorker(chunk, uploadInfo, chunkProgressFlow).upload()
 
-            totalBytesSent += chunkResult.bytesUploaded
+            totalBytesSent += chunkFinalState.bytesUploaded
             val intermediateProgress = MuxUpload.Progress(
               bytesUploaded = totalBytesSent,
               totalBytes = fileSize,
-              updatedTime = chunkResult.updatedTime,
+              updatedTime = chunkFinalState.updatedTime,
               startTime = startTime,
             )
             overallProgressFlow.emit(intermediateProgress)
@@ -155,7 +155,7 @@ internal class UploadJobFactory private constructor(
         val finalState = createFinalState(fileSize, startTime)
         overallProgressFlow.emit(finalState)
         errorFlow.emit(e)
-        MainScope().launch { MuxUploadManager.jobFinished(uploadInfo, e !is CancellationException) }
+        MainScope().launch { MuxUploadManager.jobFinished(uploadInfo, false) }
         Result.failure(e)
       } finally {
         @Suppress("BlockingMethodInNonBlockingContext") // the streams we use don't block on close

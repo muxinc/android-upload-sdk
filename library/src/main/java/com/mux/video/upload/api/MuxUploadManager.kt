@@ -32,6 +32,13 @@ object MuxUploadManager {
   fun allUploadJobs(): List<MuxUpload> = uploadsByFilename.values.map { MuxUpload.create(it) }
 
   /**
+   * Restarts all inactive uploads (ie, all uploads that were paused or failed)
+   */
+  fun restartAllInactiveUploads() {
+
+  }
+
+  /**
    * Adds an [UploadEventListener] for updates to the upload list
    */
   @MainThread
@@ -152,13 +159,6 @@ object MuxUploadManager {
         }
       }
 
-      upload.errorFlow?.let { flow ->
-        launch {
-          flow.collect {
-            jobFinished(upload, it !is CancellationException)
-          }
-        }
-      }
       upload.successFlow?.let { flow -> launch { flow.collect { jobFinished(upload) } } }
     }
   }
