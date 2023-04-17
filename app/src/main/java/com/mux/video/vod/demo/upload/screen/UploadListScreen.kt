@@ -2,8 +2,9 @@ package com.mux.video.vod.demo.upload.screen
 
 import android.app.Activity
 import android.content.Intent
-import android.util.Log
+import android.graphics.Bitmap
 import androidx.activity.compose.ReportDrawnWhen
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -22,6 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
@@ -34,9 +37,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.upload.CreateUploadActivity
+import com.mux.video.vod.demo.upload.model.extractThumbnail
 import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
 import com.mux.video.vod.demo.upload.viewmodel.UploadListViewModel
-import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.text.DecimalFormat
 
@@ -58,7 +62,7 @@ private fun ScreenContent(
     BodyContent(
       Modifier
         .padding(contentPadding)
-        //.padding(16.dp)
+      //.padding(16.dp)
     )
   }
 }
@@ -72,7 +76,7 @@ private fun CreateUploadFab() {
       Intent(activity, CreateUploadActivity::class.java)
     )
   }) {
-    Icon( Icons.Filled.Upload, contentDescription = "Start new upload")
+    Icon(Icons.Filled.Upload, contentDescription = "Start new upload")
   }
 }
 
@@ -144,10 +148,10 @@ private fun ListItem(upload: MuxUpload) {
           modifier = Modifier
             .fillMaxWidth()
             .align(Alignment.Center)
-        ) // status text
-        Spacer(modifier = Modifier.padding(16.dp))
-        ListItemThumbnail(upload)
-      }
+        )
+      } // status text box
+      Spacer(modifier = Modifier.padding(16.dp))
+      ListItemThumbnail(upload)
     }
   }
 }
@@ -165,8 +169,45 @@ private fun ListItemThumbnail(upload: MuxUpload) {
         shape = RoundedCornerShape(12.dp),
       )
   ) {
-    // TODO: Probs put the video thumb here. Need a suspend fun retrieveThumbnail
-    // TODO: use retrieveThumbnail here, maybe also try `remember`
+    val imageBitmapState = remember { mutableStateOf<Bitmap?>(null) }
+    val bitmap = imageBitmapState.value
+    LaunchedEffect(imageBitmapState.value) {
+      // If the bitmap in the state ever becomes null reload it
+      if (bitmap == null) {
+        launch(Dispatchers.IO) {
+          imageBitmapState.value = extractThumbnail(upload.videoFile)
+        }
+      }
+    }
+
+    if (bitmap != null) {
+      Image(
+        bitmap = bitmap.asImageBitmap(),
+        contentDescription = "Video thumbnail preview",
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
+          .height(256.dp)
+          .border(
+            width = 1.dp,
+            color = Color.LightGray,
+            shape = RoundedCornerShape(12.dp),
+          )
+          .clip(RoundedCornerShape(12.dp)),
+      )
+    } else {
+      Box(
+        modifier = Modifier
+          .height(256.dp)
+          .border(
+            width = 1.dp,
+            color = Color.LightGray,
+            shape = RoundedCornerShape(12.dp),
+          )
+          .clip(RoundedCornerShape(12.dp)),
+      ) {
+        // empty box
+      }
+    }
 
     if (upload.isSuccessful) {
       // Video Thumb: Full-size + Play Button (eventually)
