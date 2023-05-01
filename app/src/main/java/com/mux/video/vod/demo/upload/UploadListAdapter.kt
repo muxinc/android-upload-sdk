@@ -23,8 +23,8 @@ class UploadListAdapter(
 
   override fun onBindViewHolder(holder: MediaStoreVideoViewHolder, position: Int) {
     val listItem = items[position]
-    val elapsedTime = listItem.currentState.updatedTime - listItem.currentState.startTime;
-    val bytesPerMs = (listItem.currentState.bytesUploaded / elapsedTime.toDouble()) //* 1000.0
+    val elapsedTime = listItem.currentState.updatedTime - listItem.currentState.startTime
+    val bytesPerMs = listItem.currentState.bytesUploaded / elapsedTime.toDouble()
     val stateMsg = if (listItem.currentState.bytesUploaded >= listItem.currentState.totalBytes) {
       "done"
     } else {
