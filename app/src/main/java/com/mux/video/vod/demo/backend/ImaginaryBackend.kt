@@ -1,8 +1,12 @@
 package com.mux.video.vod.demo.backend
 
+import android.util.Log
+import com.google.gson.FieldNamingPolicy
 import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 import okhttp3.Credentials
 import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.converter.scalars.ScalarsConverterFactory
@@ -22,8 +26,15 @@ import retrofit2.http.POST
 object ImaginaryBackend {
 
   private val muxVideoBackend: ImaginaryWebapp by lazy {
-    val gson = Gson()
-    val muxHttpClient = OkHttpClient.Builder().build() // basic config is just fine
+    val gson = GsonBuilder()
+      .setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
+      .create()!!
+    val muxHttpClient = OkHttpClient.Builder()
+      .apply { addInterceptor(
+        HttpLoggingInterceptor { Log.v("ImaginaryBackend", it)}
+          .setLevel(HttpLoggingInterceptor.Level.BODY)
+      )}
+      .build() // basic config is just fine
 
     Retrofit.Builder()
       .baseUrl("https://api.mux.com/video/")
@@ -36,7 +47,7 @@ object ImaginaryBackend {
   @Throws
   suspend fun createUploadUrl(): String {
     val post = VideoUploadPost(
-      assetSettings = listOf(NewAssetSettings())
+      newAssetSettings = NewAssetSettings()
     )
     val response = muxVideoBackend.postUploads(basicCredential(), post)
     return response.data.url
@@ -77,7 +88,7 @@ private data class VideoUploadPost(
   /**
    * List of new assets to create.
    */
-  val assetSettings: List<NewAssetSettings> = listOf(NewAssetSettings()),
+  val newAssetSettings: NewAssetSettings = NewAssetSettings(),
   /**
    * Origin for the CORS header in a browser playback situation. "*" is a reasonable default
    * TODO: Is it a good default?
@@ -153,7 +164,7 @@ private data class MuxVideoUpload(
    * The settings for this asset, most of which can be updated by calling the POST/uploads API
    * again
    */
-  val newAssetSettings: List<NewAssetSettings>,
+  val newAssetSettings: NewAssetSettings,
   /**
    * The ID of the created asset on Mux Video. Will be non-null if the status is "asset_created"
    */
