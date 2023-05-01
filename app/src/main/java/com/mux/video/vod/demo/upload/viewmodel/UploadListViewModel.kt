@@ -1,17 +1,13 @@
 package com.mux.video.vod.demo.upload.viewmodel
 
 import android.app.Application
-import android.net.Uri
-import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.viewModelScope
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
-import com.mux.video.vod.demo.upload.UploadListActivity
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
+import com.mux.video.upload.api.UploadEventListener
+import okhttp3.internal.toImmutableList
 import java.io.File
 
 /**
@@ -19,13 +15,21 @@ import java.io.File
  */
 class UploadListViewModel(app: Application) : AndroidViewModel(app) {
 
-  val uploads: LiveData<List<MuxUpload>> by this::innerUploads
-  private val innerUploads = MutableLiveData<List<MuxUpload>>(listOf())
+  val uploads: LiveData<List<MuxUpload>> by this::_uploads
+  private val _uploads = MutableLiveData<List<MuxUpload>>(listOf())
+
   private val uploadMap = mutableMapOf<File, MuxUpload>()
 
-  private var observeListJob: Job? = null
+  private val listUpdateListener: UploadEventListener<List<MuxUpload>> by lazy {
+    UploadEventListener { newUploads ->
+      newUploads.forEach { uploadMap[it.videoFile] = it }
+      updateUiData(uploadMap.values.toList())
+    }
+  }
 
   fun refreshList() {
+    MuxUploadManager.addUploadsUpdatedListener(listUpdateListener)
+
     // The SDK ensures that there's only 1 upload job running for a file, so get/make as many
     // MuxUploads as you like. You don't need to hold onto MuxUploads or clean them up.
     val recentUploads = MuxUploadManager.allUploadJobs()
@@ -33,17 +37,27 @@ class UploadListViewModel(app: Application) : AndroidViewModel(app) {
     uploadMap.apply {
       recentUploads.forEach { put(it.videoFile, it) }
     }
-    innerUploads.value = uploadMap.values.toList()
+    val uploadList = uploadMap.values.toList()
+    observeUploads(uploadList)
+    updateUiData(uploadList)
+  }
 
-    observeListJob?.cancel()
-    observeListJob = viewModelScope.launch {
-      recentUploads.forEach { upload ->
-        upload.addProgressListener {
-          uploadMap[upload.videoFile] = upload
-          innerUploads.value = uploadMap.values.toList()
-        }
-      } // recentUploads.forEach
-    } // observeListJob = ...
+  override fun onCleared() {
+    super.onCleared()
+    MuxUploadManager.removeUploadsUpdatedListener(listUpdateListener)
+  }
+
+  private fun observeUploads(recentUploads: List<MuxUpload>) {
+    recentUploads.forEach { upload ->
+      upload.setProgressListener {
+        uploadMap[upload.videoFile] = upload
+        updateUiData(uploadMap.values.toList())
+      }
+    } // recentUploads.forEach
+  }
+
+  private fun updateUiData(list: List<MuxUpload>) {
+    _uploads.value = list.toImmutableList()
   }
 
   init {
