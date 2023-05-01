@@ -29,6 +29,17 @@ object MuxUploadManager {
   fun allUploadJobs(): List<MuxUpload> = uploadsByFilename.values.map { MuxUpload.create(it) }
 
   /**
+   * Resumes any upload jobs that were prematurely stopped due to failures or process death.
+   * The jobs will all be resumed where they left off. Any jobs resumed this way will be returned
+   */
+  fun resumeAllCachedJobs(): List<MuxUpload> {
+    return readAllCachedUploads()
+      .filter { it.uploadJob == null }
+      .onEach { uploadInfo -> startJob(uploadInfo, restart = false) }
+      .map { MuxUpload.create(it) }
+  }
+
+  /**
    * Adds a new job to this manager.
    * If it's not started, it will be started
    * If it is started, it will be restarted with new parameters

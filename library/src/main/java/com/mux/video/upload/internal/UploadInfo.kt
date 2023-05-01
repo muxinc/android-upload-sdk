@@ -12,6 +12,9 @@ import java.io.File
  *
  * This object is immutable. To create an updated version use [update]. The Upload Manager can
  * update the internal state of its jobs based on the content of this object
+ *
+ * To create a new upload job, use [UploadJobFactory.create]. The UploadInfo returned will have a
+ * Job and Flows populated
  */
 internal data class UploadInfo(
   @JvmSynthetic internal val remoteUri: Uri,

@@ -2,6 +2,7 @@ package com.mux.video.upload
 
 import android.content.Context
 import android.util.Log
+import com.mux.video.upload.api.MuxUploadManager
 import com.mux.video.upload.internal.UploadJobFactory
 import com.mux.video.upload.internal.UploadMetrics
 import com.mux.video.upload.internal.initializeUploadPersistence
@@ -55,10 +56,14 @@ object MuxUploadSdk {
       .build()
   }
 
-  @Suppress("unused")
-  fun initialize(appContext: Context) {
+  @Suppress("unused") @JvmOverloads
+  fun initialize(appContext: Context, resumeStoppedUploads: Boolean = true) {
     initializeUploadPersistence(appContext)
     UploadMetrics.initialize(appContext)
+
+    if (resumeStoppedUploads)  {
+      MuxUploadManager.resumeAllCachedJobs()
+    }
   }
 
   /**
