@@ -34,7 +34,6 @@ object MuxUploadManager {
    */
   fun resumeAllCachedJobs(): List<MuxUpload> {
     return readAllCachedUploads()
-      .filter { it.uploadJob == null }
       .onEach { uploadInfo -> startJob(uploadInfo, restart = false) }
       .map { MuxUpload.create(it) }
   }
