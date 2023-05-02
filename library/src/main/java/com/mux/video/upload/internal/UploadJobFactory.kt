@@ -47,8 +47,8 @@ internal class UploadJobFactory private constructor(
     ): ChunkWorker = ChunkWorker.create(
       chunk = chunk,
       maxRetries = uploadInfo.retriesPerChunk,
-      videoMimeType = uploadInfo.videoMimeType,
       remoteUri = uploadInfo.remoteUri,
+      videoMimeType = "video/*",
       progressFlow = progressFlow,
     )
   }
