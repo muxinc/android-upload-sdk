@@ -1,7 +1,6 @@
 package com.mux.video.upload.internal
 
 import android.net.Uri
-import android.os.SystemClock
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.internal.network.asCountingRequestBody
@@ -47,27 +46,38 @@ internal class ChunkWorker private constructor(
 
   @Throws
   suspend fun upload(): MuxUpload.Progress {
-    var tries = 0
-    do {
+    val moreRetries = { triesSoFar: Int -> triesSoFar > maxRetries }
+    suspend fun tryUpload(triesSoFar: Int): Result<MuxUpload.Progress> {
       try {
-        tries++
         val (finalState, httpResponse) = doUpload()
         if (ACCEPTABLE_STATUS_CODES.contains(httpResponse.code)) {
           // End Case: Chunk success!
-          return finalState
+          return Result.success(finalState)
         } else if (RETRYABLE_STATUS_CODES.contains(httpResponse.code)) {
-          throw IOException(
-            "${httpResponse.code}: ${httpResponse.message}:" +
-                    "\n${httpResponse.body?.bytes()?.decodeToString()}"
+          return if (moreRetries(triesSoFar)) {
+            // Still have more retries so try again
+            tryUpload(triesSoFar + 1)
+          } else {
+            Result.failure(
+              IOException("Upload request failed: ${httpResponse.code}/${httpResponse.message}")
+            )
+          }
+        } else {
+          return Result.failure(
+            IOException("Upload request failed: ${httpResponse.code}/${httpResponse.message}")
           )
         }
       } catch (e: Exception) {
-        if (tries > maxRetries) {
-          // End Case: Retries exceeded
-          throw e
+        return if (moreRetries(triesSoFar)) {
+          // Still have more retries so try again
+          tryUpload(triesSoFar + 1)
+        } else {
+          Result.failure(e)
         }
       }
-    } while (true)
+    }
+
+    return tryUpload(0).getOrThrow()
   }
 
   @Throws
