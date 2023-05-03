@@ -96,8 +96,8 @@ private fun BodyContent(modifier: Modifier = Modifier) {
 
 @Composable
 private fun UploadList() {
-  val items = screenViewModel().uploads.observeAsState()
   val viewModel = screenViewModel()
+  val items = viewModel.uploads.observeAsState()
   SideEffect { viewModel.refreshList() }
 
   val listState = rememberLazyListState()
