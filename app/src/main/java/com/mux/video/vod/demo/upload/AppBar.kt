@@ -1,6 +1,10 @@
 package com.mux.video.vod.demo.upload
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.material.Icon
 import androidx.compose.material.LocalContentAlpha
 import androidx.compose.material.TopAppBar
@@ -12,6 +16,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.mux.video.vod.demo.R
+import com.mux.video.vod.demo.upload.ui.theme.Gray80
 import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
 
 @Composable
@@ -52,21 +57,30 @@ private fun AppBarInner(
 ) {
   TopAppBar(
     elevation = 0.dp,
-    modifier = modifier,
+    modifier = modifier
   ) {
     AtFullLocalAlpha {
       Box(
-        modifier = Modifier,
+        modifier = Modifier.fillMaxSize(),
       ) {
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Gray80).align(Alignment.BottomCenter))
+
         if (centerContent != null) {
-          centerContent()
+          Box(modifier = Modifier.align(Alignment.Center)) {
+            centerContent()
+          }
         } else {
           Icon(
             painter = painterResource(id = R.drawable.mux_logo),
             contentDescription = "Mux Logo",
             modifier = modifier.align(Alignment.Center),
-            //tint = White
           )
+        }
+
+        if (startContent != null) {
+          Box(modifier = Modifier.align(Alignment.Center)) {
+            startContent()
+          }
         }
       }
     }
