@@ -75,10 +75,10 @@ private fun ScreenContent(
 
 @Composable
 private fun CreateUploadFab() {
-  val activity = LocalContext.current as Activity
+  val activity = LocalContext.current as? Activity
 
   FloatingActionButton(onClick = {
-    activity.startActivity(
+    activity?.startActivity(
       Intent(activity, CreateUploadActivity::class.java)
     )
   }) {
@@ -324,7 +324,7 @@ private fun ListItemThumbnail(upload: MuxUpload) {
 @Composable
 private fun AppBar(closeThisScreen: () -> Unit) {
   TopAppBar(
-    title = { Text(text = stringResource(R.string.title_main_activity)) },
+    title = { Text(text = "Create Upload") },
     navigationIcon = {
       IconButton(
         onClick = {
@@ -337,10 +337,11 @@ private fun AppBar(closeThisScreen: () -> Unit) {
         )
       }
     },
+    elevation = 0.dp,
   )
 }
 
-@Preview(showBackground = true)
+@Preview(showBackground = true, locale = "en")
 @Composable
 fun ListScreenPreview() {
   MuxUploadSDKForAndroidTheme {
