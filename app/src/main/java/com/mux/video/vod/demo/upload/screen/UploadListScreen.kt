@@ -15,7 +15,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Upload
@@ -29,7 +28,6 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -40,7 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mux.video.upload.api.MuxUpload
-import com.mux.video.vod.demo.R
+import com.mux.video.vod.demo.upload.AppBar
 import com.mux.video.vod.demo.upload.CreateUploadActivity
 import com.mux.video.vod.demo.upload.model.extractThumbnail
 import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
@@ -62,7 +60,7 @@ private fun ScreenContent(
   closeThisScreen: () -> Unit = {},
 ) {
   return Scaffold(
-    topBar = { AppBar(closeThisScreen) },
+    topBar = { ScreenAppBar(closeThisScreen) },
     floatingActionButton = { CreateUploadFab() }
   ) { contentPadding ->
     BodyContent(
@@ -322,23 +320,24 @@ private fun ListItemThumbnail(upload: MuxUpload) {
 } // ListItemThumbnail
 
 @Composable
-private fun AppBar(closeThisScreen: () -> Unit) {
-  TopAppBar(
-    title = { Text(text = "Create Upload") },
-    navigationIcon = {
-      IconButton(
-        onClick = {
-          closeThisScreen()
-        },
-      ) {
-        Icon(
-          Icons.Filled.Close,
-          contentDescription = stringResource(id = android.R.string.cancel),
-        )
-      }
-    },
-    elevation = 0.dp,
-  )
+private fun ScreenAppBar(closeThisScreen: () -> Unit) {
+//  TopAppBar(
+//    title = { Text(text = "Create Upload") },
+//    navigationIcon = {
+//      IconButton(
+//        onClick = {
+//          closeThisScreen()
+//        },
+//      ) {
+//        Icon(
+//          Icons.Filled.Close,
+//          contentDescription = stringResource(id = android.R.string.cancel),
+//        )
+//      }
+//    },
+//    elevation = 0.dp,
+//  )
+  AppBar()
 }
 
 @Preview(showBackground = true, locale = "en")

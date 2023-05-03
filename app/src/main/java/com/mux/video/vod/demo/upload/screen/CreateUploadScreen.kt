@@ -116,7 +116,7 @@ private fun ScreenContent(
 ) {
   return Scaffold(
     topBar = {
-      AppBar(closeThisScreen, screenState.chosenFile)
+      ScreenAppBar(closeThisScreen, screenState.chosenFile)
     },
   ) { contentPadding ->
     BodyContent(
@@ -252,7 +252,7 @@ private fun BodyContent(state: CreateUploadViewModel.State, modifier: Modifier =
 }
 
 @Composable
-private fun AppBar(closeThisScreen: () -> Unit, videoFile: File?) {
+private fun ScreenAppBar(closeThisScreen: () -> Unit, videoFile: File?) {
   val viewModel: CreateUploadViewModel = viewModel()
   val enableAction = videoFile != null
   TopAppBar(

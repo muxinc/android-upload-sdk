@@ -34,7 +34,7 @@ private val LightColorPalette = lightColors(
 
 @Composable
 fun MuxUploadSDKForAndroidTheme(
-  darkTheme: Boolean = isSystemInDarkTheme(),
+  darkTheme: Boolean = true,//isSystemInDarkTheme(),
   content: @Composable () -> Unit
 ) {
   val systemUiController = rememberSystemUiController()
