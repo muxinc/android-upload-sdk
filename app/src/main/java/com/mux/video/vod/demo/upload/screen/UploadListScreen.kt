@@ -66,7 +66,6 @@ private fun ScreenContent(
     BodyContent(
       Modifier
         .padding(contentPadding)
-      //.padding(16.dp)
     )
   }
 }
@@ -87,7 +86,6 @@ private fun CreateUploadFab() {
 @Composable
 private fun BodyContent(modifier: Modifier = Modifier) {
   Box(modifier = modifier.padding(16.dp)) {
-    //val currentItems = screenViewModel().uploadsFlow.collectAsState(initial = listOf())
     UploadList()
   }
 }
@@ -321,22 +319,6 @@ private fun ListItemThumbnail(upload: MuxUpload) {
 
 @Composable
 private fun ScreenAppBar(closeThisScreen: () -> Unit) {
-//  TopAppBar(
-//    title = { Text(text = "Create Upload") },
-//    navigationIcon = {
-//      IconButton(
-//        onClick = {
-//          closeThisScreen()
-//        },
-//      ) {
-//        Icon(
-//          Icons.Filled.Close,
-//          contentDescription = stringResource(id = android.R.string.cancel),
-//        )
-//      }
-//    },
-//    elevation = 0.dp,
-//  )
   AppBar()
 }
 
