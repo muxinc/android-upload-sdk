@@ -23,9 +23,10 @@ import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
@@ -38,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mux.video.upload.api.MuxUpload
+import com.mux.video.vod.demo.toPx
 import com.mux.video.vod.demo.upload.AppBar
 import com.mux.video.vod.demo.upload.CreateUploadActivity
 import com.mux.video.vod.demo.upload.model.extractThumbnail
@@ -85,23 +87,64 @@ private fun CreateUploadFab() {
 
 @Composable
 private fun BodyContent(modifier: Modifier = Modifier) {
-  Box(modifier = modifier.padding(16.dp)) {
-    UploadList()
+  val viewModel = screenViewModel()
+  SideEffect { viewModel.refreshList() }
+  val listItemsState = viewModel.uploads.observeAsState()
+
+  Box(
+    modifier = modifier.padding(
+      PaddingValues(
+        start = 20.dp,
+        end = 20.dp,
+        top = 44.dp,
+        bottom = 16.dp
+      )
+    )
+  ) {
+    val items = listItemsState.value
+    if (items == null || items.isEmpty()) {
+      EmptyListContent()
+    } else {
+      UploadList(items)
+    }
   }
 }
 
 @Composable
-private fun UploadList() {
-  val viewModel = screenViewModel()
-  val items = viewModel.uploads.observeAsState()
-  SideEffect { viewModel.refreshList() }
+private fun EmptyListContent(modifier: Modifier = Modifier) {
+  val ctx = LocalContext.current
+  val contentColor = MaterialTheme.colors.onBackground
+  val dashStrokeStyle = Stroke(width = 1.dp.toPx(ctx),
+    pathEffect = PathEffect.dashPathEffect(floatArrayOf(8.dp.toPx(ctx), 8.dp.toPx(ctx)), 0f))
+  Column(
+    horizontalAlignment = Alignment.CenterHorizontally,
+    verticalArrangement = Arrangement.Center,
+    modifier = modifier
+      .fillMaxWidth()
+      .height(228.dp)
+      .background(MaterialTheme.colors.background)
+      .drawBehind {
+        drawRoundRect(
+          color = contentColor,
+          cornerRadius = CornerRadius(12.dp.toPx(ctx)),
+          style = dashStrokeStyle
+        )
+      }
+  ) {
+      Text(
+        text = "Tap to upload a Video",
+        fontWeight = FontWeight.W700,
+        color = contentColor
+      )
+    }
+}
 
+@Composable
+private fun UploadList(items: List<MuxUpload>) {
   val listState = rememberLazyListState()
   ReportDrawnWhen { listState.layoutInfo.totalItemsCount > 0 }
-  items.value?.let { list ->
-    LazyColumn(state = listState) {
-      items(list) { ListItem(upload = it) }
-    }
+  LazyColumn(state = listState) {
+    items(items) { ListItem(upload = it) }
   }
 }
 
@@ -252,7 +295,11 @@ private fun ListItemThumbnail(upload: MuxUpload) {
         Spacer(modifier = Modifier.size(12.dp))
         Text(
           "Upload failed!",
-          style = TextStyle(color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp),
+          style = TextStyle(
+            color = Color.White,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 14.sp
+          ),
         )
         Text(
           "Try again with another file",
@@ -277,7 +324,11 @@ private fun ListItemThumbnail(upload: MuxUpload) {
       ) {
         Text(
           "Uploading",
-          style = TextStyle(color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp),
+          style = TextStyle(
+            color = Color.White,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 14.sp
+          ),
         )
         Spacer(modifier = Modifier.size(12.dp))
         val uploadProgress = uploadState.bytesUploaded / uploadState.totalBytes.toDouble()
@@ -322,6 +373,17 @@ private fun ScreenAppBar(closeThisScreen: () -> Unit) {
   AppBar()
 }
 
+@Composable
+private fun screenViewModel(): UploadListViewModel = viewModel()
+
+@Preview(showBackground = true)
+@Composable
+fun NoUploads() {
+  MuxUploadSDKForAndroidTheme {
+    EmptyListContent()
+  }
+}
+
 @Preview(showBackground = true, locale = "en")
 @Composable
 fun ListScreenPreview() {
@@ -329,6 +391,3 @@ fun ListScreenPreview() {
     ScreenContent {}
   }
 }
-
-@Composable
-private fun screenViewModel(): UploadListViewModel = viewModel()
