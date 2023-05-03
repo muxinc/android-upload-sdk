@@ -44,6 +44,7 @@ import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.upload.CreateUploadActivity
 import com.mux.video.vod.demo.upload.model.extractThumbnail
 import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
+import com.mux.video.vod.demo.upload.ui.theme.Scrim
 import com.mux.video.vod.demo.upload.viewmodel.UploadListViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -235,10 +236,9 @@ private fun ListItemThumbnail(upload: MuxUpload) {
       )
     } else if (upload.error != null) { // Error
       // Video Thumb: Scrim + Retry
-      val scrimColor = Color(red = 0, green = 0, blue = 0, alpha = (0.6F * 0xFF).toInt())
       Box(
         modifier = Modifier
-          .background(scrimColor)
+          .background(Scrim)
           .fillMaxSize()
       )
       Column(
@@ -269,10 +269,9 @@ private fun ListItemThumbnail(upload: MuxUpload) {
       val uploadState = upload.currentState
       val uploadTimeElapsed = uploadState.updatedTime - uploadState.startTime
       val dataRateEst = uploadState.bytesUploaded / uploadTimeElapsed.toDouble()
-      val scrimColor = Color(red = 0, green = 0, blue = 0, alpha = (0.6F * 0xFF).toInt())
       Box(
         modifier = Modifier
-          .background(scrimColor)
+          .background(Scrim)
           .fillMaxSize()
       )
       Column(
