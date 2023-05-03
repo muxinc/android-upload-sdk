@@ -2,6 +2,7 @@ package com.mux.video.upload.internal
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.Uri
 import com.mux.video.upload.api.MuxUpload
 import org.json.JSONArray
 import org.json.JSONObject
@@ -18,13 +19,18 @@ internal fun writeUploadState(uploadInfo: UploadInfo, state: MuxUpload.Progress)
   UploadPersistence.write(
     UploadEntry(
       file = uploadInfo.file,
+      url = uploadInfo.remoteUri.toString(),
       savedAtLocalMs = Date().time,
       state = if (uploadInfo.isRunning()) {
         UploadPersistence.WAS_RUNNING
       } else {
         UploadPersistence.WAS_PAUSED
       },
-      bytesSent = state.bytesUploaded
+      bytesSent = state.bytesUploaded,
+      chunkSize = uploadInfo.chunkSize,
+      retriesPerChunk = uploadInfo.retriesPerChunk,
+      retryBaseTimeMs = uploadInfo.retryBaseTimeMs,
+      optOut = uploadInfo.optOut,
     )
   )
 }
@@ -37,6 +43,25 @@ internal fun readLastByteForFile(upload: UploadInfo): Long {
 @JvmSynthetic
 internal fun forgetUploadState(uploadInfo: UploadInfo) {
   UploadPersistence.removeForFile(uploadInfo)
+}
+
+@JvmSynthetic
+internal fun readAllCachedUploads(): List<UploadInfo> {
+  return UploadPersistence.readEntries().map { it.value }.map {
+    UploadInfo(
+      remoteUri = Uri.parse(it.url),
+      file =  it.file,
+      videoMimeType = "video/*",
+      chunkSize = it.chunkSize,
+      retriesPerChunk = it.retriesPerChunk,
+      retryBaseTimeMs = 500,
+      optOut = it.optOut,
+      uploadJob = null,
+      successFlow = null,
+      progressFlow = null,
+      errorFlow = null,
+    )
+  }
 }
 
 /**
@@ -116,8 +141,13 @@ private object UploadPersistence {
   }
 }
 
-internal data class UploadEntry(
+private data class UploadEntry(
   val file: File,
+  val url: String,
+  val chunkSize: Int,
+  val retriesPerChunk: Int,
+  val retryBaseTimeMs: Long,
+  val optOut: Boolean,
   val savedAtLocalMs: Long,
   val state: Int,
   val bytesSent: Long,
@@ -126,6 +156,10 @@ internal data class UploadEntry(
     return JSONObject().apply {
       put("file", file.absolutePath)
       put("data", JSONObject().apply {
+        put("url", url)
+        put("chunk_size", chunkSize)
+        put("retries_per_chunk", retriesPerChunk)
+        put("opt_out", optOut)
         put("saved_at_local_ms", savedAtLocalMs)
         put("state", state)
         put("bytes_sent", bytesSent)
@@ -139,6 +173,11 @@ private fun JSONObject.parsePersistenceEntry(): UploadEntry {
   val data = getJSONObject("data")
   return UploadEntry(
     file = file,
+    chunkSize = data.optInt("chunk_size"),
+    url = data.optString("url"),
+    retriesPerChunk = data.optInt("retries_per_chunk"),
+    retryBaseTimeMs = 500,
+    optOut = data.optBoolean("opt_out"),
     savedAtLocalMs = data.optLong("saved_at_local_ms"),
     state = data.optInt("state"),
     bytesSent = data.optLong("bytes_sent")
