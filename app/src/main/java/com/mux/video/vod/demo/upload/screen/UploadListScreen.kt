@@ -44,11 +44,10 @@ import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.upload.CreateUploadActivity
 import com.mux.video.vod.demo.upload.model.extractThumbnail
 import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
-import com.mux.video.vod.demo.upload.ui.theme.Scrim
+import com.mux.video.vod.demo.upload.ui.theme.TranslucentScrim
 import com.mux.video.vod.demo.upload.viewmodel.UploadListViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import okhttp3.internal.toImmutableList
 import java.text.DecimalFormat
 
 @Composable
@@ -238,7 +237,7 @@ private fun ListItemThumbnail(upload: MuxUpload) {
       // Video Thumb: Scrim + Retry
       Box(
         modifier = Modifier
-          .background(Scrim)
+          .background(TranslucentScrim)
           .fillMaxSize()
       )
       Column(
@@ -271,7 +270,7 @@ private fun ListItemThumbnail(upload: MuxUpload) {
       val dataRateEst = uploadState.bytesUploaded / uploadTimeElapsed.toDouble()
       Box(
         modifier = Modifier
-          .background(Scrim)
+          .background(TranslucentScrim)
           .fillMaxSize()
       )
       Column(

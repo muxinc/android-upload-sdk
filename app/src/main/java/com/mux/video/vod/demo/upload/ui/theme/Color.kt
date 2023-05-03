@@ -2,9 +2,16 @@ package com.mux.video.vod.demo.upload.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Purple200 = Color(0xFFBB86FC)
-val Purple500 = Color(0xFF6200EE)
-val Purple700 = Color(0xFF3700B3)
-val Teal200 = Color(0xFF03DAC5)
+/* Mux Colors */
+val Green50 = Color(0xFF00AA3C)
+val Green60 = Color(0xFF00802D)
+val Green70 = Color(0xFF005C20)
+val Gray30 = Color(0xFFB2BAC2)
+val Gray80 = Color(0xFF3E4247)
+val Gray100 = Color(0xFF0A0A0B)
+val Pink40 = Color(0xFFFB65D5)
+val White = Color(0xFFFFFFFF)
 
-val Scrim = Color(red = 0, green = 0, blue = 0, alpha = (0.6F * 0xFF).toInt())
+/* App Colors */
+val TranslucentScrim = Color(red = 0, green = 0, blue = 0, alpha = (0.6F * 0xFF).toInt())
+val BackgroundDark = Color(0xFF1E1E1E)
