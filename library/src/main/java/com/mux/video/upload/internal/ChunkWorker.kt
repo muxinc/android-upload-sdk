@@ -19,9 +19,8 @@ import java.io.IOException
  */
 internal class ChunkWorker private constructor(
   private val chunk: Chunk,
-  private val maxRetries: Int,
+  private val uploadInfo: UploadInfo,
   private val videoMimeType: String,
-  private val remoteUri: Uri,
   private val progressFlow: MutableSharedFlow<MuxUpload.Progress>,
 ) {
   companion object {
@@ -33,11 +32,10 @@ internal class ChunkWorker private constructor(
     @JvmSynthetic
     internal fun create(
       chunk: Chunk,
-      maxRetries: Int,
+      uploadInfo: UploadInfo,
       videoMimeType: String,
-      remoteUri: Uri,
       progressFlow: MutableSharedFlow<MuxUpload.Progress>,
-    ): ChunkWorker = ChunkWorker(chunk, maxRetries, videoMimeType, remoteUri, progressFlow)
+    ): ChunkWorker = ChunkWorker(chunk, uploadInfo, videoMimeType, progressFlow)
   }
 
   private val logger get() = MuxUploadSdk.logger
@@ -47,7 +45,7 @@ internal class ChunkWorker private constructor(
 
   @Throws
   suspend fun upload(): MuxUpload.Progress {
-    val moreRetries = { triesSoFar: Int -> triesSoFar < maxRetries }
+    val moreRetries = { triesSoFar: Int -> triesSoFar < uploadInfo.retriesPerChunk }
     suspend fun tryUpload(triesSoFar: Int): Result<MuxUpload.Progress> {
       try {
         val (finalState, httpResponse) = doUpload()
@@ -55,7 +53,6 @@ internal class ChunkWorker private constructor(
           // End Case: Chunk success!
           return Result.success(finalState)
         } else if (RETRYABLE_STATUS_CODES.contains(httpResponse.code)) {
-          Log.d("MuxUploadHttp", "Retrying")
           return if (moreRetries(triesSoFar)) {
             // Still have more retries so try again
             tryUpload(triesSoFar + 1)
@@ -79,7 +76,7 @@ internal class ChunkWorker private constructor(
       }
     }
 
-    return tryUpload(0).getOrThrow()
+    return tryUpload(0).getOrThrow().also { writeUploadState(uploadInfo, it) }
   }
 
   @Throws
@@ -118,7 +115,7 @@ internal class ChunkWorker private constructor(
         } // stream.asCountingRequestBody
 
       val request = Request.Builder()
-        .url(remoteUri.toString())
+        .url(uploadInfo.remoteUri.toString())
         .put(putBody)
         .header("Content-Type", videoMimeType)
         .header(

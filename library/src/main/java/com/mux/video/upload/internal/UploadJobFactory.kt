@@ -48,8 +48,7 @@ internal class UploadJobFactory private constructor(
       progressFlow: MutableSharedFlow<MuxUpload.Progress>
     ): ChunkWorker = ChunkWorker.create(
       chunk = chunk,
-      maxRetries = uploadInfo.retriesPerChunk,
-      remoteUri = uploadInfo.remoteUri,
+      uploadInfo = uploadInfo,
       videoMimeType = MIME_TYPE_GENERIC_VIDEO,
       progressFlow = progressFlow,
     )

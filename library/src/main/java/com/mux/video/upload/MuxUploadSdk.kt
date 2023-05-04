@@ -62,7 +62,8 @@ object MuxUploadSdk {
     UploadMetrics.initialize(appContext)
 
     if (resumeStoppedUploads)  {
-      MuxUploadManager.resumeAllCachedJobs()
+      val upl = MuxUploadManager.resumeAllCachedJobs()
+      Log.d("NOURL", "Attempting upload $upl")
     }
   }
 

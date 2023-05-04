@@ -156,13 +156,13 @@ object MuxUploadManager {
   private fun newObserveProgressJob(upload: UploadInfo): Job {
     // This job has up to three children, one for each of the state flows on UploadInfo
     return mainScope.launch {
-      upload.progressFlow?.let { flow ->
-        launch {
-          flow.collect { state ->
-            launch(Dispatchers.IO) { writeUploadState(upload, state) }
-          }
-        }
-      }
+//      upload.progressFlow?.let { flow ->
+//        launch {
+//          flow.collect { state ->
+//            launch(Dispatchers.IO) { writeUploadState(upload, state) }
+//          }
+//        }
+//      }
 
       upload.successFlow?.let { flow -> launch { flow.collect { jobFinished(upload) } } }
     }

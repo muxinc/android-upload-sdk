@@ -103,6 +103,7 @@ private object UploadPersistence {
   }
 
   @Throws
+  @Synchronized
   private fun writeEntries(entries: Map<String, UploadEntry>) {
     val entriesJson = JSONArray()
     entries.forEach { entriesJson.put(it.value.toJson()) }
@@ -110,6 +111,7 @@ private object UploadPersistence {
   }
 
   @Throws
+  @Synchronized
   private fun fetchEntries(): MutableMap<String, UploadEntry> {
     val jsonStr = prefs.getString(LIST_KEY, null)
     return if (jsonStr == null) {
