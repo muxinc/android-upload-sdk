@@ -152,7 +152,7 @@ private fun ListItemContent(upload: MuxUpload) {
     if (upload.isSuccessful) {
       // No overlay for now
     } else if (upload.error != null) {
-      ErrorOverlay()
+      ErrorOverlay(modifier = Modifier.fillMaxSize())
     } else if (upload.isRunning) {
       ProgressOverlay(upload)
     }
@@ -221,13 +221,12 @@ private fun ProgressOverlay(upload: MuxUpload) {
 }
 
 @Composable
-private fun ErrorOverlay() {
+private fun ErrorOverlay(modifier: Modifier = Modifier) {
   Column(
     horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.Center,
-    modifier = Modifier
+    modifier = modifier
       .background(TranslucentScrim)
-      .fillMaxSize()
   ) {
     Icon(
       Icons.Filled.Error,
