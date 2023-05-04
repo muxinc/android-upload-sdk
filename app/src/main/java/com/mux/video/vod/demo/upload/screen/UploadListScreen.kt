@@ -25,11 +25,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -41,14 +38,12 @@ import com.mux.video.vod.demo.upload.CreateUploadCta
 import com.mux.video.vod.demo.upload.MuxAppBar
 import com.mux.video.vod.demo.upload.THUMBNAIL_SIZE
 import com.mux.video.vod.demo.upload.model.extractThumbnail
-import com.mux.video.vod.demo.upload.ui.theme.Gray70
-import com.mux.video.vod.demo.upload.ui.theme.Gray90
-import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
-import com.mux.video.vod.demo.upload.ui.theme.TranslucentScrim
+import com.mux.video.vod.demo.upload.ui.theme.*
 import com.mux.video.vod.demo.upload.viewmodel.UploadListViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.text.DecimalFormat
+import java.util.concurrent.TimeUnit
 
 @Composable
 fun UploadListScreen() {
@@ -159,67 +154,56 @@ private fun ListItemContent(upload: MuxUpload) {
     } else if (upload.error != null) {
       ErrorOverlay(modifier = Modifier.fillMaxSize())
     } else if (upload.isRunning) {
-      ProgressOverlay(upload, modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth())
+      ProgressOverlay(
+        upload.currentState,
+        modifier = Modifier
+          .align(Alignment.BottomStart)
+          .fillMaxWidth()
+      )
     }
   } // outer Box
 } // ListItemContent
 
 @Composable
-private fun ProgressOverlay(upload: MuxUpload, modifier: Modifier = Modifier) {
-  val uploadState = upload.currentState
+private fun ProgressOverlay(uploadState: MuxUpload.Progress, modifier: Modifier = Modifier) {
   val uploadTimeElapsed = uploadState.updatedTime - uploadState.startTime
   val dataRateEst = uploadState.bytesUploaded / uploadTimeElapsed.toDouble()
   Box(
     modifier = modifier.background(TranslucentScrim)
   ) {
     Column(
-      horizontalAlignment = Alignment.CenterHorizontally,
-      modifier = Modifier.Companion
-        .align(Alignment.Center)
+      verticalArrangement = Arrangement.Bottom,
+      modifier = Modifier
+        .align(Alignment.BottomStart)
         .fillMaxWidth()
+        .padding(8.dp)
     ) {
       Text(
         "Uploading",
         style = TextStyle(
           color = Color.White,
-          fontWeight = FontWeight.SemiBold,
           fontSize = 14.sp
         ),
       )
-      Spacer(modifier = Modifier.size(12.dp))
+      Spacer(modifier = Modifier.size(8.dp))
       val uploadProgress = uploadState.bytesUploaded / uploadState.totalBytes.toDouble()
       LinearProgressIndicator(
         progress = uploadProgress.toFloat(),
-        color = MaterialTheme.colors.secondary,
-        modifier = Modifier.fillMaxWidth(0.55F)
+        modifier = Modifier.fillMaxWidth(),
+        backgroundColor = TranslucentWhite
       )
-      Spacer(modifier = Modifier.size(6.dp))
-      Text(
-        text = "${uploadState.bytesUploaded} / ${uploadState.totalBytes}",
-        fontSize = 10.sp,
-        color = Color.LightGray
-      )
-    }
-    val stateLine = buildAnnotatedString {
+      Spacer(modifier = Modifier.size(2.dp))
       val df = DecimalFormat("#.00")
       val formattedRate = df.format(dataRateEst)
       val formattedTime = df.format(uploadTimeElapsed / 1000f)
-      withStyle(
-        style = SpanStyle(
-          fontWeight = FontWeight.Medium,
-        )
-      ) {
-        append("$formattedRate Kb/s")
-      }
-      append(" in ${formattedTime}s")
+      val formattedTotalBytes = df.format(uploadState.bytesUploaded / (1024f * 1024f))
+      val stateLine = "$formattedTotalBytes Mb in ${formattedTime}s (${formattedRate}Kbps)"
+      Text(
+        stateLine,
+        style = TextStyle(color = Color.White, fontSize = 14.sp),
+        modifier = Modifier
+      )
     }
-    Text(
-      stateLine,
-      style = TextStyle(color = Color.White, fontSize = 16.sp),
-      modifier = Modifier
-        .padding(12.dp)
-        .align(Alignment.BottomStart)
-    )
   }
 }
 
@@ -306,8 +290,22 @@ fun NoUploads() {
 
 @Preview(showBackground = true, locale = "en")
 @Composable
-fun ListScreenPreview() {
+fun ListItemProgress() {
   MuxUploadSDKForAndroidTheme {
-    ScreenContent {}
+    Box(modifier = Modifier.height(THUMBNAIL_SIZE)){
+
+    ProgressOverlay(
+      uploadState = MuxUpload.Progress(
+        startTime = System.currentTimeMillis() - TimeUnit.MILLISECONDS.convert(
+          10,
+          TimeUnit.MINUTES
+        ),
+        updatedTime = System.currentTimeMillis(),
+        bytesUploaded = 100 * 1024 * 1024,
+        totalBytes = 175 * 1024 * 1024,
+      ),
+      modifier = Modifier.align(Alignment.BottomStart)
+    )
+  }
   }
 }

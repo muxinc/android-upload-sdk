@@ -18,3 +18,4 @@ val White = Color(0xFFFFFFFF)
 /* App Colors */
 val TranslucentScrim = Color(red = 0, green = 0, blue = 0, alpha = (0.6F * 0xFF).toInt())
 val BackgroundDark = Color(0xFF1E1E1E)
+val TranslucentWhite = Color(red = 1F, green = 1F, blue = 1F, alpha = 0.5F)
