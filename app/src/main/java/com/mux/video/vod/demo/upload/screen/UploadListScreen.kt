@@ -103,13 +103,11 @@ private fun BodyContent(
       PaddingValues(
         start = 20.dp,
         end = 20.dp,
-        top = 44.dp,
-        bottom = 16.dp
       )
     )
   ) {
     if (items == null || items.isEmpty()) {
-      CreateUploadCta { uploadClick() }
+      CreateUploadCta(modifier = Modifier.padding(vertical = 64.dp)) { uploadClick() }
     } else {
       UploadList(items)
     }

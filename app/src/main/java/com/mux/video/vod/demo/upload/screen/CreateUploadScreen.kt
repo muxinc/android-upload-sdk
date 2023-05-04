@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -12,7 +13,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
@@ -25,19 +25,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mux.video.vod.demo.R
@@ -122,156 +117,124 @@ private fun ScreenContent(
   ) { contentPadding ->
     BodyContent(
       screenState,
-      Modifier
-        .padding(contentPadding)
+      Modifier.padding(contentPadding),
+      closeThisScreen
     )
   }
 }
 
 @Composable
-private fun BodyContent(state: CreateUploadViewModel.State, modifier: Modifier = Modifier) {
+private fun BodyContent(state: CreateUploadViewModel.State, modifier: Modifier = Modifier, closeThisScreen: () -> Unit) {
   Column(
     modifier = modifier
       .fillMaxWidth()
       .wrapContentSize(Alignment.TopStart)
-      .padding(16.dp)
+      .padding(horizontal = 20.dp)
   ) {
-    Row {
-      Box(
-        modifier = Modifier
-          .clip(CircleShape)
-          .background(Color.Gray)
-          .size(36.dp)
-      )
-      Spacer(modifier = Modifier.size(16.dp))
-      val stateTxtModifier = Modifier
-        .fillMaxWidth()
-        .align(Alignment.CenterVertically)
-      Box(
-        modifier = stateTxtModifier
-      ) {
-        if (state.chosenFile != null) {
-          Text(
-            text = "Will upload video file: ${state.chosenFile.name}",
-            modifier = stateTxtModifier,
-            fontSize = 16.sp
-          )
-        } else if (state.prepareState == CreateUploadViewModel.PrepareState.ERROR) {
-          Text(
-            text = "Error preparing this video for upload",
-            modifier = stateTxtModifier,
-            fontSize = 16.sp
-          )
-        } else {
-          val viewModel: CreateUploadViewModel = viewModel()
-          val requestContent = remember { mutableStateOf(false) }
-          GetContentEffect(requestContent.value)
-          TextButton(onClick = {
-            requestContent.value = viewModel.videoState.value?.chosenFile == null
-          }) {
-            Text(
-              text = buildAnnotatedString {
-                withStyle(style = SpanStyle(color = Color.Blue, fontWeight = FontWeight.SemiBold)) {
-                  append("Click")
-                }
-                withStyle(
-                  style = SpanStyle(
-                    color = MaterialTheme.colors.onBackground,
-                    fontWeight = FontWeight.Normal
-                  )
-                ) {
-                  append(" to choose a video for upload")
-                }
-              },
-              modifier = stateTxtModifier,
-              fontSize = 16.sp,
-            )
-          }
-        }
-      }
-    } // Box
-    Spacer(modifier = Modifier.size(16.dp))
-    // Thumbnail is next, or placeholders for error and not-chosen states
     if (state.thumbnail != null) {
-      val imageBitmap = state.thumbnail.asImageBitmap()
-      Image(
-        bitmap = imageBitmap,
-        contentDescription = "Preview of the video thumbnail",
-        contentScale = ContentScale.Crop,
-        modifier = Modifier
-          .height(THUMBNAIL_SIZE)
-          .clip(RoundedCornerShape(12.dp)),
-      )
+      ChosenThumbnail(thumbnail = state.thumbnail, modifier = Modifier.padding(top = 64.dp))
     } else {
-      Box(
-        modifier = Modifier
-          .wrapContentSize(Alignment.Center)
-          .fillMaxWidth()
-          .height(THUMBNAIL_SIZE)
-                // TODO: Only some children have a solid border
-      ) {
-        when (state.prepareState) {
-          CreateUploadViewModel.PrepareState.ERROR -> {
-            Column(
-              horizontalAlignment = Alignment.CenterHorizontally,
-              verticalArrangement = Arrangement.Center,
-              modifier = Modifier
-                .fillMaxSize()
-                .background(color = Gray90, shape = RoundedCornerShape(12.dp))
-                .border(
-                  width = 1.dp,
-                  color = Gray70,
-                  shape = RoundedCornerShape(12.dp),
-                )
-            ) {
-              Icon(
-                Icons.Outlined.Error,
-                contentDescription = "",
-                tint = Gray30,
-                modifier = Modifier
-                  .size(48.dp),
-              )
-              Spacer(modifier = Modifier.size(8.dp))
-              Text(
-                text = "An error occurred while processing your file. Please try another",
-                fontWeight = FontWeight.W700,
-                textAlign = TextAlign.Center,
-                color = White,
-                modifier = Modifier.padding(12.dp)
-              )
-            }
-          }
-          CreateUploadViewModel.PrepareState.PREPARING -> {
-            Box(
-              modifier = Modifier
-                .fillMaxSize()
-                .background(color = Gray90, shape = RoundedCornerShape(12.dp))
-                .border(
-                  width = 1.dp,
-                  color = Gray70,
-                  shape = RoundedCornerShape(12.dp),
-                )
-            ) {
-              CircularProgressIndicator(
-                modifier = Modifier
-                  .align(Alignment.Center)
-                  .size(48.dp),
-                color = Gray30
-              )
-            }
-          }
-          else -> {
-            val viewModel: CreateUploadViewModel = viewModel()
-            val requestContent = remember { mutableStateOf(false) }
-            GetContentEffect(requestContent.value)
-            CreateUploadCta() {
-              requestContent.value = viewModel.videoState.value?.chosenFile == null
-            }
-          } // else ->
-        } // when (state.prepareState)
-      } // Box Content
+      ThumbnailPlaceHolder(state = state, modifier = Modifier.padding(top = 64.dp))
     } // Box
   }
+}
+
+@Composable
+private fun ThumbnailPlaceHolder(state: CreateUploadViewModel.State, modifier: Modifier = Modifier) {
+  Box(
+    modifier = modifier
+      .wrapContentSize(Alignment.Center)
+      .fillMaxWidth()
+      .height(THUMBNAIL_SIZE)
+  ) {
+    when (state.prepareState) {
+      CreateUploadViewModel.PrepareState.ERROR -> {
+        ErrorPlaceHolder()
+      }
+      CreateUploadViewModel.PrepareState.PREPARING -> {
+        ProgressPlaceHolder()
+      }
+      else -> {
+        CtaPlaceHolder()
+      } // else ->
+    } // when (state.prepareState)
+  }
+}
+
+@Composable
+private fun CtaPlaceHolder() {
+  val viewModel: CreateUploadViewModel = viewModel()
+  val requestContent = remember { mutableStateOf(false) }
+  GetContentEffect(requestContent.value)
+  CreateUploadCta() {
+    requestContent.value = viewModel.videoState.value?.chosenFile == null
+  }
+}
+
+@Composable
+private fun ProgressPlaceHolder() {
+  Box(
+    modifier = Modifier
+      .fillMaxSize()
+      .background(color = Gray90, shape = RoundedCornerShape(12.dp))
+      .border(
+        width = 1.dp,
+        color = Gray70,
+        shape = RoundedCornerShape(12.dp),
+      )
+  ) {
+    CircularProgressIndicator(
+      modifier = Modifier
+        .align(Alignment.Center)
+        .size(48.dp),
+      color = Gray30
+    )
+  }
+}
+
+@Composable
+private fun ErrorPlaceHolder() {
+  Column(
+    horizontalAlignment = Alignment.CenterHorizontally,
+    verticalArrangement = Arrangement.Center,
+    modifier = Modifier
+      .fillMaxSize()
+      .background(color = Gray90, shape = RoundedCornerShape(12.dp))
+      .border(
+        width = 1.dp,
+        color = Gray70,
+        shape = RoundedCornerShape(12.dp),
+      )
+  ) {
+    Icon(
+      Icons.Outlined.Error,
+      contentDescription = "",
+      tint = Gray30,
+      modifier = Modifier
+        .size(48.dp),
+    )
+    Spacer(modifier = Modifier.size(8.dp))
+    Text(
+      text = "An error occurred while processing your file. Please try another",
+      fontWeight = FontWeight.W700,
+      textAlign = TextAlign.Center,
+      color = White,
+      modifier = Modifier.padding(12.dp)
+    )
+  }
+}
+
+@Composable
+private fun ChosenThumbnail(modifier: Modifier = Modifier, thumbnail: Bitmap) {
+  val imageBitmap = thumbnail.asImageBitmap()
+  Image(
+    bitmap = imageBitmap,
+    contentDescription = "Preview of the video thumbnail",
+    contentScale = ContentScale.Crop,
+    modifier = modifier
+      .height(THUMBNAIL_SIZE)
+      .clip(RoundedCornerShape(12.dp)),
+  )
 }
 
 @Composable
