@@ -7,6 +7,7 @@ import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,10 +26,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -39,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mux.video.upload.api.MuxUpload
+import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.toPx
 import com.mux.video.vod.demo.upload.AppBar
 import com.mux.video.vod.demo.upload.CreateUploadActivity
@@ -88,8 +94,8 @@ private fun CreateUploadFab() {
 @Composable
 private fun BodyContent(modifier: Modifier = Modifier) {
   val viewModel = screenViewModel()
-  SideEffect { viewModel.refreshList() }
   val listItemsState = viewModel.uploads.observeAsState()
+  SideEffect { viewModel.refreshList() }
 
   Box(
     modifier = modifier.padding(
@@ -114,14 +120,16 @@ private fun BodyContent(modifier: Modifier = Modifier) {
 private fun EmptyListContent(modifier: Modifier = Modifier) {
   val ctx = LocalContext.current
   val contentColor = MaterialTheme.colors.onBackground
-  val dashStrokeStyle = Stroke(width = 1.dp.toPx(ctx),
-    pathEffect = PathEffect.dashPathEffect(floatArrayOf(8.dp.toPx(ctx), 8.dp.toPx(ctx)), 0f))
+  val dashStrokeStyle = Stroke(
+    width = 1.dp.toPx(ctx),
+    pathEffect = PathEffect.dashPathEffect(floatArrayOf(8.dp.toPx(ctx), 8.dp.toPx(ctx)), 0f)
+  )
   Column(
     horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.Center,
     modifier = modifier
       .fillMaxWidth()
-      .height(228.dp)
+      .height(THUMBNAIL_SIZE)
       .background(MaterialTheme.colors.background)
       .drawBehind {
         drawRoundRect(
@@ -130,13 +138,24 @@ private fun EmptyListContent(modifier: Modifier = Modifier) {
           style = dashStrokeStyle
         )
       }
+      .clickable {
+        ctx.startActivity(Intent(ctx, CreateUploadActivity::class.java))
+      }
   ) {
-      Text(
-        text = "Tap to upload a Video",
-        fontWeight = FontWeight.W700,
-        color = contentColor
-      )
-    }
+    Icon(
+      painter = painterResource(id = R.drawable.ic_add),
+      contentDescription = "",
+      tint = MaterialTheme.colors.onBackground
+    )
+    Spacer(
+      modifier = Modifier.size(8.dp)
+    )
+    Text(
+      text = "Tap to upload a Video",
+      fontWeight = FontWeight.W700,
+      color = contentColor
+    )
+  }
 }
 
 @Composable
@@ -207,7 +226,7 @@ private fun ListItemThumbnail(upload: MuxUpload) {
     modifier = Modifier
       .wrapContentSize(Alignment.Center)
       .fillMaxWidth()
-      .height(256.dp)
+      .height(THUMBNAIL_SIZE)
       .border(
         width = 1.dp,
         color = Color.LightGray,
@@ -232,7 +251,7 @@ private fun ListItemThumbnail(upload: MuxUpload) {
         contentDescription = "Video thumbnail preview",
         contentScale = ContentScale.Crop,
         modifier = Modifier
-          .height(256.dp)
+          .height(THUMBNAIL_SIZE)
           .border(
             width = 1.dp,
             color = Color.LightGray,
@@ -242,7 +261,7 @@ private fun ListItemThumbnail(upload: MuxUpload) {
     } else {
       Box(
         modifier = Modifier
-          .height(256.dp)
+          .height(THUMBNAIL_SIZE)
           .border(
             width = 1.dp,
             color = Color.LightGray,
@@ -391,3 +410,5 @@ fun ListScreenPreview() {
     ScreenContent {}
   }
 }
+
+val THUMBNAIL_SIZE = 228.dp
