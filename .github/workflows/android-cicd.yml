@@ -24,7 +24,7 @@ jobs:
       # This step will build all modules configured for publication and publish them
       # Does your project publish multiple libraries in a dependency chain? You'll have to add another copy of this step and build the dependency in the first one
       - name: Build and Publish to Dev Repo
-        uses: gradle/gradle-build-action@v2.3.3
+        uses: gradle/gradle-build-action@v2.4.2
         with:
           arguments: artifactoryPublish
         env:
@@ -46,7 +46,7 @@ jobs:
           java-version: '11'
           distribution: 'temurin'
       - name: Unit Tests
-        uses: gradle/gradle-build-action@v2.3.3
+        uses: gradle/gradle-build-action@v2.4.2
         with:
           arguments: test
   
