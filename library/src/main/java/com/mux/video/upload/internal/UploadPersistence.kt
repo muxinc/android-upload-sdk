@@ -154,8 +154,6 @@ private data class UploadEntry(
   val bytesSent: Long,
 ) {
   fun toJson(): JSONObject {
-    Log.d("NOURL", "Writing URL $url")
-    Log.d("NOURL", "bytes $bytesSent")
     return JSONObject().apply {
       put("file", file.absolutePath)
       put("data", JSONObject().apply {

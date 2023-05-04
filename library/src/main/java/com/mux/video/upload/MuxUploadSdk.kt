@@ -47,7 +47,7 @@ object MuxUploadSdk {
     httpClient = OkHttpClient.Builder()
       .addInterceptor(HttpLoggingInterceptor {
         logger.v("MuxUploadHttp", it)
-      }.apply { setLevel(HttpLoggingInterceptor.Level.BODY) })
+      }.apply { setLevel(HttpLoggingInterceptor.Level.HEADERS) })
       // these are high timeouts even uploading large files, but it's better to err on the high side
       .callTimeout(10, TimeUnit.MINUTES)  // 10 minutes per chunk
       .writeTimeout(1, TimeUnit.MINUTES) // 1 minute per packet
@@ -63,7 +63,6 @@ object MuxUploadSdk {
 
     if (resumeStoppedUploads)  {
       val upl = MuxUploadManager.resumeAllCachedJobs()
-      Log.d("NOURL", "Attempting upload $upl")
     }
   }
 

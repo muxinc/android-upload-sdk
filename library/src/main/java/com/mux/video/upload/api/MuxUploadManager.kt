@@ -38,7 +38,6 @@ object MuxUploadManager {
    */
   fun resumeAllCachedJobs(): List<MuxUpload> {
     return readAllCachedUploads()
-      //.onEach { uploadInfo -> Log.d("NOURL","read in $uploadInfo") }
       .onEach { uploadInfo -> startJob(uploadInfo, restart = false) }
       .map { MuxUpload.create(it) }
   }
