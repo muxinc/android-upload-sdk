@@ -1,6 +1,7 @@
 package com.mux.video.upload.internal
 
 import android.net.Uri
+import android.util.Log
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.internal.network.asCountingRequestBody
@@ -46,7 +47,7 @@ internal class ChunkWorker private constructor(
 
   @Throws
   suspend fun upload(): MuxUpload.Progress {
-    val moreRetries = { triesSoFar: Int -> triesSoFar > maxRetries }
+    val moreRetries = { triesSoFar: Int -> triesSoFar < maxRetries }
     suspend fun tryUpload(triesSoFar: Int): Result<MuxUpload.Progress> {
       try {
         val (finalState, httpResponse) = doUpload()
@@ -54,6 +55,7 @@ internal class ChunkWorker private constructor(
           // End Case: Chunk success!
           return Result.success(finalState)
         } else if (RETRYABLE_STATUS_CODES.contains(httpResponse.code)) {
+          Log.d("MuxUploadHttp", "Retrying")
           return if (moreRetries(triesSoFar)) {
             // Still have more retries so try again
             tryUpload(triesSoFar + 1)

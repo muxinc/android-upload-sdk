@@ -1,5 +1,6 @@
 package com.mux.video.upload.api
 
+import android.util.Log
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.*
@@ -37,6 +38,7 @@ object MuxUploadManager {
    */
   fun resumeAllCachedJobs(): List<MuxUpload> {
     return readAllCachedUploads()
+      //.onEach { uploadInfo -> Log.d("NOURL","read in $uploadInfo") }
       .onEach { uploadInfo -> startJob(uploadInfo, restart = false) }
       .map { MuxUpload.create(it) }
   }

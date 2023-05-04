@@ -3,6 +3,7 @@ package com.mux.video.upload.internal
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
+import android.util.Log
 import com.mux.video.upload.api.MuxUpload
 import org.json.JSONArray
 import org.json.JSONObject
@@ -46,18 +47,20 @@ internal fun forgetUploadState(uploadInfo: UploadInfo) {
 
 @JvmSynthetic
 internal fun readAllCachedUploads(): List<UploadInfo> {
-  return UploadPersistence.readEntries().map { it.value }.map {
-    UploadInfo(
-      remoteUri = Uri.parse(it.url),
-      file =  it.file,
-      chunkSize = it.chunkSize,
-      retriesPerChunk = it.retriesPerChunk,
-      optOut = it.optOut,
-      uploadJob = null,
-      successFlow = null,
-      progressFlow = null,
-      errorFlow = null,
-    )
+  return UploadPersistence.readEntries()
+    .map { it.value }
+    .map {
+      UploadInfo(
+        remoteUri = Uri.parse(it.url),
+        file =  it.file,
+        chunkSize = it.chunkSize,
+        retriesPerChunk = it.retriesPerChunk,
+        optOut = it.optOut,
+        uploadJob = null,
+        successFlow = null,
+        progressFlow = null,
+        errorFlow = null,
+      )
   }
 }
 
@@ -149,6 +152,8 @@ private data class UploadEntry(
   val bytesSent: Long,
 ) {
   fun toJson(): JSONObject {
+    Log.d("NOURL", "Writing URL $url")
+    Log.d("NOURL", "bytes $bytesSent")
     return JSONObject().apply {
       put("file", file.absolutePath)
       put("data", JSONObject().apply {
