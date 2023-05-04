@@ -67,13 +67,19 @@ fun UploadListScreen() {
 private fun ScreenContent(
   closeThisScreen: () -> Unit = {},
 ) {
+  val listItemsState = screenViewModel().uploads.observeAsState()
+
   return Scaffold(
     topBar = { ScreenAppBar(closeThisScreen) },
-    floatingActionButton = { CreateUploadFab() }
+    floatingActionButton = {
+      if (listItemsState.value?.isEmpty() == false) {
+        CreateUploadFab()
+      }
+    }
   ) { contentPadding ->
     BodyContent(
-      Modifier
-        .padding(contentPadding)
+      Modifier.padding(contentPadding),
+      listItemsState.value
     )
   }
 }
@@ -92,9 +98,8 @@ private fun CreateUploadFab() {
 }
 
 @Composable
-private fun BodyContent(modifier: Modifier = Modifier) {
+private fun BodyContent(modifier: Modifier = Modifier, items: List<MuxUpload>?) {
   val viewModel = screenViewModel()
-  val listItemsState = viewModel.uploads.observeAsState()
   SideEffect { viewModel.refreshList() }
 
   Box(
@@ -107,7 +112,6 @@ private fun BodyContent(modifier: Modifier = Modifier) {
       )
     )
   ) {
-    val items = listItemsState.value
     if (items == null || items.isEmpty()) {
       EmptyListContent()
     } else {
