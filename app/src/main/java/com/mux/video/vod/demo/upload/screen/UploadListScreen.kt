@@ -11,19 +11,16 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Error
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -44,6 +41,8 @@ import com.mux.video.vod.demo.upload.CreateUploadCta
 import com.mux.video.vod.demo.upload.MuxAppBar
 import com.mux.video.vod.demo.upload.THUMBNAIL_SIZE
 import com.mux.video.vod.demo.upload.model.extractThumbnail
+import com.mux.video.vod.demo.upload.ui.theme.Gray70
+import com.mux.video.vod.demo.upload.ui.theme.Gray90
 import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
 import com.mux.video.vod.demo.upload.ui.theme.TranslucentScrim
 import com.mux.video.vod.demo.upload.viewmodel.UploadListViewModel
@@ -124,76 +123,18 @@ private fun UploadList(items: List<MuxUpload>) {
   val listState = rememberLazyListState()
   ReportDrawnWhen { listState.layoutInfo.totalItemsCount > 0 }
   LazyColumn(state = listState) {
-    items(items) { ListItem(upload = it) }
+    items(items) { ListItemContent(upload = it) }
   }
 }
 
 @Composable
-private fun ListItem(upload: MuxUpload) {
-  Row(modifier = Modifier.padding(PaddingValues(vertical = 12.dp))) {
-    Box(
-      modifier = Modifier
-        .clip(CircleShape)
-        .background(Color.Gray)
-        .size(36.dp)
-    )
-    Spacer(modifier = Modifier.size(16.dp))
-    Column {
-      Box( // Status Text
-        modifier = Modifier.height(36.dp)
-      ) {
-        val uploadState = upload.currentState
-        val uploadTimeElapsed = uploadState.updatedTime - uploadState.startTime
-        val dataRateEst = uploadState.bytesUploaded / uploadTimeElapsed.toDouble()
-
-        val stateTxt = if (upload.isSuccessful) {
-          "Done!"
-        } else if (upload.error != null) {
-          "Failed"
-        } else if (upload.isRunning) {
-          "Uploading"
-        } else {
-          "Paused"
-        }
-        val stateLine = buildAnnotatedString {
-          withStyle(
-            style = SpanStyle(
-              fontWeight = FontWeight.Medium
-            )
-          ) {
-            append("$stateTxt ")
-          }
-          val df = DecimalFormat("#.00")
-          val formattedRate = df.format(dataRateEst)
-          val formattedTime = df.format(uploadTimeElapsed / 1000f)
-          append("$formattedRate Kb/s in ${formattedTime}s")
-        }
-        Text(
-          text = stateLine,
-          modifier = Modifier
-            .fillMaxWidth()
-            .align(Alignment.Center)
-        )
-      } // status text box
-      Spacer(modifier = Modifier.padding(16.dp))
-      ListItemThumbnail(upload)
-    }
-  }
-}
-
-@Composable
-private fun ListItemThumbnail(upload: MuxUpload) {
+private fun ListItemContent(upload: MuxUpload) {
   Box(
     modifier = Modifier
       .wrapContentSize(Alignment.Center)
       .fillMaxWidth()
       .height(THUMBNAIL_SIZE)
-      .border(
-        width = 1.dp,
-        color = Color.LightGray,
-        shape = RoundedCornerShape(12.dp)
-      )
-      .clip(RoundedCornerShape(12.dp)),
+      .clip(RoundedCornerShape(12.dp))
   ) {
     val imageBitmapState = remember { mutableStateOf<Bitmap?>(null) }
     val bitmap = imageBitmapState.value
@@ -206,147 +147,135 @@ private fun ListItemThumbnail(upload: MuxUpload) {
       }
     }
 
-    if (bitmap != null) {
-      Image(
-        bitmap = bitmap.asImageBitmap(),
-        contentDescription = "Video thumbnail preview",
-        contentScale = ContentScale.Crop,
-        modifier = Modifier
-          .height(THUMBNAIL_SIZE)
-          .border(
-            width = 1.dp,
-            color = Color.LightGray,
-            shape = RoundedCornerShape(12.dp),
-          )
-      )
-    } else {
-      Box(
-        modifier = Modifier
-          .height(THUMBNAIL_SIZE)
-          .border(
-            width = 1.dp,
-            color = Color.LightGray,
-            shape = RoundedCornerShape(12.dp),
-          )
-          .clip(RoundedCornerShape(12.dp)),
-      ) {
-        // empty box while the thumb loads
-      }
+    ListThumbnail(bitmap = bitmap)
+
+    if (upload.isSuccessful) {
+      // No overlay for now
+    } else if (upload.error != null) {
+      ErrorOverlay()
+    } else if (upload.isRunning) {
+      ProgressOverlay(upload)
     }
-
-    if (upload.isSuccessful) { // Success/Play
-      // Video Thumb: Full-size + Play Button
-      Box(
-        modifier = Modifier
-          .size(48.dp)
-          .clip(CircleShape)
-          .align(Alignment.Center)
-          .background(MaterialTheme.colors.secondary)
-      )
-      // TODO: ImageButton for Play Screen
-      Image(
-        Icons.Filled.PlayArrow,
-        contentDescription = "Play video",
-        colorFilter = ColorFilter.tint(MaterialTheme.colors.onSecondary),
-        modifier = Modifier
-          .size(36.dp)
-          .align(Alignment.Center)
-      )
-    } else if (upload.error != null) { // Error
-      // Video Thumb: Scrim + Retry
-      Box(
-        modifier = Modifier
-          .background(TranslucentScrim)
-          .fillMaxSize()
-      )
-      Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-          .align(Alignment.Center)
-          .fillMaxWidth()
-      ) {
-        Icon(
-          Icons.Filled.Error,
-          contentDescription = "error",
-          tint = Color.White,
-          modifier = Modifier
-            .size(36.dp)
-        )
-        Spacer(modifier = Modifier.size(12.dp))
-        Text(
-          "Upload failed!",
-          style = TextStyle(
-            color = Color.White,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 14.sp
-          ),
-        )
-        Text(
-          "Try again with another file",
-          style = TextStyle(color = Color.White, fontSize = 12.sp),
-        )
-      }
-
-    } else if (upload.isRunning) { // In-Progress State
-      val uploadState = upload.currentState
-      val uploadTimeElapsed = uploadState.updatedTime - uploadState.startTime
-      val dataRateEst = uploadState.bytesUploaded / uploadTimeElapsed.toDouble()
-      Box(
-        modifier = Modifier
-          .background(TranslucentScrim)
-          .fillMaxSize()
-      )
-      Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-          .align(Alignment.Center)
-          .fillMaxWidth()
-      ) {
-        Text(
-          "Uploading",
-          style = TextStyle(
-            color = Color.White,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 14.sp
-          ),
-        )
-        Spacer(modifier = Modifier.size(12.dp))
-        val uploadProgress = uploadState.bytesUploaded / uploadState.totalBytes.toDouble()
-        LinearProgressIndicator(
-          progress = uploadProgress.toFloat(),
-          color = MaterialTheme.colors.secondary,
-          modifier = Modifier.fillMaxWidth(0.55F)
-        )
-        Spacer(modifier = Modifier.size(6.dp))
-        Text(
-          text = "${uploadState.bytesUploaded} / ${uploadState.totalBytes}",
-          fontSize = 10.sp,
-          color = Color.LightGray
-        )
-      }
-      val stateLine = buildAnnotatedString {
-        val df = DecimalFormat("#.00")
-        val formattedRate = df.format(dataRateEst)
-        val formattedTime = df.format(uploadTimeElapsed / 1000f)
-        withStyle(
-          style = SpanStyle(
-            fontWeight = FontWeight.Medium,
-          )
-        ) {
-          append("$formattedRate Kb/s")
-        }
-        append(" in ${formattedTime}s")
-      }
-      Text(
-        stateLine,
-        style = TextStyle(color = Color.White, fontSize = 16.sp),
-        modifier = Modifier
-          .padding(12.dp)
-          .align(Alignment.BottomStart)
-      )
-    } // overlay
   } // outer Box
-} // ListItemThumbnail
+} // ListItemContent
+
+@Composable
+private fun ProgressOverlay(upload: MuxUpload) {
+  val uploadState = upload.currentState
+  val uploadTimeElapsed = uploadState.updatedTime - uploadState.startTime
+  val dataRateEst = uploadState.bytesUploaded / uploadTimeElapsed.toDouble()
+  Box(
+    modifier = Modifier
+      .background(TranslucentScrim)
+      .fillMaxSize()
+  ) {
+    Column(
+      horizontalAlignment = Alignment.CenterHorizontally,
+      modifier = Modifier.Companion
+        .align(Alignment.Center)
+        .fillMaxWidth()
+    ) {
+      Text(
+        "Uploading",
+        style = TextStyle(
+          color = Color.White,
+          fontWeight = FontWeight.SemiBold,
+          fontSize = 14.sp
+        ),
+      )
+      Spacer(modifier = Modifier.size(12.dp))
+      val uploadProgress = uploadState.bytesUploaded / uploadState.totalBytes.toDouble()
+      LinearProgressIndicator(
+        progress = uploadProgress.toFloat(),
+        color = MaterialTheme.colors.secondary,
+        modifier = Modifier.fillMaxWidth(0.55F)
+      )
+      Spacer(modifier = Modifier.size(6.dp))
+      Text(
+        text = "${uploadState.bytesUploaded} / ${uploadState.totalBytes}",
+        fontSize = 10.sp,
+        color = Color.LightGray
+      )
+    }
+    val stateLine = buildAnnotatedString {
+      val df = DecimalFormat("#.00")
+      val formattedRate = df.format(dataRateEst)
+      val formattedTime = df.format(uploadTimeElapsed / 1000f)
+      withStyle(
+        style = SpanStyle(
+          fontWeight = FontWeight.Medium,
+        )
+      ) {
+        append("$formattedRate Kb/s")
+      }
+      append(" in ${formattedTime}s")
+    }
+    Text(
+      stateLine,
+      style = TextStyle(color = Color.White, fontSize = 16.sp),
+      modifier = Modifier
+        .padding(12.dp)
+        .align(Alignment.BottomStart)
+    )
+  }
+}
+
+@Composable
+private fun ErrorOverlay() {
+  Column(
+    horizontalAlignment = Alignment.CenterHorizontally,
+    modifier = Modifier
+      .background(TranslucentScrim)
+      .fillMaxSize()
+  ) {
+    Icon(
+      Icons.Filled.Error,
+      contentDescription = "error",
+      tint = Color.White,
+      modifier = Modifier
+        .size(36.dp)
+    )
+    Spacer(modifier = Modifier.size(12.dp))
+    Text(
+      "Upload failed!",
+      style = TextStyle(
+        color = Color.White,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 14.sp
+      ),
+    )
+    Text(
+      "Try again with another file",
+      style = TextStyle(color = Color.White, fontSize = 12.sp),
+    )
+  }
+}
+
+@Composable
+private fun ListThumbnail(modifier: Modifier = Modifier, bitmap: Bitmap?) {
+  if (bitmap != null) {
+    Image(
+      bitmap = bitmap.asImageBitmap(),
+      contentDescription = "Video thumbnail preview",
+      contentScale = ContentScale.Crop,
+      modifier = modifier
+        .height(THUMBNAIL_SIZE)
+        .clip(shape = RoundedCornerShape(12.dp))
+    )
+  } else {
+    Box(
+      modifier = modifier
+        .fillMaxSize()
+        .background(color = Gray90, shape = RoundedCornerShape(12.dp))
+        .border(
+          width = 1.dp,
+          color = Gray70,
+          shape = RoundedCornerShape(12.dp),
+        )
+        .clip(RoundedCornerShape(12.dp))
+    )
+  }
+}
 
 @Composable
 private fun ScreenAppBar(closeThisScreen: () -> Unit) {
@@ -355,6 +284,14 @@ private fun ScreenAppBar(closeThisScreen: () -> Unit) {
 
 @Composable
 private fun screenViewModel(): UploadListViewModel = viewModel()
+
+@Preview(showBackground = true)
+@Composable
+fun ListItemError() {
+  MuxUploadSDKForAndroidTheme {
+    ErrorOverlay()
+  }
+}
 
 @Preview(showBackground = true)
 @Composable
