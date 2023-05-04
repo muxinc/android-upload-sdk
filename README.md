@@ -71,6 +71,7 @@ fun beginUpload(myUploadUrl: String) {
       notifyUploadFail()
     }
   }
+  upl.start()
 }
 ```
 
