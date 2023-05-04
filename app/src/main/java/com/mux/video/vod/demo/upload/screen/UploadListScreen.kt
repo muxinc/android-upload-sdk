@@ -159,20 +159,18 @@ private fun ListItemContent(upload: MuxUpload) {
     } else if (upload.error != null) {
       ErrorOverlay(modifier = Modifier.fillMaxSize())
     } else if (upload.isRunning) {
-      ProgressOverlay(upload)
+      ProgressOverlay(upload, modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth())
     }
   } // outer Box
 } // ListItemContent
 
 @Composable
-private fun ProgressOverlay(upload: MuxUpload) {
+private fun ProgressOverlay(upload: MuxUpload, modifier: Modifier = Modifier) {
   val uploadState = upload.currentState
   val uploadTimeElapsed = uploadState.updatedTime - uploadState.startTime
   val dataRateEst = uploadState.bytesUploaded / uploadTimeElapsed.toDouble()
   Box(
-    modifier = Modifier
-      .background(TranslucentScrim)
-      .fillMaxSize()
+    modifier = modifier.background(TranslucentScrim)
   ) {
     Column(
       horizontalAlignment = Alignment.CenterHorizontally,
