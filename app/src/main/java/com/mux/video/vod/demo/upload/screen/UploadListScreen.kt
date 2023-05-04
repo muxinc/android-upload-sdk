@@ -122,8 +122,13 @@ private fun BodyContent(
 private fun UploadList(items: List<MuxUpload>) {
   val listState = rememberLazyListState()
   ReportDrawnWhen { listState.layoutInfo.totalItemsCount > 0 }
-  LazyColumn(state = listState) {
-    items(items) { ListItemContent(upload = it) }
+  LazyColumn(
+    state = listState,
+    contentPadding = PaddingValues(vertical = 64.dp),
+    verticalArrangement = Arrangement.spacedBy(32.dp)
+  ) {
+    // show items in reverse order by their start time (newest-first)
+    items(items.reversed()) { ListItemContent(upload = it) }
   }
 }
 
