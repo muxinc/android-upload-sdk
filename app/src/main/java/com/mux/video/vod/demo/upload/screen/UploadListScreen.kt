@@ -17,7 +17,6 @@ import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Upload
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
@@ -28,6 +27,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mux.video.upload.api.MuxUpload
+import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.upload.CreateUploadActivity
 import com.mux.video.vod.demo.upload.CreateUploadCta
 import com.mux.video.vod.demo.upload.MuxAppBar
@@ -64,7 +65,8 @@ private fun ScreenContent(
   val listItemsState = screenViewModel().uploads.observeAsState()
 
   val activity = LocalContext.current as? Activity
-  val uploadClick: () -> Unit = { activity?.startActivity(Intent(activity, CreateUploadActivity::class.java)) }
+  val uploadClick: () -> Unit =
+    { activity?.startActivity(Intent(activity, CreateUploadActivity::class.java)) }
 
   return Scaffold(
     topBar = { ScreenAppBar(closeThisScreen) },
@@ -84,8 +86,11 @@ private fun ScreenContent(
 
 @Composable
 private fun CreateUploadFab(uploadClick: () -> Unit) {
-  FloatingActionButton(onClick = { uploadClick() }) {
-    Icon(Icons.Filled.Upload, contentDescription = "Start new upload")
+  FloatingActionButton(
+    onClick = { uploadClick() },
+    backgroundColor = MaterialTheme.colors.primary,
+  ) {
+    Icon(painterResource(id = R.drawable.ic_add), contentDescription = "Start new upload")
   }
 }
 
