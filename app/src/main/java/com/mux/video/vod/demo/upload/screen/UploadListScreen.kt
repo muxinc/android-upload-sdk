@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
@@ -175,8 +176,9 @@ fun DoneOverlay(modifier: Modifier = Modifier) {
       contentDescription = "Upload complete",
       tint = MaterialTheme.colors.onSecondary,
       modifier = modifier
-        .background(color = MaterialTheme.colors.secondary)
+        .background(color = MaterialTheme.colors.secondary, shape = CircleShape)
         .align(Alignment.Center)
+        .size(40.dp)
     )
   }
 }
@@ -310,7 +312,6 @@ fun NoUploads() {
 fun ListItemProgress() {
   MuxUploadSDKForAndroidTheme {
     Box(modifier = Modifier.height(THUMBNAIL_SIZE)){
-
     ProgressOverlay(
       uploadState = MuxUpload.Progress(
         startTime = System.currentTimeMillis() - TimeUnit.MILLISECONDS.convert(
