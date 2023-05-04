@@ -56,6 +56,7 @@ fun CreateUploadScreen() {
   val activity = context as? Activity
 
   RequestPermissionsEffect(context)
+  GetContentEffect(requestContent = true, hasPermission = hasPermissions(context))
 
   val viewModel: CreateUploadViewModel = viewModel()
   val state = viewModel.videoState.observeAsState(
@@ -94,7 +95,7 @@ private fun RequestPermissionsEffect(context: Context) {
 }
 
 @Composable
-private fun GetContentEffect(requestContent: Boolean?) {
+private fun GetContentEffect(requestContent: Boolean?, hasPermission: Boolean = true) {
   val viewModel: CreateUploadViewModel = viewModel()
   val contentUri = remember { mutableStateOf<Uri?>(null) }
   val getContent =
@@ -103,7 +104,7 @@ private fun GetContentEffect(requestContent: Boolean?) {
       uri?.let { viewModel.prepareForUpload(it) }
     }
   LaunchedEffect(key1 = Object()) {
-    if (contentUri.value == null && requestContent == true) {
+    if (contentUri.value == null && requestContent == true && hasPermission) {
       MainScope().launch { getContent.launch(arrayOf("video/*")) }
     }
   }
@@ -287,17 +288,15 @@ fun DefaultPreview() {
 }
 
 private fun hasPermissions(context: Context): Boolean {
-  val hasVideo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+  return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
     ContextCompat.checkSelfPermission(
       context,
       Manifest.permission.READ_MEDIA_VIDEO
     ) == PackageManager.PERMISSION_GRANTED
   } else {
-    true
+    ContextCompat.checkSelfPermission(
+      context,
+      Manifest.permission.READ_EXTERNAL_STORAGE
+    ) == PackageManager.PERMISSION_GRANTED
   }
-  val hasExternalStorage = ContextCompat.checkSelfPermission(
-    context,
-    Manifest.permission.READ_EXTERNAL_STORAGE
-  ) == PackageManager.PERMISSION_GRANTED
-  return hasVideo && hasExternalStorage
 }
