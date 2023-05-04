@@ -26,7 +26,7 @@ object MuxUploadSdk {
    * Logs messages from the SDK. By default, no logging is performed
    * To get logs from this SDK, use [useLogger], eg:
    * ```
-   * changeLogger(MuxVodUploadSdk.logcatLogger()) // Log to logcat
+   * useLogger(MuxVodUploadSdk.logcatLogger()) // Log to logcat
    * ```
    * If you're using another logging library, you can always implement your own [Logger]
    */

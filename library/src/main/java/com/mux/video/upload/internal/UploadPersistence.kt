@@ -29,7 +29,6 @@ internal fun writeUploadState(uploadInfo: UploadInfo, state: MuxUpload.Progress)
       bytesSent = state.bytesUploaded,
       chunkSize = uploadInfo.chunkSize,
       retriesPerChunk = uploadInfo.retriesPerChunk,
-      retryBaseTimeMs = uploadInfo.retryBaseTimeMs,
       optOut = uploadInfo.optOut,
     )
   )
@@ -51,10 +50,8 @@ internal fun readAllCachedUploads(): List<UploadInfo> {
     UploadInfo(
       remoteUri = Uri.parse(it.url),
       file =  it.file,
-      videoMimeType = "video/*",
       chunkSize = it.chunkSize,
       retriesPerChunk = it.retriesPerChunk,
-      retryBaseTimeMs = 500,
       optOut = it.optOut,
       uploadJob = null,
       successFlow = null,
@@ -146,7 +143,6 @@ private data class UploadEntry(
   val url: String,
   val chunkSize: Int,
   val retriesPerChunk: Int,
-  val retryBaseTimeMs: Long,
   val optOut: Boolean,
   val savedAtLocalMs: Long,
   val state: Int,
@@ -176,7 +172,6 @@ private fun JSONObject.parsePersistenceEntry(): UploadEntry {
     chunkSize = data.optInt("chunk_size"),
     url = data.optString("url"),
     retriesPerChunk = data.optInt("retries_per_chunk"),
-    retryBaseTimeMs = 500,
     optOut = data.optBoolean("opt_out"),
     savedAtLocalMs = data.optLong("saved_at_local_ms"),
     state = data.optInt("state"),

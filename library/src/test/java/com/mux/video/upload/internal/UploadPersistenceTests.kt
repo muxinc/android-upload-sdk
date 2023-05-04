@@ -131,9 +131,7 @@ class UploadPersistenceTests : AbsRobolectricTest() {
   private fun uploadInfo(name: String = "a/file") = UploadInfo(
     file = File(name).absoluteFile,
     remoteUri = Uri.parse("https://www.mux.com/$name"),
-    videoMimeType = "video/*",
     chunkSize = 2,
-    retryBaseTimeMs = 500,
     retriesPerChunk = 3,
     optOut = false,
     uploadJob = null,
