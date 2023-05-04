@@ -16,7 +16,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Error
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.runtime.Composable
@@ -32,11 +31,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -44,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mux.video.vod.demo.R
+import com.mux.video.vod.demo.upload.MuxAppBar
 import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
 import com.mux.video.vod.demo.upload.viewmodel.CreateUploadViewModel
 import kotlinx.coroutines.MainScope
@@ -102,8 +102,8 @@ private fun GetContentEffect(requestContent: Boolean?) {
       contentUri.value = uri
       uri?.let { viewModel.prepareForUpload(it) }
     }
-  if (contentUri.value == null && requestContent == true) {
-    LaunchedEffect(key1 = Object()) {
+  LaunchedEffect(key1 = Object()) {
+    if (contentUri.value == null && requestContent == true) {
       MainScope().launch { getContent.launch(arrayOf("video/*")) }
     }
   }
@@ -253,44 +253,23 @@ private fun BodyContent(state: CreateUploadViewModel.State, modifier: Modifier =
 
 @Composable
 private fun ScreenAppBar(closeThisScreen: () -> Unit, videoFile: File?) {
-  val viewModel: CreateUploadViewModel = viewModel()
-  val enableAction = videoFile != null
-  TopAppBar(
-    title = { Text(text = stringResource(R.string.title_activity_create_upload)) },
-    navigationIcon = {
+  MuxAppBar(
+    startContent = {
       IconButton(
-        onClick = {
-          closeThisScreen()
-        },
-        enabled = videoFile != null
+        onClick = { closeThisScreen() },
+        modifier = Modifier.size(20.dp)
       ) {
-        Icon(
-          Icons.Filled.Close,
-          contentDescription = stringResource(id = android.R.string.cancel),
-        )
+        Icon(painter = painterResource(id = R.drawable.ic_close), contentDescription = "go back")
       }
     },
-    actions = {
-      TextButton(
-        onClick = {
-          viewModel.beginUpload()
-          closeThisScreen()
-        },
-        enabled = enableAction
-      ) {
-        Text(
-          text = stringResource(id = R.string.action_create_upload),
-          style = TextStyle(color = MaterialTheme.colors.onPrimary),
-          modifier = Modifier.alpha(
-            if (enableAction) {
-              1.0F
-            } else {
-              0.6F
-            }
-          )
-        )
-      }
-    },
+    centerContent = {
+      Text(
+        "Create a New Upload",
+        textAlign = TextAlign.Center,
+        fontWeight = FontWeight.W700,
+        color = MaterialTheme.colors.onPrimary
+      )
+    }
   )
 }
 

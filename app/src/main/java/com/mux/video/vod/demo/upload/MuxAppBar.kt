@@ -1,10 +1,7 @@
 package com.mux.video.vod.demo.upload
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.Icon
 import androidx.compose.material.LocalContentAlpha
 import androidx.compose.material.TopAppBar
@@ -20,28 +17,29 @@ import com.mux.video.vod.demo.upload.ui.theme.Gray80
 import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
 
 @Composable
-fun AppBar(
+fun MuxAppBar(
+  modifier: Modifier = Modifier,
   startContent: @Composable () -> Unit,
   centerContent: @Composable () -> Unit,
-  modifier: Modifier = Modifier,
 ) {
   AppBarInner(
     startContent = startContent,
+    centerContent = centerContent,
     modifier = modifier
   )
 }
 
 @Composable
-fun AppBar(
+fun MuxAppBar(
   modifier: Modifier = Modifier,
 ) {
   AppBarInner(modifier = modifier)
 }
 
 @Composable
-fun AppBar(
-  startContent: @Composable () -> Unit,
+fun MuxAppBar(
   modifier: Modifier = Modifier,
+  startContent: @Composable () -> Unit,
 ) {
   AppBarInner(
     startContent = startContent,
@@ -59,7 +57,7 @@ private fun AppBarInner(
     elevation = 0.dp,
     modifier = modifier
   ) {
-    AtFullLocalAlpha {
+    AtFullAlpha {
       Box(
         modifier = Modifier.fillMaxSize(),
       ) {
@@ -78,7 +76,7 @@ private fun AppBarInner(
         }
 
         if (startContent != null) {
-          Box(modifier = Modifier.align(Alignment.Center)) {
+          Box(modifier = Modifier.align(Alignment.CenterStart).padding(16.dp)) {
             startContent()
           }
         }
@@ -88,7 +86,7 @@ private fun AppBarInner(
 }
 
 @Composable
-private fun AtFullLocalAlpha(it: @Composable () -> Unit) {
+private fun AtFullAlpha(it: @Composable () -> Unit) {
   CompositionLocalProvider(LocalContentAlpha provides 1F) {
     it()
   }
@@ -98,7 +96,7 @@ private fun AtFullLocalAlpha(it: @Composable () -> Unit) {
 @Composable
 fun Preview() {
   MuxUploadSDKForAndroidTheme(darkTheme = true) {
-    AppBar(
+    MuxAppBar(
       modifier = Modifier
     )
   }

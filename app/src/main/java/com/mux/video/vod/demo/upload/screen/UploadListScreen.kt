@@ -46,7 +46,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.toPx
-import com.mux.video.vod.demo.upload.AppBar
+import com.mux.video.vod.demo.upload.MuxAppBar
 import com.mux.video.vod.demo.upload.CreateUploadActivity
 import com.mux.video.vod.demo.upload.model.extractThumbnail
 import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
@@ -393,7 +393,7 @@ private fun ListItemThumbnail(upload: MuxUpload) {
 
 @Composable
 private fun ScreenAppBar(closeThisScreen: () -> Unit) {
-  AppBar()
+  MuxAppBar()
 }
 
 @Composable
