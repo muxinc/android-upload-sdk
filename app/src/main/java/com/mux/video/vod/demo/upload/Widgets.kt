@@ -67,7 +67,13 @@ private fun AppBarInner(
       Box(
         modifier = Modifier.fillMaxSize(),
       ) {
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Gray80).align(Alignment.BottomCenter))
+        Box(
+          Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(Gray80)
+            .align(Alignment.BottomCenter)
+        )
 
         if (centerContent != null) {
           Box(modifier = Modifier.align(Alignment.Center)) {
@@ -82,12 +88,31 @@ private fun AppBarInner(
         }
 
         if (startContent != null) {
-          Box(modifier = Modifier.align(Alignment.CenterStart).padding(16.dp)) {
+          Box(
+            modifier = Modifier
+              .align(Alignment.CenterStart)
+              .padding(16.dp)
+          ) {
             startContent()
           }
         }
       }
     }
+  }
+}
+
+@Composable
+fun DefaultButton(
+  modifier: Modifier = Modifier,
+  onClick: () -> Unit,
+  content: @Composable () -> Unit
+) {
+  Button(
+    onClick = onClick,
+    modifier = modifier
+      .height(40.dp)
+  ) {
+    content()
   }
 }
 

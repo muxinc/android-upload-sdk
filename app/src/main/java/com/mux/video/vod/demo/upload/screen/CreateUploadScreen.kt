@@ -31,15 +31,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.upload.CreateUploadCta
+import com.mux.video.vod.demo.upload.DefaultButton
 import com.mux.video.vod.demo.upload.MuxAppBar
 import com.mux.video.vod.demo.upload.THUMBNAIL_SIZE
-import com.mux.video.vod.demo.upload.ui.theme.*
+import com.mux.video.vod.demo.upload.ui.theme.Gray30
+import com.mux.video.vod.demo.upload.ui.theme.Gray70
+import com.mux.video.vod.demo.upload.ui.theme.Gray90
+import com.mux.video.vod.demo.upload.ui.theme.White
 import com.mux.video.vod.demo.upload.viewmodel.CreateUploadViewModel
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
@@ -57,7 +60,15 @@ fun CreateUploadScreen() {
   val state = viewModel.videoState.observeAsState(
     CreateUploadViewModel.State(CreateUploadViewModel.PrepareState.NONE, null)
   )
-  ScreenContent(closeThisScreen = { activity?.finish() }, screenState = state.value)
+  ScreenContent(
+    closeThisScreen = {
+      activity?.finish()
+    },
+    screenState = state.value,
+    startUpload = {
+      viewModel.beginUpload()
+      activity?.finish()
+    })
 }
 
 @Composable
@@ -108,6 +119,7 @@ private fun GetContentEffect(requestContent: Boolean?, hasPermission: Boolean = 
 @Composable
 private fun ScreenContent(
   closeThisScreen: () -> Unit = {},
+  startUpload: () -> Unit = {},
   screenState: CreateUploadViewModel.State
 ) {
   return Scaffold(
@@ -118,29 +130,54 @@ private fun ScreenContent(
     BodyContent(
       screenState,
       Modifier.padding(contentPadding),
-      closeThisScreen
+      closeThisScreen,
+      startUpload
     )
   }
 }
 
 @Composable
-private fun BodyContent(state: CreateUploadViewModel.State, modifier: Modifier = Modifier, closeThisScreen: () -> Unit) {
+private fun BodyContent(
+  state: CreateUploadViewModel.State,
+  modifier: Modifier = Modifier,
+  closeThisScreen: () -> Unit,
+  startUpload: () -> Unit
+) {
   Column(
+    verticalArrangement = Arrangement.SpaceBetween,
     modifier = modifier
-      .fillMaxWidth()
-      .wrapContentSize(Alignment.TopStart)
-      .padding(horizontal = 20.dp)
+      .padding(top = 64.dp, bottom = 12.dp)
+      .fillMaxSize()
   ) {
     if (state.thumbnail != null) {
-      ChosenThumbnail(thumbnail = state.thumbnail, modifier = Modifier.padding(top = 64.dp))
+      ChosenThumbnail(
+        thumbnail = state.thumbnail,
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp)
+      )
+      //Spacer(modifier = Modifier.fillMaxHeight())
+      // TODO: Button
+      DefaultButton(
+        onClick = startUpload,
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 12.dp)
+      ) {
+        Text(text = "Upload")
+      }
     } else {
-      ThumbnailPlaceHolder(state = state, modifier = Modifier.padding(top = 64.dp))
+      ThumbnailPlaceHolder(
+        state = state,
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp)
+      )
     } // Box
   }
 }
 
 @Composable
-private fun ThumbnailPlaceHolder(state: CreateUploadViewModel.State, modifier: Modifier = Modifier) {
+private fun ThumbnailPlaceHolder(
+  state: CreateUploadViewModel.State,
+  modifier: Modifier = Modifier
+) {
   Box(
     modifier = modifier
       .wrapContentSize(Alignment.Center)
@@ -148,16 +185,10 @@ private fun ThumbnailPlaceHolder(state: CreateUploadViewModel.State, modifier: M
       .height(THUMBNAIL_SIZE)
   ) {
     when (state.prepareState) {
-      CreateUploadViewModel.PrepareState.ERROR -> {
-        ErrorPlaceHolder()
-      }
-      CreateUploadViewModel.PrepareState.PREPARING -> {
-        ProgressPlaceHolder()
-      }
-      else -> {
-        CtaPlaceHolder()
-      } // else ->
-    } // when (state.prepareState)
+      CreateUploadViewModel.PrepareState.ERROR -> { ErrorPlaceHolder() }
+      CreateUploadViewModel.PrepareState.PREPARING -> { ProgressPlaceHolder() }
+      else -> { CtaPlaceHolder() }
+    }
   }
 }
 
@@ -257,19 +288,6 @@ private fun ScreenAppBar(closeThisScreen: () -> Unit, videoFile: File?) {
       )
     }
   )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun DefaultPreview() {
-  MuxUploadSDKForAndroidTheme {
-    ScreenContent(
-      screenState = CreateUploadViewModel.State(
-        prepareState = CreateUploadViewModel.PrepareState.NONE,
-        thumbnail = null
-      ),
-    )
-  }
 }
 
 private fun hasPermissions(context: Context): Boolean {
