@@ -7,7 +7,6 @@ import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,16 +23,11 @@ import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -44,10 +38,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mux.video.upload.api.MuxUpload
-import com.mux.video.vod.demo.R
-import com.mux.video.vod.demo.toPx
-import com.mux.video.vod.demo.upload.MuxAppBar
 import com.mux.video.vod.demo.upload.CreateUploadActivity
+import com.mux.video.vod.demo.upload.CreateUploadCta
+import com.mux.video.vod.demo.upload.MuxAppBar
+import com.mux.video.vod.demo.upload.THUMBNAIL_SIZE
 import com.mux.video.vod.demo.upload.model.extractThumbnail
 import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
 import com.mux.video.vod.demo.upload.ui.theme.TranslucentScrim
@@ -69,36 +63,38 @@ private fun ScreenContent(
 ) {
   val listItemsState = screenViewModel().uploads.observeAsState()
 
+  val activity = LocalContext.current as? Activity
+  val uploadClick: () -> Unit = { activity?.startActivity(Intent(activity, CreateUploadActivity::class.java)) }
+
   return Scaffold(
     topBar = { ScreenAppBar(closeThisScreen) },
     floatingActionButton = {
       if (listItemsState.value?.isEmpty() == false) {
-        CreateUploadFab()
+        CreateUploadFab(uploadClick)
       }
     }
   ) { contentPadding ->
     BodyContent(
       Modifier.padding(contentPadding),
-      listItemsState.value
+      listItemsState.value,
+      uploadClick
     )
   }
 }
 
 @Composable
-private fun CreateUploadFab() {
-  val activity = LocalContext.current as? Activity
-
-  FloatingActionButton(onClick = {
-    activity?.startActivity(
-      Intent(activity, CreateUploadActivity::class.java)
-    )
-  }) {
+private fun CreateUploadFab(uploadClick: () -> Unit) {
+  FloatingActionButton(onClick = { uploadClick() }) {
     Icon(Icons.Filled.Upload, contentDescription = "Start new upload")
   }
 }
 
 @Composable
-private fun BodyContent(modifier: Modifier = Modifier, items: List<MuxUpload>?) {
+private fun BodyContent(
+  modifier: Modifier = Modifier,
+  items: List<MuxUpload>?,
+  uploadClick: () -> Unit
+) {
   val viewModel = screenViewModel()
   SideEffect { viewModel.refreshList() }
 
@@ -113,52 +109,10 @@ private fun BodyContent(modifier: Modifier = Modifier, items: List<MuxUpload>?) 
     )
   ) {
     if (items == null || items.isEmpty()) {
-      EmptyListContent()
+      CreateUploadCta { uploadClick() }
     } else {
       UploadList(items)
     }
-  }
-}
-
-@Composable
-private fun EmptyListContent(modifier: Modifier = Modifier) {
-  val ctx = LocalContext.current
-  val contentColor = MaterialTheme.colors.onBackground
-  val dashStrokeStyle = Stroke(
-    width = 1.dp.toPx(ctx),
-    pathEffect = PathEffect.dashPathEffect(floatArrayOf(8.dp.toPx(ctx), 8.dp.toPx(ctx)), 0f)
-  )
-  Column(
-    horizontalAlignment = Alignment.CenterHorizontally,
-    verticalArrangement = Arrangement.Center,
-    modifier = modifier
-      .fillMaxWidth()
-      .height(THUMBNAIL_SIZE)
-      .background(MaterialTheme.colors.background)
-      .drawBehind {
-        drawRoundRect(
-          color = contentColor,
-          cornerRadius = CornerRadius(12.dp.toPx(ctx)),
-          style = dashStrokeStyle
-        )
-      }
-      .clickable {
-        ctx.startActivity(Intent(ctx, CreateUploadActivity::class.java))
-      }
-  ) {
-    Icon(
-      painter = painterResource(id = R.drawable.ic_add),
-      contentDescription = "",
-      tint = MaterialTheme.colors.onBackground
-    )
-    Spacer(
-      modifier = Modifier.size(8.dp)
-    )
-    Text(
-      text = "Tap to upload a Video",
-      fontWeight = FontWeight.W700,
-      color = contentColor
-    )
   }
 }
 
@@ -403,7 +357,7 @@ private fun screenViewModel(): UploadListViewModel = viewModel()
 @Composable
 fun NoUploads() {
   MuxUploadSDKForAndroidTheme {
-    EmptyListContent()
+    CreateUploadCta { }
   }
 }
 
@@ -414,5 +368,3 @@ fun ListScreenPreview() {
     ScreenContent {}
   }
 }
-
-val THUMBNAIL_SIZE = 228.dp

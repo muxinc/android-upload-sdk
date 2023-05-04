@@ -17,7 +17,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Error
-import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.livedata.observeAsState
@@ -25,7 +24,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -43,8 +41,10 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mux.video.vod.demo.R
+import com.mux.video.vod.demo.upload.CreateUploadCta
 import com.mux.video.vod.demo.upload.MuxAppBar
-import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
+import com.mux.video.vod.demo.upload.THUMBNAIL_SIZE
+import com.mux.video.vod.demo.upload.ui.theme.*
 import com.mux.video.vod.demo.upload.viewmodel.CreateUploadViewModel
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
@@ -199,12 +199,7 @@ private fun BodyContent(state: CreateUploadViewModel.State, modifier: Modifier =
         contentDescription = "Preview of the video thumbnail",
         contentScale = ContentScale.Crop,
         modifier = Modifier
-          .height(256.dp)
-          .border(
-            width = 1.dp,
-            color = Color.LightGray,
-            shape = RoundedCornerShape(12.dp),
-          )
+          .height(THUMBNAIL_SIZE)
           .clip(RoundedCornerShape(12.dp)),
       )
     } else {
@@ -212,39 +207,66 @@ private fun BodyContent(state: CreateUploadViewModel.State, modifier: Modifier =
         modifier = Modifier
           .wrapContentSize(Alignment.Center)
           .fillMaxWidth()
-          .height(256.dp)
-          .border(
-            width = 1.dp,
-            color = Color.LightGray,
-            shape = RoundedCornerShape(12.dp),
-          )
+          .height(THUMBNAIL_SIZE)
+                // TODO: Only some children have a solid border
       ) {
         when (state.prepareState) {
           CreateUploadViewModel.PrepareState.ERROR -> {
-            Icon(
-              Icons.Outlined.Error,
-              contentDescription = "",
+            Column(
+              horizontalAlignment = Alignment.CenterHorizontally,
+              verticalArrangement = Arrangement.Center,
               modifier = Modifier
-                .align(Alignment.Center)
-                .size(48.dp),
-            )
+                .fillMaxSize()
+                .background(color = Gray90, shape = RoundedCornerShape(12.dp))
+                .border(
+                  width = 1.dp,
+                  color = Gray70,
+                  shape = RoundedCornerShape(12.dp),
+                )
+            ) {
+              Icon(
+                Icons.Outlined.Error,
+                contentDescription = "",
+                tint = Gray30,
+                modifier = Modifier
+                  .size(48.dp),
+              )
+              Spacer(modifier = Modifier.size(8.dp))
+              Text(
+                text = "An error occurred while processing your file. Please try another",
+                fontWeight = FontWeight.W700,
+                textAlign = TextAlign.Center,
+                color = White,
+                modifier = Modifier.padding(12.dp)
+              )
+            }
           }
           CreateUploadViewModel.PrepareState.PREPARING -> {
-            CircularProgressIndicator(
+            Box(
               modifier = Modifier
-                .align(Alignment.Center)
-                .size(48.dp)
-            )
+                .fillMaxSize()
+                .background(color = Gray90, shape = RoundedCornerShape(12.dp))
+                .border(
+                  width = 1.dp,
+                  color = Gray70,
+                  shape = RoundedCornerShape(12.dp),
+                )
+            ) {
+              CircularProgressIndicator(
+                modifier = Modifier
+                  .align(Alignment.Center)
+                  .size(48.dp),
+                color = Gray30
+              )
+            }
           }
           else -> {
-            Icon(
-              Icons.Outlined.UploadFile,
-              contentDescription = "",
-              modifier = Modifier
-                .alpha(0.6F)
-                .align(Alignment.Center)
-                .size(48.dp),
-            )
+            val viewModel: CreateUploadViewModel = viewModel()
+            val requestContent = remember { mutableStateOf(false) }
+            GetContentEffect(requestContent.value)
+            CreateUploadCta() {
+              requestContent.value = viewModel.videoState.value?.chosenFile == null
+            }
           } // else ->
         } // when (state.prepareState)
       } // Box Content
