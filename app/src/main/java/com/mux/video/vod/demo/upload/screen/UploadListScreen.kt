@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
@@ -23,6 +24,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.OnGloballyPositionedModifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
@@ -148,9 +150,8 @@ private fun ListItemContent(upload: MuxUpload) {
     }
 
     ListThumbnail(bitmap = bitmap)
-
     if (upload.isSuccessful) {
-      // No overlay for now
+      DoneOverlay()
     } else if (upload.error != null) {
       ErrorOverlay(modifier = Modifier.fillMaxSize())
     } else if (upload.isRunning) {
@@ -163,6 +164,22 @@ private fun ListItemContent(upload: MuxUpload) {
     }
   } // outer Box
 } // ListItemContent
+
+@Composable
+fun DoneOverlay(modifier: Modifier = Modifier) {
+  Box(
+    modifier = modifier.fillMaxSize()
+  ) {
+    Icon(
+      Icons.Filled.Check,
+      contentDescription = "Upload complete",
+      tint = MaterialTheme.colors.onSecondary,
+      modifier = modifier
+        .background(color = MaterialTheme.colors.secondary)
+        .align(Alignment.Center)
+    )
+  }
+}
 
 @Composable
 private fun ProgressOverlay(uploadState: MuxUpload.Progress, modifier: Modifier = Modifier) {
