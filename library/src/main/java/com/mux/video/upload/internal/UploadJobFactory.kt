@@ -35,6 +35,8 @@ internal class UploadJobFactory private constructor(
   private val logger get() = MuxUploadSdk.logger
 
   companion object {
+    private const val MIME_TYPE_GENERIC_VIDEO = "video/*"
+
     @JvmSynthetic
     internal fun create() = UploadJobFactory()
 
@@ -47,8 +49,8 @@ internal class UploadJobFactory private constructor(
     ): ChunkWorker = ChunkWorker.create(
       chunk = chunk,
       maxRetries = uploadInfo.retriesPerChunk,
-      videoMimeType = uploadInfo.videoMimeType,
       remoteUri = uploadInfo.remoteUri,
+      videoMimeType = MIME_TYPE_GENERIC_VIDEO,
       progressFlow = progressFlow,
     )
   }

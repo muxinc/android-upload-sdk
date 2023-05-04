@@ -235,10 +235,8 @@ class MuxUpload private constructor(
       // Default values
       remoteUri = uploadUri,
       file = videoFile,
-      videoMimeType = "video/*",
       chunkSize = 8 * 1024 * 1024, // GCP recommends at least 8M chunk size
       retriesPerChunk = 3,
-      retryBaseTimeMs = 500,
       optOut = false,
       uploadJob = null,
       successFlow = null,
@@ -266,12 +264,6 @@ class MuxUpload private constructor(
     @Suppress("unused")
     fun retriesPerChunk(retries: Int): Builder {
       uploadInfo.update(retriesPerChunk = retries)
-      return this
-    }
-
-    @Suppress("unused")
-    fun backoffBaseTime(backoffTimeMillis: Long): Builder {
-      uploadInfo.update(retryBaseTimeMs = backoffTimeMillis)
       return this
     }
 
