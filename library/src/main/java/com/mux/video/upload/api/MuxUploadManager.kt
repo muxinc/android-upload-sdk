@@ -1,5 +1,6 @@
 package com.mux.video.upload.api
 
+import android.util.Log
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.*
@@ -154,14 +155,6 @@ object MuxUploadManager {
   private fun newObserveProgressJob(upload: UploadInfo): Job {
     // This job has up to three children, one for each of the state flows on UploadInfo
     return mainScope.launch {
-      upload.progressFlow?.let { flow ->
-        launch {
-          flow.collect { state ->
-            launch(Dispatchers.IO) { writeUploadState(upload, state) }
-          }
-        }
-      }
-
       upload.successFlow?.let { flow -> launch { flow.collect { jobFinished(upload) } } }
     }
   }
