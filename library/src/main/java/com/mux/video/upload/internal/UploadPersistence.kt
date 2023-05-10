@@ -3,6 +3,7 @@ package com.mux.video.upload.internal
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
+import android.util.Log
 import com.mux.video.upload.api.MuxUpload
 import org.json.JSONArray
 import org.json.JSONObject
@@ -46,18 +47,20 @@ internal fun forgetUploadState(uploadInfo: UploadInfo) {
 
 @JvmSynthetic
 internal fun readAllCachedUploads(): List<UploadInfo> {
-  return UploadPersistence.readEntries().map { it.value }.map {
-    UploadInfo(
-      remoteUri = Uri.parse(it.url),
-      file =  it.file,
-      chunkSize = it.chunkSize,
-      retriesPerChunk = it.retriesPerChunk,
-      optOut = it.optOut,
-      uploadJob = null,
-      successFlow = null,
-      progressFlow = null,
-      errorFlow = null,
-    )
+  return UploadPersistence.readEntries()
+    .map { it.value }
+    .map {
+      UploadInfo(
+        remoteUri = Uri.parse(it.url),
+        file =  it.file,
+        chunkSize = it.chunkSize,
+        retriesPerChunk = it.retriesPerChunk,
+        optOut = it.optOut,
+        uploadJob = null,
+        successFlow = null,
+        progressFlow = null,
+        errorFlow = null,
+      )
   }
 }
 
@@ -100,6 +103,7 @@ private object UploadPersistence {
   }
 
   @Throws
+  @Synchronized
   private fun writeEntries(entries: Map<String, UploadEntry>) {
     val entriesJson = JSONArray()
     entries.forEach { entriesJson.put(it.value.toJson()) }
@@ -107,6 +111,7 @@ private object UploadPersistence {
   }
 
   @Throws
+  @Synchronized
   private fun fetchEntries(): MutableMap<String, UploadEntry> {
     val jsonStr = prefs.getString(LIST_KEY, null)
     return if (jsonStr == null) {
