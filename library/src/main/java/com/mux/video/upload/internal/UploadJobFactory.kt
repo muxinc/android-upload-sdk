@@ -1,11 +1,12 @@
 package com.mux.video.upload.internal
 
-import android.os.SystemClock
+import android.util.Log
 import com.mux.video.upload.BuildConfig
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import java.io.BufferedInputStream
 import java.io.FileInputStream
@@ -34,6 +35,8 @@ internal class UploadJobFactory private constructor(
   private val logger get() = MuxUploadSdk.logger
 
   companion object {
+    private const val MIME_TYPE_GENERIC_VIDEO = "video/*"
+
     @JvmSynthetic
     internal fun create() = UploadJobFactory()
 
@@ -46,8 +49,8 @@ internal class UploadJobFactory private constructor(
     ): ChunkWorker = ChunkWorker.create(
       chunk = chunk,
       maxRetries = uploadInfo.retriesPerChunk,
-      videoMimeType = uploadInfo.videoMimeType,
       remoteUri = uploadInfo.remoteUri,
+      videoMimeType = MIME_TYPE_GENERIC_VIDEO,
       progressFlow = progressFlow,
     )
   }
@@ -65,6 +68,7 @@ internal class UploadJobFactory private constructor(
       val startTime = System.currentTimeMillis()
       try {
         var totalBytesSent: Long = getAlreadyTransferredBytes(uploadInfo)
+        Log.d("UploadJobFactory", "totalBytesSent: $totalBytesSent")
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)
 
         // If we're resuming, we must skip to the current file pos
@@ -115,13 +119,13 @@ internal class UploadJobFactory private constructor(
               } // chunkProgressChannel.collect {
             }
 
-            val chunkResult = createWorker(chunk, uploadInfo, chunkProgressFlow).upload()
+            val chunkFinalState = createWorker(chunk, uploadInfo, chunkProgressFlow).upload()
 
-            totalBytesSent += chunkResult.bytesUploaded
+            totalBytesSent += chunkFinalState.bytesUploaded
             val intermediateProgress = MuxUpload.Progress(
               bytesUploaded = totalBytesSent,
               totalBytes = fileSize,
-              updatedTime = chunkResult.updatedTime,
+              updatedTime = chunkFinalState.updatedTime,
               startTime = startTime,
             )
             overallProgressFlow.emit(intermediateProgress)
@@ -153,7 +157,7 @@ internal class UploadJobFactory private constructor(
         val finalState = createFinalState(fileSize, startTime)
         overallProgressFlow.emit(finalState)
         errorFlow.emit(e)
-        MainScope().launch { MuxUploadManager.jobFinished(uploadInfo, e !is CancellationException) }
+        MainScope().launch { MuxUploadManager.jobFinished(uploadInfo, false) }
         Result.failure(e)
       } finally {
         @Suppress("BlockingMethodInNonBlockingContext") // the streams we use don't block on close
@@ -180,5 +184,10 @@ internal class UploadJobFactory private constructor(
 
   private fun getAlreadyTransferredBytes(file: UploadInfo): Long = readLastByteForFile(file)
 
-  private fun <T> callbackFlow() = MutableSharedFlow<T>()
+  private fun <T> callbackFlow() =
+    MutableSharedFlow<T>(
+      replay = 1,
+      extraBufferCapacity = 2, // Some slop for UI to miss events
+      onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
 }

@@ -1,19 +1,23 @@
-package com.mux.video.vod.demo.mediastore
+package com.mux.video.vod.demo.upload.viewmodel
 
 import android.app.Application
 import android.database.Cursor
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
-import android.provider.MediaStore.Video.VideoColumns
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.mux.video.upload.api.MuxUpload
-import com.mux.video.vod.demo.mediastore.model.UploadingVideo
+import com.mux.video.vod.demo.backend.ImaginaryBackend
+import com.mux.video.vod.demo.upload.model.MediaStoreVideo
+import com.mux.video.vod.demo.upload.model.extractThumbnail
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.joda.time.DateTime
@@ -22,39 +26,47 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 
-/**
- * Queries the device's content provider for saved videos to upload
- */
-class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel(app) {
+class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app) {
 
-  val uploads: LiveData<List<MuxUpload>> by this::innerUploads
-  private val innerUploads = MutableLiveData<List<MuxUpload>>(listOf())
-  private val uploadList: MutableList<MuxUpload> = mutableListOf()
+  val videoState: LiveData<State> by this::videoStateLiveData
+  private val videoStateLiveData =
+    MutableLiveData(State(prepareState = PrepareState.NONE, thumbnail = null))
 
-  fun beginUpload(contentUri: Uri) {
-    viewModelScope.launch {
-      Log.d(javaClass.simpleName, "Beginning upload of uri $contentUri")
-      val copiedFile = copyIntoTempFile(contentUri)
-      Log.d(javaClass.simpleName, "Copied file to $copiedFile")
+  private var prepareJob: Job? = null
 
-      val upl = MuxUpload.Builder(MediaStoreVideosActivity.PUT_URL, copiedFile).build()
-      upl.addProgressListener {
-        //Log.v(javaClass.simpleName, "Upload progress: ${it.bytesUploaded} / ${it.totalBytes}")
-        innerUploads.postValue(uploadList)
+  fun prepareForUpload(contentUri: Uri) {
+    videoStateLiveData.value = State(PrepareState.PREPARING, null)
+
+    prepareJob = viewModelScope.launch {
+      try {
+        val uploadUri = ImaginaryBackend.createUploadUrl().let { Uri.parse(it) }
+        val videoFile = copyIntoTempFile(contentUri)
+        val thumbnailBitmap = extractThumbnail(videoFile) // val thumbnailBitmap = ...
+
+        videoStateLiveData.postValue(
+          State(
+            PrepareState.READY,
+            videoFile,
+            thumbnailBitmap,
+            uploadUri
+          )
+        )
+      } catch (e: Exception) {
+        Log.e("CreateUploadViewModel", "Error preparing upload", e)
+        videoStateLiveData.value = State(PrepareState.ERROR, null)
       }
-      upl.addResultListener {
-        if (it.isSuccess) {
-          Log.w(javaClass.simpleName, "YAY! Uploaded the file: $contentUri")
-          Log.i(javaClass.simpleName, "final state is $it")
-          innerUploads.postValue(uploadList)
-        } else {
-          innerUploads.postValue(uploadList)
-        }
-      }
-      uploadList += upl
-      innerUploads.postValue(uploadList)
+    } // prepareJob = viewModelScope.launch { ...
+  }
 
-      upl.start()
+  fun beginUpload() {
+    if (((videoState.value?.prepareState) ?: PrepareState.NONE) == PrepareState.READY) {
+      // If the state is READY, these values are expected to be filled
+      MuxUpload.Builder(
+        videoState.value!!.uploadUri!!,
+        videoState.value!!.chosenFile!!
+      ).build()
+        // Force restart when creating brand new uploads (because we're making new Direct uploads)
+        .start(forceRestart = true)
     }
   }
 
@@ -98,11 +110,10 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
     return destFile
   }
 
-  // Might need something like this
-  private suspend fun fetchVideos(): List<UploadingVideo> {
+  private suspend fun fetchVideos(): List<MediaStoreVideo> {
     fun ownerPackageName(cursor: Cursor): String {
       return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        cursor.getString(VideoColumns.OWNER_PACKAGE_NAME) ?: "??"
+        cursor.getString(MediaStore.Video.VideoColumns.OWNER_PACKAGE_NAME) ?: "??"
       } else {
         "??"
       }
@@ -111,18 +122,18 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
     fun columns(): Array<String> {
       return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         arrayOf(
-          VideoColumns.DISPLAY_NAME,
-          VideoColumns.DATA,
-          VideoColumns.OWNER_PACKAGE_NAME,
-          VideoColumns.DATE_ADDED,
-          VideoColumns.DATE_TAKEN
+          MediaStore.Video.VideoColumns.DISPLAY_NAME,
+          MediaStore.Video.VideoColumns.DATA,
+          MediaStore.Video.VideoColumns.OWNER_PACKAGE_NAME,
+          MediaStore.Video.VideoColumns.DATE_ADDED,
+          MediaStore.Video.VideoColumns.DATE_TAKEN
         )
       } else {
         arrayOf(
-          VideoColumns.DISPLAY_NAME,
-          VideoColumns.DATA,
-          VideoColumns.DATE_ADDED,
-          VideoColumns.DATE_TAKEN
+          MediaStore.Video.VideoColumns.DISPLAY_NAME,
+          MediaStore.Video.VideoColumns.DATA,
+          MediaStore.Video.VideoColumns.DATE_ADDED,
+          MediaStore.Video.VideoColumns.DATE_TAKEN
         )
       }
     }
@@ -141,18 +152,18 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
         return listOf()
       }
 
-      val videos = mutableListOf<UploadingVideo>()
+      val videos = mutableListOf<MediaStoreVideo>()
       cursor.moveToFirst()
       do {
-        val title = cursor.getString(VideoColumns.DISPLAY_NAME) ?: "[no name]"
-        val file = cursor.getString(VideoColumns.DATA) ?: continue
+        val title = cursor.getString(MediaStore.Video.VideoColumns.DISPLAY_NAME) ?: "[no name]"
+        val file = cursor.getString(MediaStore.Video.VideoColumns.DATA) ?: continue
         val fromApp = ownerPackageName(cursor)
-        val dateMillis = cursor.getLong(VideoColumns.DATE_ADDED)
+        val dateMillis = cursor.getLong(MediaStore.Video.VideoColumns.DATE_ADDED)
         val dateTime =
           DateTime.now().withMillis(dateMillis * 1000)
             .withZoneRetainFields(DateTimeZone.getDefault())
 
-        val vid = UploadingVideo(
+        val vid = MediaStoreVideo(
           title = title,
           file = File(file),
           fromApp = fromApp,
@@ -174,4 +185,13 @@ class MediaStoreVideosViewModel(private val app: Application) : AndroidViewModel
     val colIdx = getColumnIndexOrThrow(columnName)
     return getString(colIdx)
   }
+
+  enum class PrepareState { NONE, PREPARING, ERROR, READY }
+
+  data class State(
+    val prepareState: PrepareState,
+    val chosenFile: File? = null,
+    val thumbnail: Bitmap? = null,
+    val uploadUri: Uri? = null
+  )
 }

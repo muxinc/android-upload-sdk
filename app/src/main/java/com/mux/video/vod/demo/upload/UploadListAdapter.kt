@@ -1,21 +1,17 @@
-package com.mux.video.vod.demo.mediastore
+package com.mux.video.vod.demo.upload
 
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.core.util.Consumer
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.RecyclerView.ViewHolder
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.vod.demo.databinding.ListItemUploadingVideoBinding
 import java.text.DecimalFormat
 
-class MediaStoreVideosAdapter(
+class UploadListAdapter(
   private var items: List<MuxUpload>,
-  private var viewModel: MediaStoreVideosViewModel,
 ) : RecyclerView.Adapter<MediaStoreVideoViewHolder>() {
-
-  private var progressConsumer: Consumer<MuxUpload.Progress>? = null
 
   override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MediaStoreVideoViewHolder {
     val viewBinding =
@@ -27,8 +23,8 @@ class MediaStoreVideosAdapter(
 
   override fun onBindViewHolder(holder: MediaStoreVideoViewHolder, position: Int) {
     val listItem = items[position]
-    val elapsedTime = listItem.currentState.updatedTime - listItem.currentState.startTime;
-    val bytesPerMs = (listItem.currentState.bytesUploaded / elapsedTime.toDouble()) //* 1000.0
+    val elapsedTime = listItem.currentState.updatedTime - listItem.currentState.startTime
+    val bytesPerMs = listItem.currentState.bytesUploaded / elapsedTime.toDouble()
     val stateMsg = if (listItem.currentState.bytesUploaded >= listItem.currentState.totalBytes) {
       "done"
     } else {

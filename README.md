@@ -75,4 +75,12 @@ fun beginUpload(myUploadUrl: String) {
 }
 ```
 
-A simple example usage can be found in our [Example App](app/)
+#### Try it out
+
+An example use case can be found in our [Example App](app/).
+
+A full, secure uploading mechanism requires a backend, but the Example App fakes this for brevity.
+To use the Example App, you must create
+an [Access Token](https://dashboard.mux.com/settings/access-tokens)
+in our Mux service, and put those credentials in the example
+app's [FakeBackend class](app/src/main/java/com/mux/video/vod/demo/backend/ImaginaryBackend.kt)

@@ -2,6 +2,7 @@ package com.mux.video.upload
 
 import android.content.Context
 import android.util.Log
+import com.mux.video.upload.api.MuxUploadManager
 import com.mux.video.upload.internal.UploadJobFactory
 import com.mux.video.upload.internal.UploadMetrics
 import com.mux.video.upload.internal.initializeUploadPersistence
@@ -25,7 +26,7 @@ object MuxUploadSdk {
    * Logs messages from the SDK. By default, no logging is performed
    * To get logs from this SDK, use [useLogger], eg:
    * ```
-   * changeLogger(MuxVodUploadSdk.logcatLogger()) // Log to logcat
+   * useLogger(MuxVodUploadSdk.logcatLogger()) // Log to logcat
    * ```
    * If you're using another logging library, you can always implement your own [Logger]
    */
@@ -55,10 +56,14 @@ object MuxUploadSdk {
       .build()
   }
 
-  @Suppress("unused")
-  fun initialize(appContext: Context) {
+  @Suppress("unused") @JvmOverloads
+  fun initialize(appContext: Context, resumeStoppedUploads: Boolean = true) {
     initializeUploadPersistence(appContext)
     UploadMetrics.initialize(appContext)
+
+    if (resumeStoppedUploads)  {
+      MuxUploadManager.resumeAllCachedJobs()
+    }
   }
 
   /**

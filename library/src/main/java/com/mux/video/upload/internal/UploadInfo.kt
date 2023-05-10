@@ -12,14 +12,15 @@ import java.io.File
  *
  * This object is immutable. To create an updated version use [update]. The Upload Manager can
  * update the internal state of its jobs based on the content of this object
+ *
+ * To create a new upload job, use [UploadJobFactory.create]. The UploadInfo returned will have a
+ * Job and Flows populated
  */
 internal data class UploadInfo(
   @JvmSynthetic internal val remoteUri: Uri,
   @JvmSynthetic internal val file: File,
-  @JvmSynthetic internal val videoMimeType: String,
   @JvmSynthetic internal val chunkSize: Int,
   @JvmSynthetic internal val retriesPerChunk: Int,
-  @JvmSynthetic internal val retryBaseTimeMs: Long,
   @JvmSynthetic internal val optOut: Boolean,
   @JvmSynthetic internal val uploadJob: Deferred<Result<MuxUpload.Progress>>?,
   @JvmSynthetic internal val successFlow: SharedFlow<MuxUpload.Progress>?,
@@ -37,10 +38,8 @@ internal data class UploadInfo(
 internal fun UploadInfo.update(
   remoteUri: Uri = this.remoteUri,
   file: File = this.file,
-  videoMimeType: String = this.videoMimeType,
   chunkSize: Int = this.chunkSize,
   retriesPerChunk: Int = this.retriesPerChunk,
-  retryBaseTimeMs: Long = this.retryBaseTimeMs,
   optOut: Boolean = this.optOut,
   uploadJob: Deferred<Result<MuxUpload.Progress>>? = this.uploadJob,
   successFlow: SharedFlow<MuxUpload.Progress>? = this.successFlow,
@@ -49,10 +48,8 @@ internal fun UploadInfo.update(
 ) = UploadInfo(
   remoteUri,
   file,
-  videoMimeType,
   chunkSize,
   retriesPerChunk,
-  retryBaseTimeMs,
   optOut,
   uploadJob,
   successFlow,
