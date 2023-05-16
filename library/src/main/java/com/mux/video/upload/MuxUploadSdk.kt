@@ -11,13 +11,16 @@ import okhttp3.logging.HttpLoggingInterceptor
 import java.util.concurrent.TimeUnit
 
 /**
- * Uploads videos to Mux Video.
+ * The Mux Android Upload SDK. Uploads files to Mux Video, resuming them after process death.
  *
- * TODO: This would be a good place to put usage
+ * To use, create your [Direct Upload](https://docs.mux.com/guides/video/upload-files-directly) server-side,
+ * then upload your file from your app using the [MuxUpload] class.
+ *
+ * Before starting any uploads, you must call [initialize] at least once
  */
 object MuxUploadSdk {
   /**
-   * The current version of this SDK. Release builds of this SDK follow semver (https://semver.org)
+   * The current version of the SDK. Release builds of this SDK follow semver (https://semver.org)
    */
   @Suppress("unused")
   const val VERSION = BuildConfig.LIB_VERSION
@@ -56,6 +59,9 @@ object MuxUploadSdk {
       .build()
   }
 
+  /**
+   * Initializes the SDK with the given Context. The Context instance isn't saved.
+   */
   @Suppress("unused") @JvmOverloads
   fun initialize(appContext: Context, resumeStoppedUploads: Boolean = true) {
     initializeUploadPersistence(appContext)
