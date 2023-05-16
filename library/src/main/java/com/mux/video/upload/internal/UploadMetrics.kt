@@ -16,7 +16,8 @@ import java.util.*
 
 internal class UploadMetrics private constructor() {
 
-  suspend fun reportUpload(
+  @JvmSynthetic
+  internal suspend fun reportUpload(
     startTimeMillis: Long,
     endTimeMillis: Long,
     uploadInfo: UploadInfo
