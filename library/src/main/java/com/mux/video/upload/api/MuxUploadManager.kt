@@ -17,10 +17,11 @@ object MuxUploadManager {
   private val logger get() = MuxUploadSdk.logger
 
   /**
-   * Finds an in-progress or paused upload and returns an object to track it, if it was
+   * Finds an in-progress, paused, or failed upload and returns a [MuxUpload] to track it, if it was
    * in progress
    */
   @Suppress("unused")
+  @MainThread
   fun findUploadByFile(videoFile: File): MuxUpload? =
     uploadsByFilename[videoFile.absolutePath]?.let { MuxUpload.create(it) }
 
@@ -30,12 +31,14 @@ object MuxUploadManager {
    * will continue in parallel if they're auto-managed (see [MuxUpload.Builder.manageUploadTask])
    */
   @Suppress("unused")
+  @MainThread
   fun allUploadJobs(): List<MuxUpload> = uploadsByFilename.values.map { MuxUpload.create(it) }
 
   /**
    * Resumes any upload jobs that were prematurely stopped due to failures or process death.
    * The jobs will all be resumed where they left off. Any jobs resumed this way will be returned
    */
+  @MainThread
   fun resumeAllCachedJobs(): List<MuxUpload> {
     return readAllCachedUploads()
       .onEach { uploadInfo -> startJob(uploadInfo, restart = false) }

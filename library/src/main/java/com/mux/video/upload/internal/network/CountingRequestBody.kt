@@ -4,6 +4,7 @@ import okhttp3.MediaType
 import okhttp3.RequestBody
 import okio.BufferedSink
 
+@JvmSynthetic
 internal fun ByteArray.asCountingRequestBody(
   mediaType: MediaType?,
   contentLength: Long,
@@ -15,6 +16,7 @@ internal fun ByteArray.asCountingRequestBody(
   callback = callback
 )
 
+@JvmSynthetic
 internal fun ByteArray.asCountingRequestBody(
   mediaType: MediaType?,
   contentLength: Long,
