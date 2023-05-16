@@ -10,14 +10,11 @@ import kotlinx.coroutines.*
 import java.io.File
 
 /**
- * Represents a task that does a single direct upload to a Mux Video asset previously created.
+ * Represents an upload of a video as a Mux Video asset. In order to use this SDK, you must first
+ * create a [direct upload](https://docs.mux.com/guides/video/upload-files-directly) server-side,
+ * then return that direct upload PUT URL to your app.
  *
- * TODO: Talk about creating the upload: https://docs.mux.com/api-reference/video#operation/create-direct-upload
- *
- * This prototype does a single streamed PUT request for the whole file and delivers results, but
- * the production version will have more sophisticated behavior.
- *
- * Create an instance of this class with the [Builder]
+ * Once you have it, you can create and [start] your upload using the [Builder]
  */
 class MuxUpload private constructor(
   private var uploadInfo: UploadInfo, private val autoManage: Boolean = true
@@ -98,15 +95,28 @@ class MuxUpload private constructor(
     maybeObserveUpload(uploadInfo)
   }
 
+  /**
+   * If the upload has not succeeded, this function will suspend until the upload completes and
+   * return the result
+   * If the upload had failed, it will be restarted and this function will suspend until it
+   * completes
+   * If the upload already succeeded, the old result will be returned immediately
+   */
   @Throws
   @Suppress("unused")
+  @JvmSynthetic
   suspend fun awaitSuccess(): Result<Progress> {
-    return coroutineScope {
-      startInner(coroutineScope = this)
-      uploadInfo.uploadJob?.let { job ->
-        val result = job.await()
-        result
-      } ?: Result.failure(Exception("Upload failed to start"))
+    val result = uploadInfo.successFlow?.replayCache?.firstOrNull()
+    return if (result != null) {
+      Result.success(result) // If we succeeded already, don't start again
+    } else {
+      coroutineScope {
+        startInner(coroutineScope = this)
+        uploadInfo.uploadJob?.let { job ->
+          val result = job.await()
+          result
+        } ?: Result.failure(Exception("Upload failed to start"))
+      }
     }
   }
 
@@ -148,7 +158,7 @@ class MuxUpload private constructor(
   }
 
   /**
-   * Adds a listener for progress updates on this upload
+   * Sets a listener for progress updates on this upload
    */
   @MainThread
   fun setProgressListener(listener: UploadEventListener<Progress>?) {
@@ -157,7 +167,7 @@ class MuxUpload private constructor(
   }
 
   /**
-   * Adds a listener for success or failure updates on this upload
+   * Sets a listener for success or failure updates on this upload
    */
   @MainThread
   fun setResultListener(listener: UploadEventListener<Result<Progress>>) {
@@ -169,6 +179,9 @@ class MuxUpload private constructor(
     }
   }
 
+  /**
+   * Clears all listeners set on this object
+   */
   @MainThread
   fun clearListeners() {
     resultListener = null
