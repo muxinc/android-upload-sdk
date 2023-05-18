@@ -38,7 +38,7 @@ muxDistribution {
   groupIds just("com.mux.video")
   publicReleaseIf releaseOnTag()
 
-  packageJavadocs = releaseOnTag().call()
+  packageJavadocs = true
   packageSources = true
   publishIf { it.containsIgnoreCase("release") }
   artifactoryConfig {

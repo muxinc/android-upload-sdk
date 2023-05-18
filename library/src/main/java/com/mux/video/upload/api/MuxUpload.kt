@@ -235,7 +235,24 @@ class MuxUpload private constructor(
   )
 
   /**
-   * Builds instances of [MuxUpload]
+   * Builds instances of [MuxUpload].
+   *
+   * If you wish for fine-grained control over the upload process, some configuration is available.
+   *
+   * For example:
+   * ```
+   * // Adapt to your upload to current network conditions
+   * val chunkSize = if (/* onWifi */) {
+   *   16 * 1024 * 1024 // 16M, bigger chunks go faster
+   * } else {
+   *   8 * 1024 * 1024 // 8M, smaller chunks are more reliable
+   * }
+   *
+   * val upload = MuxUpload.Builder(myUploadUrl, myInputFile)
+   *   .chunkSize(chunkSize) // Mux's default is 8Mb
+   *   .retriesPerChunk(5) // Mux's default is 3
+   *   .build()
+   * ```
    *
    * @param uploadUri the URL obtained from the Direct video up
    */
@@ -257,29 +274,54 @@ class MuxUpload private constructor(
       errorFlow = null
     )
 
+    /**
+     * Allow Mux to manage and remember the state of this upload
+     */
     @Suppress("unused")
     fun manageUploadTask(autoManage: Boolean): Builder {
       manageTask = autoManage;
       return this
     }
 
+    /**
+     * The Upload SDK will upload your file in smaller chunks, which can be more reliable in adverse
+     * network conditions.
+     *
+     * @param sizeBytes The chunk size in bytes. Mux's default is 8M
+     */
     @Suppress("unused")
     fun chunkSize(sizeBytes: Int): Builder {
       uploadInfo.update(chunkSize = sizeBytes)
       return this
     }
 
+    /**
+     * Allows you to opt out of Mux's performance analytics tracking. We track metrics related to
+     * the overall performance and reliability of your upload, in order to make our SDK better.
+     *
+     * If you would perfer not to share this information with us, you may opt out by passing `true`
+     * here.
+     */
     @Suppress("unused")
     fun optOutOfEventTracking(optOut: Boolean) {
       uploadInfo.update(optOut = optOut)
     }
 
+    /**
+     * The Upload SDK will upload your file in smaller chunks, which can be more reliable in adverse
+     * network conditions. Each chunk can be retried individually, up to the given number of times
+     *
+     * @param retries The number of retries per chunk. Mux's default is 3
+     */
     @Suppress("unused")
     fun retriesPerChunk(retries: Int): Builder {
       uploadInfo.update(retriesPerChunk = retries)
       return this
     }
 
+    /**
+     * Creates a new [MuxUpload] with the given configuration.
+     */
     fun build() = MuxUpload(uploadInfo)
   }
 
