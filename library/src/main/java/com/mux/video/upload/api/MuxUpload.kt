@@ -26,7 +26,8 @@ class MuxUpload private constructor(
   val videoFile: File get() = uploadInfo.file
 
   /**
-   * The most-currents state of the upload
+   * The current state of the upload. To be notified of state updates, you can use
+   * [setProgressListener] and [setResultListener]
    */
   val currentState: Progress
     get() = lastKnownState ?: uploadInfo.progressFlow?.replayCache?.firstOrNull() ?: Progress(
