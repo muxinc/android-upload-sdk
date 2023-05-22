@@ -13,7 +13,7 @@ This SDK must be initialized once with a `Context` before it can be used
 
 ```kotlin
 // from your custom Application class, Activity, etc. The context isn't saved
-MxuUploadSdk.initialize(this)
+MuxUploadSdk.initialize(appContext = this)
 ```
 
 ## Starting a new upload
