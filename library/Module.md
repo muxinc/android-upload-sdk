@@ -52,4 +52,3 @@ them to fail at some time in the past.
  val upload = MuxUploadManager.findUploadByFile(myVideoFile)
  upload.setResultListener { /*...*/ }
 ```
-
