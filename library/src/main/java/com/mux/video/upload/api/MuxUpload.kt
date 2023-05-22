@@ -15,6 +15,22 @@ import java.io.File
  * then return that direct upload PUT URL to your app.
  *
  * Once you have it, you can create and [start] your upload using the [Builder]
+ *
+ * For example:
+ * ```
+ * // Start a new upload
+ * val upload = MuxUpload.Builder(myUploadUrl, myInputFile).build()
+ * upload.start()
+ * ```
+ *
+ * Uploads you create can be resumed after process death, or if network connectivity was lost.
+ * ```
+ * MuxUploadManager.resumeAllCachedJobs()
+ * val upload = MuxUploadManager.findUploadByFile(myVideoFile)
+ * upload.setResultListener { ...
+ * }
+ * ```
+ *
  */
 class MuxUpload private constructor(
   private var uploadInfo: UploadInfo, private val autoManage: Boolean = true
