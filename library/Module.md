@@ -7,9 +7,18 @@ guide, [Upload Files Directly](https://docs.mux.com/guides/video/upload-files-di
 
 Once you have your direct upload URL, you can use it to upload a file using this SDK.
 
+## Initializing the SDK
+
+This SDK must be initialized once with a `Context` before it can be used
+
+```kotlin
+// from your custom Application class, Activity, etc. The context isn't saved
+MxuUploadSdk.initialize(this)
+```
+
 ## Starting a new upload
 
-The [MuxUpload] class can be used to start a video upload and observe its progress.
+The `MuxUpload` class can be used to start a video upload and observe its progress.
 
 ```kotlin
   // Start a new upload
@@ -22,7 +31,7 @@ upload.start()
 ### Handling errors
 
 The upload SDK handles transient errors according to a customizable retry policy. Fatal errors are
-reported by [MuxUpload.setResultListener]. 
+reported by `MuxUpload.setResultListener`. 
 
 ```kotlin
 upload.setResultListener { result ->
@@ -41,7 +50,6 @@ them to fail at some time in the past.
 ```kotlin
  MuxUploadManager.resumeAllCachedJobs()
  val upload = MuxUploadManager.findUploadByFile(myVideoFile)
- upload.setResultListener { /*...*/
- }
+ upload.setResultListener { /*...*/ }
 ```
 

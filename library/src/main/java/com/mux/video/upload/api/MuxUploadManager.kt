@@ -7,6 +7,9 @@ import com.mux.video.upload.internal.*
 import kotlinx.coroutines.*
 import java.io.File
 
+/**
+ *
+ */
 object MuxUploadManager {
 
   private val mainScope = MainScope()
