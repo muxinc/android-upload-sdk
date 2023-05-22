@@ -59,6 +59,17 @@ tasks.withType(DokkaTask.class) {
 
     moduleName.set("Mux Upload SDK")
 
+    String dokkaBaseConfiguration = """
+    {
+      "customAssets": ["${file("logo-icon.svg")}"],
+      "footerMessage": "(c) 2023 Mux, Inc. For help, contact support@mux.com"
+    }
+    """
+    pluginsMapConfiguration.set(
+      // fully qualified plugin name to json configuration
+      ["org.jetbrains.dokka.base.DokkaBase": dokkaBaseConfiguration]
+    )
+
     if (project.file("Module.md").exists()) {
       includes.from(project.file("Module.md"))
     }
