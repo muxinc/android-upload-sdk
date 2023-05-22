@@ -1,8 +1,47 @@
-Module library
+# Module Mux Upload SDK
 
-# The Module Home Page.
+The Mux Upload SDK processes and uploads video files to [Mux Video](https://www.mux.com/) from a
+user's local
+device. It is part of a full-stack flow described in our
+guide, [Upload Files Directly](https://docs.mux.com/guides/video/upload-files-directly).
 
-You should talk a little here about the overall SDK, give a brief example using it, then link out to some important sybols
+Once you have your direct upload URL, you can use it to upload a file using this SDK.
 
-## This is just one thing you need to do before completing your task
+## Starting a new upload
+
+The [MuxUpload] class can be used to start a video upload and observe its progress.
+
+```kotlin
+  // Start a new upload
+val upload = MuxUpload.Builder(myUploadUrl, myInputFile).build()
+upload.setResultListener { /*...*/ }
+upload.setProgressListener { /*...*/}
+upload.start()
+```
+
+### Handling errors
+
+The upload SDK handles transient errors according to a customizable retry policy. Fatal errors are
+reported by [MuxUpload.setResultListener]. 
+
+```kotlin
+upload.setResultListener { result ->
+  if (!result.isSuccess) {
+    notifyError()
+  } else {
+    /*...*/
+  }
+}
+```
+
+## Resuming uploads after process death
+
+Uploads managed by this SDK can be resumed after process death, or if network connectivity caused 
+them to fail at some time in the past.
+```kotlin
+ MuxUploadManager.resumeAllCachedJobs()
+ val upload = MuxUploadManager.findUploadByFile(myVideoFile)
+ upload.setResultListener { /*...*/
+ }
+```
 

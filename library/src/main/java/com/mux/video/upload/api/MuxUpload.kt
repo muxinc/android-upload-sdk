@@ -14,23 +14,21 @@ import java.io.File
  * create a [direct upload](https://docs.mux.com/guides/video/upload-files-directly) server-side,
  * then return that direct upload PUT URL to your app.
  *
- * Once you have it, you can create and [start] your upload using the [Builder]
+ * Once you have a PUT URL, you can create and [start] your upload using the [Builder]
  *
  * For example:
  * ```
  * // Start a new upload
  * val upload = MuxUpload.Builder(myUploadUrl, myInputFile).build()
+ * upload.setResultListener { myHandleResult(it) }
+ * upload.setProgressListener { myHandleProgress(it) }
  * upload.start()
  * ```
  *
- * Uploads you create can be resumed after process death, or if network connectivity was lost.
- * ```
- * MuxUploadManager.resumeAllCachedJobs()
- * val upload = MuxUploadManager.findUploadByFile(myVideoFile)
- * upload.setResultListener { ...
- * }
- * ```
+ * For full documentation on how to configure your upload, see the [Builder]
  *
+ * @see Builder
+ * @see MuxUploadManager
  */
 class MuxUpload private constructor(
   private var uploadInfo: UploadInfo, private val autoManage: Boolean = true
