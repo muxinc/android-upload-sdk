@@ -1,6 +1,5 @@
 package com.mux.video.upload.api
 
-import android.util.Log
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.*
@@ -8,7 +7,16 @@ import kotlinx.coroutines.*
 import java.io.File
 
 /**
+ * Manages in-process uploads, allowing them to be observed from anywhere or restarted in case of
+ * network loss or process death
  *
+ * To list all unfinished jobs, use [allUploadJobs]
+ *
+ * To find a job associated with a given file, use [findUploadByFile]
+ *
+ * To restart all uploads after process or network death, use [resumeAllCachedJobs].
+ *
+ * @see MuxUpload
  */
 object MuxUploadManager {
 
