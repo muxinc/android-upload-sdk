@@ -46,7 +46,6 @@ import com.mux.video.vod.demo.upload.ui.theme.White
 import com.mux.video.vod.demo.upload.viewmodel.CreateUploadViewModel
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
-import java.io.File
 
 @Composable
 fun CreateUploadScreen() {
@@ -124,13 +123,12 @@ private fun ScreenContent(
 ) {
   return Scaffold(
     topBar = {
-      ScreenAppBar(closeThisScreen, screenState.chosenFile)
+      ScreenAppBar(closeThisScreen)
     },
   ) { contentPadding ->
     BodyContent(
       screenState,
       Modifier.padding(contentPadding),
-      closeThisScreen,
       startUpload
     )
   }
@@ -140,7 +138,6 @@ private fun ScreenContent(
 private fun BodyContent(
   state: CreateUploadViewModel.State,
   modifier: Modifier = Modifier,
-  closeThisScreen: () -> Unit,
   startUpload: () -> Unit
 ) {
   Column(
@@ -197,7 +194,7 @@ private fun CtaPlaceHolder() {
   val viewModel: CreateUploadViewModel = viewModel()
   val requestContent = remember { mutableStateOf(false) }
   GetContentEffect(requestContent.value)
-  CreateUploadCta() {
+  CreateUploadCta {
     requestContent.value = viewModel.videoState.value?.chosenFile == null
   }
 }
@@ -269,7 +266,7 @@ private fun ChosenThumbnail(modifier: Modifier = Modifier, thumbnail: Bitmap) {
 }
 
 @Composable
-private fun ScreenAppBar(closeThisScreen: () -> Unit, videoFile: File?) {
+private fun ScreenAppBar(closeThisScreen: () -> Unit) {
   MuxAppBar(
     startContent = {
       IconButton(
