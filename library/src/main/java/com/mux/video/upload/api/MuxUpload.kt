@@ -46,7 +46,7 @@ class MuxUpload private constructor(
   private var _error: Exception? = null
 
   /**
-   * Returns true if the upload was successful
+   * True if the upload was successful, false otherwise
    */
   val isSuccessful get() = _successful
   private var _successful: Boolean = false

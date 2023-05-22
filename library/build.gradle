@@ -1,3 +1,6 @@
+import org.jetbrains.dokka.DokkaConfiguration.Visibility
+import org.jetbrains.dokka.gradle.DokkaTask
+
 plugins {
   id 'com.android.library'
   id 'org.jetbrains.kotlin.android'
@@ -39,7 +42,8 @@ muxDistribution {
   groupIds just("com.mux.video")
   publicReleaseIf releaseOnTag()
 
-  packageJavadocs = true
+  // TODO: Better make the distro plugin use the same config as the dokka. How can you change what withJavaDocJar does
+  packageJavadocs = false
   packageSources = true
   publishIf { it.containsIgnoreCase("release") }
   artifactoryConfig {
@@ -49,8 +53,24 @@ muxDistribution {
   }
 }
 
-dependencies {
+tasks.withType(DokkaTask.class) {
+  dokkaSourceSets.configureEach {
+    documentedVisibilities.set([Visibility.PUBLIC, Visibility.PROTECTED])
 
+    moduleName.set("Mux Upload SDK")
+
+    if (project.file("Module.md").exists()) {
+      includes.from(project.file("Module.md"))
+    }
+
+    perPackageOption {
+      matchingRegex.set(".*internal.*")
+      suppress.set(true)
+    }
+  }
+}
+
+dependencies {
   implementation 'androidx.core:core-ktx:1.9.0'
 
   implementation "com.squareup.okhttp3:logging-interceptor:4.11.0"
