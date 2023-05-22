@@ -62,7 +62,7 @@ tasks.withType(DokkaTask.class) {
     String dokkaBaseConfiguration = """
     {
       "customAssets": ["${file("logo-icon.svg")}"],
-      "footerMessage": "(c) 2023 Mux, Inc. For help, contact support@mux.com"
+      "footerMessage": "(c) 2023 Mux, Inc. Help or questions? Contact support@mux.com"
     }
     """
     pluginsMapConfiguration.set(
