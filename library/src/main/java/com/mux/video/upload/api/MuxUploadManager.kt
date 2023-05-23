@@ -39,7 +39,7 @@ object MuxUploadManager {
   /**
    * Finds all in-progress or paused uploads and returns [MuxUpload] objects representing them. You
    * don't need to hold these specific instances except where they're locally used. The upload jobs
-   * will continue in parallel if they're auto-managed (see [MuxUpload.Builder.manageUploadTask])
+   * will continue in parallel with the rest of your app
    */
   @Suppress("unused")
   @MainThread
