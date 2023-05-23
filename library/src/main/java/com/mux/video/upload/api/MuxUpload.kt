@@ -356,7 +356,7 @@ class MuxUpload private constructor(
     fun build() = MuxUpload(uploadInfo)
   }
 
-  companion object {
+  internal companion object {
     @JvmSynthetic
     internal fun create(uploadInfo: UploadInfo) = MuxUpload(uploadInfo)
   }
