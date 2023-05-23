@@ -47,7 +47,7 @@ object MuxUploadManager {
 
   /**
    * Resumes any upload jobs that were prematurely stopped due to failures or process death.
-   * The jobs will all be resumed where they left off. Any jobs resumed this way will be returned
+   * The jobs will all be resumed where they left off. Any uploads resumed this way will be returned
    */
   @MainThread
   fun resumeAllCachedJobs(): List<MuxUpload> {

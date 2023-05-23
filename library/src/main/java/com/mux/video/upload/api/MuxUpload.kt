@@ -81,9 +81,13 @@ class MuxUpload private constructor(
   /**
    * Starts this Upload. The Upload will continue in the background *even if this object is
    * destroyed*.
+   *
    * To suspend the execution of the upload, use [pause]. To cancel it completely, use [cancel]
    *
    * @param forceRestart Start the upload from the beginning even if the file is partially uploaded
+   *
+   * @see pause
+   * @see cancel
    */
   @JvmOverloads
   fun start(forceRestart: Boolean = false) {
@@ -113,8 +117,10 @@ class MuxUpload private constructor(
   /**
    * If the upload has not succeeded, this function will suspend until the upload completes and
    * return the result
+   *
    * If the upload had failed, it will be restarted and this function will suspend until it
    * completes
+   *
    * If the upload already succeeded, the old result will be returned immediately
    */
   @Throws
@@ -137,6 +143,7 @@ class MuxUpload private constructor(
 
   /**
    * Pauses the upload. If the upload was already paused, this method has no effect
+   *
    * You can resume the upload where it left off by calling [start]
    */
   @Suppress("MemberVisibilityCanBePrivate")
