@@ -14,7 +14,21 @@ import java.io.File
  * create a [direct upload](https://docs.mux.com/guides/video/upload-files-directly) server-side,
  * then return that direct upload PUT URL to your app.
  *
- * Once you have it, you can create and [start] your upload using the [Builder]
+ * Once you have a PUT URL, you can create and [start] your upload using the [Builder]
+ *
+ * For example:
+ * ```
+ * // Start a new upload
+ * val upload = MuxUpload.Builder(myUploadUrl, myInputFile).build()
+ * upload.setResultListener { myHandleResult(it) }
+ * upload.setProgressListener { myHandleProgress(it) }
+ * upload.start()
+ * ```
+ *
+ * For full documentation on how to configure your upload, see the [Builder]
+ *
+ * @see Builder
+ * @see MuxUploadManager
  */
 class MuxUpload private constructor(
   private var uploadInfo: UploadInfo, private val autoManage: Boolean = true
@@ -26,7 +40,8 @@ class MuxUpload private constructor(
   val videoFile: File get() = uploadInfo.file
 
   /**
-   * The most-currents state of the upload
+   * The current state of the upload. To be notified of state updates, you can use
+   * [setProgressListener] and [setResultListener]
    */
   val currentState: Progress
     get() = lastKnownState ?: uploadInfo.progressFlow?.replayCache?.firstOrNull() ?: Progress(
@@ -45,7 +60,7 @@ class MuxUpload private constructor(
   private var _error: Exception? = null
 
   /**
-   * Returns true if the upload was successful
+   * True if the upload was successful, false otherwise
    */
   val isSuccessful get() = _successful
   private var _successful: Boolean = false
@@ -64,11 +79,17 @@ class MuxUpload private constructor(
   }
 
   /**
-   * Starts this Upload. The Upload will continue in the background *even if this object is
-   * destroyed*.
+   * Starts this Upload. You don't need to hold onto this object in order for the upload to
+   * complete, it will continue in parallel with the rest of your app. You can always get a handle
+   * to an ongoing upload by using [MuxUploadManager.findUploadByFile]
+   *
    * To suspend the execution of the upload, use [pause]. To cancel it completely, use [cancel]
    *
    * @param forceRestart Start the upload from the beginning even if the file is partially uploaded
+   *
+   * @see pause
+   * @see cancel
+   * @see MuxUploadManager
    */
   @JvmOverloads
   fun start(forceRestart: Boolean = false) {
@@ -98,8 +119,10 @@ class MuxUpload private constructor(
   /**
    * If the upload has not succeeded, this function will suspend until the upload completes and
    * return the result
+   *
    * If the upload had failed, it will be restarted and this function will suspend until it
    * completes
+   *
    * If the upload already succeeded, the old result will be returned immediately
    */
   @Throws
@@ -122,6 +145,7 @@ class MuxUpload private constructor(
 
   /**
    * Pauses the upload. If the upload was already paused, this method has no effect
+   *
    * You can resume the upload where it left off by calling [start]
    */
   @Suppress("MemberVisibilityCanBePrivate")
@@ -235,12 +259,38 @@ class MuxUpload private constructor(
   )
 
   /**
-   * Builds instances of [MuxUpload]
+   * Builds instances of [MuxUpload].
+   *
+   * If you wish for fine-grained control over the upload process, some configuration is available.
+   *
+   * For example:
+   * ```
+   * // Adapt to your upload to current network conditions
+   * val chunkSize = if (/* onWifi */) {
+   *   16 * 1024 * 1024 // 16M, bigger chunks go faster
+   * } else {
+   *   8 * 1024 * 1024 // 8M, smaller chunks are more reliable
+   * }
+   *
+   * val upload = MuxUpload.Builder(myUploadUrl, myInputFile)
+   *   .chunkSize(chunkSize) // Mux's default is 8Mb
+   *   .retriesPerChunk(5) // Mux's default is 3
+   *   .build()
+   * ```
    *
    * @param uploadUri the URL obtained from the Direct video up
+   * @param videoFile a File that represents the video file you want to upload
    */
   @Suppress("MemberVisibilityCanBePrivate")
   class Builder constructor(val uploadUri: Uri, val videoFile: File) {
+
+    /**
+     * Create a new Builder with the specified input file and upload URL
+     *
+     * @param uploadUri the URL obtained from the Direct video up
+     * @param videoFile a File that represents the video file you want to upload
+     */
+    @Suppress("unused")
     constructor(uploadUri: String, videoFile: File) : this(Uri.parse(uploadUri), videoFile)
 
     private var manageTask: Boolean = true
@@ -257,33 +307,58 @@ class MuxUpload private constructor(
       errorFlow = null
     )
 
+    /**
+     * Allow Mux to manage and remember the state of this upload
+     */
     @Suppress("unused")
     fun manageUploadTask(autoManage: Boolean): Builder {
       manageTask = autoManage;
       return this
     }
 
+    /**
+     * The Upload SDK will upload your file in smaller chunks, which can be more reliable in adverse
+     * network conditions.
+     *
+     * @param sizeBytes The chunk size in bytes. Mux's default is 8M
+     */
     @Suppress("unused")
     fun chunkSize(sizeBytes: Int): Builder {
       uploadInfo.update(chunkSize = sizeBytes)
       return this
     }
 
+    /**
+     * Allows you to opt out of Mux's performance analytics tracking. We track metrics related to
+     * the overall performance and reliability of your upload, in order to make our SDK better.
+     *
+     * If you would perfer not to share this information with us, you may opt out by passing `true`
+     * here.
+     */
     @Suppress("unused")
     fun optOutOfEventTracking(optOut: Boolean) {
       uploadInfo.update(optOut = optOut)
     }
 
+    /**
+     * The Upload SDK will upload your file in smaller chunks, which can be more reliable in adverse
+     * network conditions. Each chunk can be retried individually, up to the given number of times
+     *
+     * @param retries The number of retries per chunk. Mux's default is 3
+     */
     @Suppress("unused")
     fun retriesPerChunk(retries: Int): Builder {
       uploadInfo.update(retriesPerChunk = retries)
       return this
     }
 
+    /**
+     * Creates a new [MuxUpload] with the given configuration.
+     */
     fun build() = MuxUpload(uploadInfo)
   }
 
-  companion object {
+  internal companion object {
     @JvmSynthetic
     internal fun create(uploadInfo: UploadInfo) = MuxUpload(uploadInfo)
   }

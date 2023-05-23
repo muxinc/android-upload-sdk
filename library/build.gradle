@@ -38,7 +38,7 @@ muxDistribution {
   groupIds just("com.mux.video")
   publicReleaseIf releaseOnTag()
 
-  packageJavadocs = releaseOnTag().call()
+  packageJavadocs = true
   packageSources = true
   publishIf { it.containsIgnoreCase("release") }
   artifactoryConfig {
@@ -46,10 +46,14 @@ muxDistribution {
     releaseRepoKey = 'default-maven-release-local'
     devRepoKey = 'default-maven-local'
   }
+  dokkaConfig {
+    moduleName = "Mux Upload SDK"
+    footer = "(c) " + new Date().format("yyyy") + " Mux, Inc. Have questions or need help?" +
+            " Contact support@mux.com"
+  }
 }
 
 dependencies {
-
   implementation 'androidx.core:core-ktx:1.9.0'
 
   implementation "com.squareup.okhttp3:logging-interceptor:4.11.0"
