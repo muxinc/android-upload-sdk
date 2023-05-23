@@ -79,8 +79,9 @@ class MuxUpload private constructor(
   }
 
   /**
-   * Starts this Upload. The Upload will continue in the background *even if this object is
-   * destroyed*.
+   * Starts this Upload. You don't need to hold onto this object in order for the upload to
+   * complete, it will continue in parallel with the rest of your app. You can always get a handle
+   * to an ongoing upload by using [MuxUploadManager.findUploadByFile]
    *
    * To suspend the execution of the upload, use [pause]. To cancel it completely, use [cancel]
    *
@@ -88,6 +89,7 @@ class MuxUpload private constructor(
    *
    * @see pause
    * @see cancel
+   * @see MuxUploadManager
    */
   @JvmOverloads
   fun start(forceRestart: Boolean = false) {
