@@ -1,7 +1,7 @@
 # Module Mux Upload SDK
 
-The Mux Upload SDK processes and uploads video files to [Mux Video](https://www.mux.com/) from a
-user's local device. It is part of a full-stack flow described in our
+The Mux Upload SDK processes and uploads video files to [Mux Video](https://www.mux.com/video) from
+a user's local device. It is part of a full-stack flow described in our
 guide, [Upload Files Directly](https://docs.mux.com/guides/video/upload-files-directly).
 
 Once you have your direct upload URL, you can use it to upload a file using this SDK.
