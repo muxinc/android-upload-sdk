@@ -1,11 +1,7 @@
-//import org.jetbrains.dokka.DokkaConfiguration.Visibility
-//import org.jetbrains.dokka.gradle.DokkaTask
-
 plugins {
   id 'com.android.library'
   id 'org.jetbrains.kotlin.android'
   id 'com.mux.gradle.android.mux-android-distribution'
-//  id 'org.jetbrains.dokka'
 }
 
 android {
@@ -56,34 +52,6 @@ muxDistribution {
             " Contact support@mux.com"
   }
 }
-
-//tasks.withType(DokkaTask.class) {
-//  dokkaSourceSets.configureEach {
-//    documentedVisibilities.set([Visibility.PUBLIC, Visibility.PROTECTED])
-//
-//    moduleName.set("Mux Upload SDK")
-//
-//    String dokkaBaseConfiguration = """
-//    {
-//      "customAssets": ["${file("logo-icon.svg")}"],
-//      "footerMessage": "(c) 2023 Mux, Inc. Help or questions? Contact support@mux.com"
-//    }
-//    """
-//    pluginsMapConfiguration.set(
-//      // fully qualified plugin name to json configuration
-//      ["org.jetbrains.dokka.base.DokkaBase": dokkaBaseConfiguration]
-//    )
-//
-//    if (project.file("Module.md").exists()) {
-//      includes.from(project.file("Module.md"))
-//    }
-//
-//    perPackageOption {
-//      matchingRegex.set(".*internal.*")
-//      suppress.set(true)
-//    }
-//  }
-//}
 
 dependencies {
   implementation 'androidx.core:core-ktx:1.9.0'
