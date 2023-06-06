@@ -218,8 +218,10 @@ class MuxUpload private constructor(
       upload.errorFlow?.let { flow ->
         launch {
           flow.collect { error ->
-            _error = error
-            resultListener?.onEvent(Result.failure(error))
+            if (error !is CancellationException) { // Canceled uploads shouldn't generate events
+              _error = error
+              resultListener?.onEvent(Result.failure(error))
+            }
           }
         }
       }
