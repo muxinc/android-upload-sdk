@@ -7,25 +7,43 @@ import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.*
+import androidx.compose.material.FloatingActionButton
+import androidx.compose.material.Icon
+import androidx.compose.material.LinearProgressIndicator
+import androidx.compose.material.MaterialTheme
+import androidx.compose.material.Scaffold
+import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Error
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.OnGloballyPositionedModifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
@@ -41,7 +59,11 @@ import com.mux.video.vod.demo.upload.CreateUploadCta
 import com.mux.video.vod.demo.upload.MuxAppBar
 import com.mux.video.vod.demo.upload.THUMBNAIL_SIZE
 import com.mux.video.vod.demo.upload.model.extractThumbnail
-import com.mux.video.vod.demo.upload.ui.theme.*
+import com.mux.video.vod.demo.upload.ui.theme.Gray70
+import com.mux.video.vod.demo.upload.ui.theme.Gray90
+import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
+import com.mux.video.vod.demo.upload.ui.theme.TranslucentScrim
+import com.mux.video.vod.demo.upload.ui.theme.TranslucentWhite
 import com.mux.video.vod.demo.upload.viewmodel.UploadListViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -126,7 +148,10 @@ private fun UploadList(items: List<MuxUpload>) {
     verticalArrangement = Arrangement.spacedBy(32.dp)
   ) {
     // show items in reverse order by their start time (newest-first)
-    items(items.reversed()) { ListItemContent(upload = it) }
+    items(
+      items.reversed(),
+      key = { it.videoFile.hashCode() }
+    ) { ListItemContent(upload = it) }
   }
 }
 
@@ -141,9 +166,9 @@ private fun ListItemContent(upload: MuxUpload) {
   ) {
     val imageBitmapState = remember { mutableStateOf<Bitmap?>(null) }
     val bitmap = imageBitmapState.value
-    LaunchedEffect(imageBitmapState.value) {
-      // If the bitmap in the state ever becomes null reload it
-      if (bitmap == null) {
+    // If the bitmap in the state ever becomes null reload it
+    if (bitmap == null) {
+      LaunchedEffect(imageBitmapState.value) {
         launch(Dispatchers.IO) {
           imageBitmapState.value = extractThumbnail(upload.videoFile)
         }
@@ -311,19 +336,19 @@ fun NoUploads() {
 @Composable
 fun ListItemProgress() {
   MuxUploadSDKForAndroidTheme {
-    Box(modifier = Modifier.height(THUMBNAIL_SIZE)){
-    ProgressOverlay(
-      uploadState = MuxUpload.Progress(
-        startTime = System.currentTimeMillis() - TimeUnit.MILLISECONDS.convert(
-          10,
-          TimeUnit.MINUTES
+    Box(modifier = Modifier.height(THUMBNAIL_SIZE)) {
+      ProgressOverlay(
+        uploadState = MuxUpload.Progress(
+          startTime = System.currentTimeMillis() - TimeUnit.MILLISECONDS.convert(
+            10,
+            TimeUnit.MINUTES
+          ),
+          updatedTime = System.currentTimeMillis(),
+          bytesUploaded = 100 * 1024 * 1024,
+          totalBytes = 175 * 1024 * 1024,
         ),
-        updatedTime = System.currentTimeMillis(),
-        bytesUploaded = 100 * 1024 * 1024,
-        totalBytes = 175 * 1024 * 1024,
-      ),
-      modifier = Modifier.align(Alignment.BottomStart)
-    )
-  }
+        modifier = Modifier.align(Alignment.BottomStart)
+      )
+    }
   }
 }
