@@ -29,7 +29,7 @@ repositories {
 ### Add a dependency on our SDK
 
 ```groovy
-implememntation "com.mux.video:upload:0.1.0"
+implememntation "com.mux.video:upload:0.3.1"
 ```
 
 ### Server-Side: Create a Direct Upload
