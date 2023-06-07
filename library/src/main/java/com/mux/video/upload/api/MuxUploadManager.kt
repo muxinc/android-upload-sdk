@@ -1,12 +1,23 @@
 package com.mux.video.upload.api
 
-import android.util.Log
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.*
 import kotlinx.coroutines.*
 import java.io.File
 
+/**
+ * Manages in-process uploads, allowing them to be observed from anywhere or restarted in case of
+ * network loss or process death
+ *
+ * To list all unfinished jobs, use [allUploadJobs]
+ *
+ * To find a job associated with a given file, use [findUploadByFile]
+ *
+ * To restart all uploads after process or network death, use [resumeAllCachedJobs].
+ *
+ * @see MuxUpload
+ */
 object MuxUploadManager {
 
   private val mainScope = MainScope()
@@ -17,25 +28,28 @@ object MuxUploadManager {
   private val logger get() = MuxUploadSdk.logger
 
   /**
-   * Finds an in-progress or paused upload and returns an object to track it, if it was
+   * Finds an in-progress, paused, or failed upload and returns a [MuxUpload] to track it, if it was
    * in progress
    */
   @Suppress("unused")
+  @MainThread
   fun findUploadByFile(videoFile: File): MuxUpload? =
     uploadsByFilename[videoFile.absolutePath]?.let { MuxUpload.create(it) }
 
   /**
    * Finds all in-progress or paused uploads and returns [MuxUpload] objects representing them. You
    * don't need to hold these specific instances except where they're locally used. The upload jobs
-   * will continue in parallel if they're auto-managed (see [MuxUpload.Builder.manageUploadTask])
+   * will continue in parallel with the rest of your app
    */
   @Suppress("unused")
+  @MainThread
   fun allUploadJobs(): List<MuxUpload> = uploadsByFilename.values.map { MuxUpload.create(it) }
 
   /**
    * Resumes any upload jobs that were prematurely stopped due to failures or process death.
-   * The jobs will all be resumed where they left off. Any jobs resumed this way will be returned
+   * The jobs will all be resumed where they left off. Any uploads resumed this way will be returned
    */
+  @MainThread
   fun resumeAllCachedJobs(): List<MuxUpload> {
     return readAllCachedUploads()
       .onEach { uploadInfo -> startJob(uploadInfo, restart = false) }

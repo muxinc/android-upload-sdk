@@ -2,6 +2,7 @@ package com.mux.video.upload
 
 import android.content.Context
 import android.util.Log
+import com.mux.video.upload.MuxUploadSdk.initialize
 import com.mux.video.upload.api.MuxUploadManager
 import com.mux.video.upload.internal.UploadJobFactory
 import com.mux.video.upload.internal.UploadMetrics
@@ -11,13 +12,13 @@ import okhttp3.logging.HttpLoggingInterceptor
 import java.util.concurrent.TimeUnit
 
 /**
- * Uploads videos to Mux Video.
+ * This object allows you to get version info, enable logging, override the HTTP client, etc
  *
- * TODO: This would be a good place to put usage
+ * Before using the SDK, you must call [initialize].
  */
 object MuxUploadSdk {
   /**
-   * The current version of this SDK. Release builds of this SDK follow semver (https://semver.org)
+   * The current version of the SDK. Release builds of this SDK follow semver (https://semver.org)
    */
   @Suppress("unused")
   const val VERSION = BuildConfig.LIB_VERSION
@@ -56,12 +57,19 @@ object MuxUploadSdk {
       .build()
   }
 
-  @Suppress("unused") @JvmOverloads
+  /**
+   * Initializes the SDK with the given Context. The Context instance isn't saved.
+   *
+   * @param appContext A Context for your app. The passed instance isn't saved
+   * @param resumeStoppedUploads If true, uploads that failed due to errors or process death will be automatically resumed
+   */
+  @Suppress("unused")
+  @JvmOverloads
   fun initialize(appContext: Context, resumeStoppedUploads: Boolean = true) {
     initializeUploadPersistence(appContext)
     UploadMetrics.initialize(appContext)
 
-    if (resumeStoppedUploads)  {
+    if (resumeStoppedUploads) {
       val upl = MuxUploadManager.resumeAllCachedJobs()
     }
   }
