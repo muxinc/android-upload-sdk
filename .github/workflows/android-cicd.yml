@@ -19,7 +19,7 @@ jobs:
       - name: Set up JDK 11
         uses: actions/setup-java@v3
         with:
-          java-version: '11'
+          java-version: '17'
           distribution: 'temurin'
       # This step will build all modules configured for publication and publish them
       # Does your project publish multiple libraries in a dependency chain? You'll have to add another copy of this step and build the dependency in the first one
@@ -43,7 +43,7 @@ jobs:
       - name: Set up JDK 11
         uses: actions/setup-java@v3
         with:
-          java-version: '11'
+          java-version: '17'
           distribution: 'temurin'
       - name: Unit Tests
         uses: gradle/gradle-build-action@v2.4.2
