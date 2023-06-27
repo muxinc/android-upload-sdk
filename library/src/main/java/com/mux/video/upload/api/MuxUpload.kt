@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload.Builder
+import com.mux.video.upload.internal.TranscoderContext
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.update
 import kotlinx.coroutines.*
@@ -103,6 +104,10 @@ class MuxUpload private constructor(
     forceRestart: Boolean = false,
     coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Default)
   ) {
+    // See if the file need to be converted to a standard input
+    val tcx = TranscoderContext(uploadInfo, MuxUploadManager.appContext!!)
+    tcx.checkIfTranscodingIsNeeded()
+    tcx.start()
     // Get an updated UploadInfo with a job & event channels
     uploadInfo = if (autoManage) {
       // We may or may not get a fresh worker, depends on if the upload is already going
@@ -293,13 +298,15 @@ class MuxUpload private constructor(
      * @param videoFile a File that represents the video file you want to upload
      */
     @Suppress("unused")
-    constructor(uploadUri: String, videoFile: File) : this(Uri.parse(uploadUri), videoFile)
+    constructor(uploadUri: String, videoFile: File)
+            : this(Uri.parse(uploadUri), videoFile)
 
     private var manageTask: Boolean = true
     private var uploadInfo: UploadInfo = UploadInfo(
       // Default values
       remoteUri = uploadUri,
       file = videoFile,
+      standardizedFilePath = "",
       chunkSize = 8 * 1024 * 1024, // GCP recommends at least 8M chunk size
       retriesPerChunk = 3,
       optOut = false,
@@ -308,7 +315,6 @@ class MuxUpload private constructor(
       progressFlow = null,
       errorFlow = null
     )
-
     /**
      * Allow Mux to manage and remember the state of this upload
      */

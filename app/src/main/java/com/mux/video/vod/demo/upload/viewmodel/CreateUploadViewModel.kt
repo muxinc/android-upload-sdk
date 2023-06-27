@@ -194,4 +194,5 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
     val thumbnail: Bitmap? = null,
     val uploadUri: Uri? = null
   )
+
 }

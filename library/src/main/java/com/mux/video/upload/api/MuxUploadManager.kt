@@ -1,5 +1,6 @@
 package com.mux.video.upload.api
 
+import android.content.Context
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.internal.*
@@ -20,6 +21,7 @@ import java.io.File
  */
 object MuxUploadManager {
 
+  public  var appContext: Context? = null;
   private val mainScope = MainScope()
 
   private val uploadsByFilename: MutableMap<String, UploadInfo> = mutableMapOf()
