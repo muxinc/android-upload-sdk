@@ -39,6 +39,7 @@ internal class UploadMetrics private constructor() {
       endTimeMillis = endTimeMillis,
       fileSize = uploadInfo.file.length(),
       videoDuration = videoDuration ?: 0,
+      uploadURL = uploadInfo.remoteUri.toString(),
       sdkVersion = BuildConfig.LIB_VERSION,
       osName = "Android",
       osVersion = Build.VERSION.RELEASE,
@@ -93,6 +94,7 @@ private data class UploadEvent(
   val endTimeMillis: Long,
   val fileSize: Long,
   val videoDuration: Int,
+  val uploadURL: String,
   // Device-Derived
   val sdkVersion: String,
   val osName: String,
@@ -109,6 +111,7 @@ private data class UploadEvent(
       put("end_time", endTimeMillis / 1000.0)
       put("file_size", fileSize)
       put("video_duration", videoDuration)
+      put("upload_url", uploadURL)
       put("sdk_version", sdkVersion)
       put("os_name", osName)
       put("os_version", osVersion)
