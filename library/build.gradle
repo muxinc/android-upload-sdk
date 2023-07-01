@@ -54,12 +54,10 @@ muxDistribution {
 }
 
 dependencies {
-  implementation 'androidx.core:core-ktx:1.9.0'
-
   implementation "com.squareup.okhttp3:logging-interceptor:4.11.0"
   implementation "com.squareup.okhttp3:okhttp:4.11.0"
 
-  implementation 'androidx.core:core-ktx:1.9.0'
+  implementation 'androidx.core:core-ktx:1.10.1'
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.2"
 
   testImplementation 'junit:junit:4.13.2'
