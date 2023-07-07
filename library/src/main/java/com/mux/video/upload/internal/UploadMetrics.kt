@@ -58,7 +58,7 @@ internal class UploadMetrics private constructor() {
       // The SDK's http client is configured for uploading. We want the tighter default timeouts
       .callTimeout(0, TimeUnit.SECONDS)
       .writeTimeout(10, TimeUnit.SECONDS)
-      // Here, redirect-following is desired. Currently we do a special 302, but keep defaults also
+      // Here, redirect-following is desired. Currently we do a special one, but keep defaults also
       .followRedirects(true)
       .followSslRedirects(true)
       // We need to do a non-compliant redirect: 302 but preserving method and body
