@@ -3,18 +3,23 @@ package com.mux.video.upload.internal
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.MediaMetadataRetriever
+import android.net.Uri
 import android.os.Build
 import com.mux.video.upload.BuildConfig
 import com.mux.video.upload.MuxUploadSdk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 internal class UploadMetrics private constructor() {
+
+  private val logger get() = MuxUploadSdk.logger
 
   @JvmSynthetic
   internal suspend fun reportUpload(
@@ -49,10 +54,32 @@ internal class UploadMetrics private constructor() {
       regionCode = Locale.getDefault().country
     ).toJson()
 
-    // For this case, redirect-following is desired
     val httpClient = MuxUploadSdk.httpClient().newBuilder()
+      // The SDK's http client is configured for uploading. We want the tighter default timeouts
+      .callTimeout(0, TimeUnit.SECONDS)
+      .writeTimeout(10, TimeUnit.SECONDS)
+      // Here, redirect-following is desired. Currently we do a special 302, but keep defaults also
       .followRedirects(true)
       .followSslRedirects(true)
+      // We need to do a non-compliant redirect: 302 but preserving method and body
+      .addInterceptor(Interceptor { chain ->
+        val response = chain.proceed(chain.request())
+        if (response.code == 302) {
+          val redirectUri = response.headers("Location").firstOrNull()?.let { Uri.parse(it) }
+          // If 'Location' was present and was a real URL, redirect to it
+          if (redirectUri == null) {
+            logger.w("UploadMetrics", "302 redirect with invalid or blank url. ignoring")
+            response
+          } else {
+            val redirectedReq = response.request.newBuilder()
+              .url(redirectUri.toString())
+              .build()
+            chain.proceed(redirectedReq)
+          }
+        } else {
+          response
+        }
+      })
       .build()
     val request = Request.Builder()
       .url("https://mobile.muxanalytics.com")
