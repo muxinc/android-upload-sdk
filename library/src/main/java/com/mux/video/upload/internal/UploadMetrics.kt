@@ -58,19 +58,17 @@ internal class UploadMetrics private constructor() {
       // The SDK's http client is configured for uploading. We want the tighter default timeouts
       .callTimeout(0, TimeUnit.SECONDS)
       .writeTimeout(10, TimeUnit.SECONDS)
-      // Here, redirect-following is desired. Currently we do a special one, but keep defaults also
-      .followRedirects(true)
-      .followSslRedirects(true)
-      // We need to do a non-compliant redirect: 302 but preserving method and body
+      // We need to do a non-compliant redirect: 301 or 302 but preserving method and body
       .addInterceptor(Interceptor { chain ->
         val response = chain.proceed(chain.request())
-        if (response.code == 302) {
+        if (response.code in 301..302) {
           val redirectUri = response.headers("Location").firstOrNull()?.let { Uri.parse(it) }
           // If 'Location' was present and was a real URL, redirect to it
           if (redirectUri == null) {
-            logger.w("UploadMetrics", "302 redirect with invalid or blank url. ignoring")
+            logger.w("UploadMetrics", "redirect with invalid or blank url. ignoring")
             response
           } else {
+            response.close() // Required before starting a new request in the chain
             val redirectedReq = response.request.newBuilder()
               .url(redirectUri.toString())
               .build()
