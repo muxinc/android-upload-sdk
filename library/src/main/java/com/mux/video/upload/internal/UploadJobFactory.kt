@@ -9,6 +9,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import java.io.BufferedInputStream
+import java.io.File
 import java.io.FileInputStream
 import java.util.*
 
@@ -59,13 +60,24 @@ internal class UploadJobFactory private constructor(
     val successFlow = callbackFlow<MuxUpload.Progress>()
     val overallProgressFlow = callbackFlow<MuxUpload.Progress>()
     val errorFlow = callbackFlow<Exception>()
-    val fileStream = BufferedInputStream(FileInputStream(uploadInfo.file))
-    val fileSize = uploadInfo.file.length()
+    var fileStream = BufferedInputStream(FileInputStream(uploadInfo.file))
+    var fileSize = uploadInfo.file.length()
     val metrics = UploadMetrics.create()
 
     val uploadJob = outerScope.async {
       val startTime = System.currentTimeMillis()
       try {
+        // See if the file need to be converted to a standard input
+        val tcx = TranscoderContext(uploadInfo, MuxUploadManager.appContext!!)
+        tcx.start()
+        if (tcx.fileTranscoded) {
+          // delete uploadInfo.file and use uploadInfo.
+          uploadInfo.file.delete()
+          uploadInfo.file = File(uploadInfo.standardizedFilePath)
+          fileStream = BufferedInputStream(FileInputStream(uploadInfo.file))
+          fileSize = uploadInfo.file.length()
+        }
+
         var totalBytesSent: Long = getAlreadyTransferredBytes(uploadInfo)
         Log.d("UploadJobFactory", "totalBytesSent: $totalBytesSent")
         val chunkBuffer = ByteArray(uploadInfo.chunkSize)

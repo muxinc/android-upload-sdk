@@ -20,7 +20,7 @@ internal data class UploadInfo(
   @JvmSynthetic internal var shouldStandardize: Boolean = false,
   @JvmSynthetic internal var inputFileFormat: String? = "",
   @JvmSynthetic internal val remoteUri: Uri,
-  @JvmSynthetic internal val file: File,
+  @JvmSynthetic internal var file: File,
   @JvmSynthetic internal var standardizedFilePath: String? = "",
   @JvmSynthetic internal val chunkSize: Int,
   @JvmSynthetic internal val retriesPerChunk: Int,

@@ -104,10 +104,6 @@ class MuxUpload private constructor(
     forceRestart: Boolean = false,
     coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Default)
   ) {
-    // See if the file need to be converted to a standard input
-    val tcx = TranscoderContext(uploadInfo, MuxUploadManager.appContext!!)
-    tcx.checkIfTranscodingIsNeeded()
-    tcx.start()
     // Get an updated UploadInfo with a job & event channels
     uploadInfo = if (autoManage) {
       // We may or may not get a fresh worker, depends on if the upload is already going
