@@ -7,6 +7,7 @@ import android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlan
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
+import com.mux.video.upload.MuxUploadSdk
 import io.github.crow_misia.libyuv.FilterMode
 import io.github.crow_misia.libyuv.Nv12Buffer
 import java.io.File
@@ -20,6 +21,8 @@ internal class TranscoderContext private constructor(
     private var uploadInfo: UploadInfo,
     private val appContext: Context
 ) {
+    private val logger get() = MuxUploadSdk.logger
+
     val MAX_ALLOWED_BITRATE = 8000000
     val MAX_ALLOWED_FRAMERATE = 120;
     val MAX_ALLOWED_WIDTH = 1920
@@ -75,6 +78,8 @@ internal class TranscoderContext private constructor(
     private var configured = false
 
     companion object {
+      const val LOG_TAG = "TranscoderContext"
+
       @JvmSynthetic
       internal fun create(uploadInfo: UploadInfo, appContext: Context): TranscoderContext {
         return TranscoderContext(uploadInfo, appContext)
@@ -101,7 +106,7 @@ internal class TranscoderContext private constructor(
             configureDecoders()
             configured = true
         } catch (e:Exception) {
-            e.printStackTrace()
+          logger.e(LOG_TAG, "Failed to initialize.", e)
         }
     }
 
@@ -262,6 +267,8 @@ internal class TranscoderContext private constructor(
     }
 
     private fun releaseCodecs() {
+        logger.v(LOG_TAG, "releaseCodecs(): called")
+
         videoDecoder!!.stop()
         videoDecoder!!.release()
         videoEncoder!!.stop()
@@ -279,7 +286,9 @@ internal class TranscoderContext private constructor(
 
     @JvmSynthetic
     internal fun process(): UploadInfo {
+        logger.v(LOG_TAG, "process() starting")
         if (!configured) {
+            logger.e(LOG_TAG, "Skipped: Did not self-configure. Check the logs for errors")
             return uploadInfo;
         }
         val started = System.currentTimeMillis()
@@ -298,7 +307,7 @@ internal class TranscoderContext private constructor(
             muxVideoFrame()
             releaseCodecs()
         } catch (err:Exception) {
-            err.printStackTrace()
+            logger.e(LOG_TAG, "Failed to standardize input file ${uploadInfo.inputFile}", err)
         }
         val duration = System.currentTimeMillis() - started
         try {
@@ -306,9 +315,10 @@ internal class TranscoderContext private constructor(
             muxer!!.release()
             fileTranscoded = true;
         } catch (ex:Exception) {
-            ex.printStackTrace()
+          // todo em - we might be able to slide by with a success as long as stop() completes
+          logger.e(LOG_TAG, "Couldn't stop the MediaMuxer", ex)
         }
-        Log.e("Muxer", "Transcoding duration time: " + duration)
+        logger.i("Muxer", "Transcoding duration time: $duration")
 
         return uploadInfo
     }
@@ -320,7 +330,7 @@ internal class TranscoderContext private constructor(
 //                Log.i("Muxer", "We got B frame");
 //            }
             if (frame.isKeyFrame()) {
-                Log.i(
+                logger.i(
                     "Muxer", "Muxed video sample, size: " + frame.info.size
                             + ", pts: " + frame.info.presentationTimeUs
                 )
