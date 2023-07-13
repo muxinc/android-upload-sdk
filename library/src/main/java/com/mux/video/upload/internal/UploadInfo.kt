@@ -18,10 +18,9 @@ import java.io.File
  */
 internal data class UploadInfo(
   @JvmSynthetic internal val shouldStandardize: Boolean = false,
-  @JvmSynthetic internal val inputFileFormat: String? = "",
   @JvmSynthetic internal val remoteUri: Uri,
-  @JvmSynthetic internal var file: File,
-  @JvmSynthetic internal val standardizedFilePath: String? = "",
+  @JvmSynthetic internal val inputFile: File,
+  @JvmSynthetic internal val standardizedFile: File? = null,
   @JvmSynthetic internal val chunkSize: Int,
   @JvmSynthetic internal val retriesPerChunk: Int,
   @JvmSynthetic internal val optOut: Boolean,
@@ -30,6 +29,7 @@ internal data class UploadInfo(
   @JvmSynthetic internal val progressFlow: SharedFlow<MuxUpload.Progress>?,
   @JvmSynthetic internal val errorFlow: SharedFlow<Exception>?,
 ) {
+  val fileForUpload: File get() = standardizedFile ?: inputFile
   fun isRunning(): Boolean = uploadJob?.isActive ?: false
 }
 
@@ -40,10 +40,9 @@ internal data class UploadInfo(
 @JvmSynthetic
 internal fun UploadInfo.update(
   shouldStandardize: Boolean = this.shouldStandardize,
-  inputFileFormat: String? = this.inputFileFormat,
   remoteUri: Uri = this.remoteUri,
-  file: File = this.file,
-  standardizedFilePath: String? = this.standardizedFilePath,
+  file: File = this.inputFile,
+  standardizedFile: File? = this.standardizedFile,
   chunkSize: Int = this.chunkSize,
   retriesPerChunk: Int = this.retriesPerChunk,
   optOut: Boolean = this.optOut,
@@ -53,10 +52,9 @@ internal fun UploadInfo.update(
   errorFlow: SharedFlow<Exception>? = this.errorFlow,
 ) = UploadInfo(
   shouldStandardize,
-  inputFileFormat,
   remoteUri,
   file,
-  standardizedFilePath,
+  standardizedFile,
   chunkSize,
   retriesPerChunk,
   optOut,

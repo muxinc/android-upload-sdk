@@ -5,7 +5,6 @@ import android.media.*
 import android.media.MediaCodec.BufferInfo
 import android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar
 import android.os.Build
-import android.os.Environment
 import android.util.Log
 import androidx.annotation.RequiresApi
 import io.github.crow_misia.libyuv.FilterMode
@@ -86,11 +85,11 @@ class TranscoderContext internal constructor(
 //        val testFile = File(directory, "output.mp4")
 //        val output = testFile.outputStream()
         muxer = MediaMuxer(destFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        uploadInfo = uploadInfo.update(standardizedFilePath = destFile.absolutePath)
+        uploadInfo = uploadInfo.update(standardizedFile = destFile)
 //        muxer = MediaMuxer(testFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
         try {
-            extractor.setDataSource(uploadInfo.file.absolutePath)
+            extractor.setDataSource(uploadInfo.inputFile.absolutePath)
             checkIfTranscodingIsNeeded()
             configureDecoders()
             configured = true
@@ -115,7 +114,6 @@ class TranscoderContext internal constructor(
         var shouldStandardize: Boolean = false
         for (i in 0 until extractor.trackCount) {
             val format = extractor.getTrackFormat(i)
-            uploadInfo = uploadInfo.update(inputFileFormat = format.getString("file-format"))
             val mime = format.getString(MediaFormat.KEY_MIME)
             var inputDuration:Long = -1;
             if (mime?.lowercase()?.contains("video") == true) {
@@ -145,7 +143,7 @@ class TranscoderContext internal constructor(
                 inputBitrate = format.getIntegerCompat(MediaFormat.KEY_BIT_RATE, -1)
                 inputDuration = format.getLongCompat(MediaFormat.KEY_DURATION, -1)
                 if (inputBitrate == -1 && inputDuration != -1L) {
-                    inputBitrate = ((uploadInfo.file.length() * 8) / (inputDuration / 1000000)).toInt()
+                    inputBitrate = ((uploadInfo.inputFile.length() * 8) / (inputDuration / 1000000)).toInt()
                 }
                 if (inputBitrate > MAX_ALLOWED_BITRATE) {
                     shouldStandardize = true

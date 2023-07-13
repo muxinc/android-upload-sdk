@@ -42,12 +42,12 @@ class UploadPersistenceTests : AbsRobolectricTest() {
       1,
       uploadsOut.size
     )
-    val uploadOutA = uploadsOut.find { it.file.absolutePath == uploadInfoInA.file.absolutePath }
+    val uploadOutA = uploadsOut.find { it.inputFile.absolutePath == uploadInfoInA.inputFile.absolutePath }
     assertNull(
       "file A should NOT be in the output",
       uploadOutA
     )
-    val uploadOutB = uploadsOut.find { it.file.absolutePath == uploadInfoInB.file.absolutePath }
+    val uploadOutB = uploadsOut.find { it.inputFile.absolutePath == uploadInfoInB.inputFile.absolutePath }
     assertNotNull(
       "upload B should be in the output",
       uploadOutB,
@@ -81,7 +81,7 @@ class UploadPersistenceTests : AbsRobolectricTest() {
       2,
       uploadsOut.size
     )
-    val uploadOutA = uploadsOut.find { it.file.absolutePath == uploadInfoInA.file.absolutePath }
+    val uploadOutA = uploadsOut.find { it.inputFile.absolutePath == uploadInfoInA.inputFile.absolutePath }
     assertNotNull(
       "file A should be in the output",
       uploadOutA
@@ -129,7 +129,7 @@ class UploadPersistenceTests : AbsRobolectricTest() {
   }
 
   private fun uploadInfo(name: String = "a/file") = UploadInfo(
-    file = File(name).absoluteFile,
+    inputFile = File(name).absoluteFile,
     remoteUri = Uri.parse("https://www.mux.com/$name"),
     chunkSize = 2,
     retriesPerChunk = 3,

@@ -4,7 +4,6 @@ import android.net.Uri
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload.Builder
-import com.mux.video.upload.internal.TranscoderContext
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.update
 import kotlinx.coroutines.*
@@ -38,7 +37,7 @@ class MuxUpload private constructor(
   /**
    * File containing the video to be uploaded
    */
-  val videoFile: File get() = uploadInfo.file
+  val videoFile: File get() = uploadInfo.inputFile
 
   /**
    * The current state of the upload. To be notified of state updates, you can use
@@ -113,7 +112,7 @@ class MuxUpload private constructor(
       /*uploadInfo =*/ MuxUploadSdk.uploadJobFactory().createUploadJob(uploadInfo, coroutineScope)
     }
 
-    logger.i("MuxUpload", "started upload: ${uploadInfo.file}")
+    logger.i("MuxUpload", "started upload: ${uploadInfo.inputFile}")
     maybeObserveUpload(uploadInfo)
   }
 
@@ -301,8 +300,7 @@ class MuxUpload private constructor(
     private var uploadInfo: UploadInfo = UploadInfo(
       // Default values
       remoteUri = uploadUri,
-      file = videoFile,
-      standardizedFilePath = "",
+      inputFile = videoFile,
       chunkSize = 8 * 1024 * 1024, // GCP recommends at least 8M chunk size
       retriesPerChunk = 3,
       optOut = false,
