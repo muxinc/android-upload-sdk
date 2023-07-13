@@ -80,7 +80,8 @@ internal class UploadJobFactory private constructor(
             fileStream = withContext(Dispatchers.IO) {
               BufferedInputStream(FileInputStream(internalUploadInfo.standardizedFile))
             }
-            fileSize = internalUploadInfo.inputFile.length()
+            // This !! is safe by contract: process() will set the standardizedFile
+            fileSize = internalUploadInfo.standardizedFile!!.length()
           }
         }
 
@@ -97,24 +98,24 @@ internal class UploadJobFactory private constructor(
         do {
           // The last chunk will almost definitely be smaller than a whole chunk
           val bytesLeft = fileSize - totalBytesSent
-          val chunkSize = if (internalUploadInfo.chunkSize > bytesLeft) {
+          val thisChunkSize = if (internalUploadInfo.chunkSize > bytesLeft) {
             bytesLeft.toInt()
           } else {
             internalUploadInfo.chunkSize
           }
-
+          logger.i("UploadJob", "Trying to read $thisChunkSize bytes")
           //read-in a chunk
           val fileReadSize = withContext(Dispatchers.IO) {
-            fileStream.read(chunkBuffer, 0, chunkSize)
+            fileStream.read(chunkBuffer, 0, thisChunkSize)
           }
-          if (fileReadSize != chunkSize) { // Guaranteed unless the file was changed under us or sth
-            throw IllegalStateException("expected to read $chunkSize bytes, but read $fileReadSize")
+          if (fileReadSize != thisChunkSize) { // Guaranteed unless the file was changed under us or sth
+            throw IllegalStateException("expected to read $thisChunkSize bytes, but read $fileReadSize")
           }
 
           val chunk = ChunkWorker.Chunk(
-            contentLength = chunkSize,
+            contentLength = thisChunkSize,
             startByte = totalBytesSent,
-            endByte = totalBytesSent + chunkSize - 1,
+            endByte = totalBytesSent + thisChunkSize - 1,
             totalFileSize = fileSize,
             sliceData = chunkBuffer,
           )

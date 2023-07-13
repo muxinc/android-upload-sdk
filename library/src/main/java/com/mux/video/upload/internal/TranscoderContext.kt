@@ -314,11 +314,14 @@ internal class TranscoderContext private constructor(
             muxer!!.stop()
             muxer!!.release()
             fileTranscoded = true;
+
+            logger.i("Muxer", "Transcoding duration time: $duration")
+            logger.i("Muxer", "Original file size: ${uploadInfo.inputFile.length()}")
+            logger.i("Muxer", "Transcoded file size: ${uploadInfo.standardizedFile?.length()}")
         } catch (ex:Exception) {
           // todo em - we might be able to slide by with a success as long as stop() completes
-          logger.e(LOG_TAG, "Couldn't stop the MediaMuxer", ex)
+          logger.e(LOG_TAG, "Couldn't stop the MediaMuxer!", ex)
         }
-        logger.i("Muxer", "Transcoding duration time: $duration")
 
         return uploadInfo
     }
