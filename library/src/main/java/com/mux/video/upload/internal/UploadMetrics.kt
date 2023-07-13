@@ -30,7 +30,7 @@ internal class UploadMetrics private constructor() {
     val videoDuration = withContext(Dispatchers.IO) {
       try {
         MediaMetadataRetriever().use { retriever ->
-          retriever.setDataSource(uploadInfo.file.absolutePath)
+          retriever.setDataSource(uploadInfo.inputFile.absolutePath)
           retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toInt()
         }
       } catch (e: Exception) {
@@ -42,7 +42,7 @@ internal class UploadMetrics private constructor() {
     val eventJson = UploadEvent(
       startTimeMillis = startTimeMillis,
       endTimeMillis = endTimeMillis,
-      fileSize = uploadInfo.file.length(),
+      fileSize = uploadInfo.inputFile.length(),
       videoDuration = videoDuration ?: 0,
       uploadURL = uploadInfo.remoteUri.toString(),
       sdkVersion = BuildConfig.LIB_VERSION,

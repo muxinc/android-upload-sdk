@@ -1,13 +1,13 @@
 package com.mux.video.upload.internal
 
 import android.content.Context
-import android.content.ContextWrapper
 import android.media.*
 import android.media.MediaCodec.BufferInfo
 import android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar
 import android.os.Build
-import android.os.Environment
 import android.util.Log
+import androidx.annotation.RequiresApi
+import com.mux.video.upload.MuxUploadSdk
 import io.github.crow_misia.libyuv.FilterMode
 import io.github.crow_misia.libyuv.Nv12Buffer
 import java.io.File
@@ -16,9 +16,13 @@ import java.util.*
 import kotlin.experimental.and
 
 
-class TranscoderContext internal constructor(
-    private val uploadInfo: UploadInfo, private val appContext: Context
+@RequiresApi(Build.VERSION_CODES.LOLLIPOP)
+internal class TranscoderContext private constructor(
+    private var uploadInfo: UploadInfo,
+    private val appContext: Context
 ) {
+    private val logger get() = MuxUploadSdk.logger
+
     val MAX_ALLOWED_BITRATE = 8000000
     val MAX_ALLOWED_FRAMERATE = 120;
     val MAX_ALLOWED_WIDTH = 1920
@@ -73,6 +77,15 @@ class TranscoderContext internal constructor(
     public var  fileTranscoded = false
     private var configured = false
 
+    companion object {
+      const val LOG_TAG = "TranscoderContext"
+
+      @JvmSynthetic
+      internal fun create(uploadInfo: UploadInfo, appContext: Context): TranscoderContext {
+        return TranscoderContext(uploadInfo, appContext)
+      }
+    }
+
     init {
         val cacheDir = File(appContext.cacheDir, "mux-upload")
         cacheDir.mkdirs()
@@ -84,16 +97,16 @@ class TranscoderContext internal constructor(
 //        val testFile = File(directory, "output.mp4")
 //        val output = testFile.outputStream()
         muxer = MediaMuxer(destFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        uploadInfo.standardizedFilePath = destFile.absolutePath
+        uploadInfo = uploadInfo.update(standardizedFile = destFile)
 //        muxer = MediaMuxer(testFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
         try {
-            extractor.setDataSource(uploadInfo.file.absolutePath)
+            extractor.setDataSource(uploadInfo.inputFile.absolutePath)
             checkIfTranscodingIsNeeded()
             configureDecoders()
             configured = true
         } catch (e:Exception) {
-            e.printStackTrace()
+          logger.e(LOG_TAG, "Failed to initialize.", e)
         }
     }
 
@@ -102,7 +115,7 @@ class TranscoderContext internal constructor(
         var result:ArrayList<MediaCodecInfo> = ArrayList<MediaCodecInfo>();
         for(codecInfo in list.codecInfos) {
             Log.i("CodecInfo", codecInfo.name)
-            if(codecInfo.name.contains(mimeType) && codecInfo.isEncoder && codecInfo.isHardwareAccelerated) {
+            if(codecInfo.name.contains(mimeType) && codecInfo.isEncoder && codecInfo.isHardwareAcceleratedCompat) {
                 result.add(codecInfo);
             }
         }
@@ -110,9 +123,9 @@ class TranscoderContext internal constructor(
     }
 
     private fun checkIfTranscodingIsNeeded() {
+        var shouldStandardize: Boolean = false
         for (i in 0 until extractor.trackCount) {
             val format = extractor.getTrackFormat(i)
-            uploadInfo.inputFileFormat = format.getString("file-format");
             val mime = format.getString(MediaFormat.KEY_MIME)
             var inputDuration:Long = -1;
             if (mime?.lowercase()?.contains("video") == true) {
@@ -121,7 +134,7 @@ class TranscoderContext internal constructor(
                 // Check if resolution is greater then 720p
                 if ((inputWidth > MAX_ALLOWED_WIDTH && inputHeighth > MAX_ALLOWED_HEIGTH)
                     || (inputHeighth > MAX_ALLOWED_WIDTH && inputWidth > MAX_ALLOWED_HEIGTH)) {
-                    uploadInfo.shouldStandardize = true
+                    shouldStandardize = true
                     if(inputWidth > inputHeighth) {
                         targetedWidth = MAX_ALLOWED_WIDTH
                         targetedHeight = targetedWidth * (inputHeighth / inputWidth)
@@ -137,20 +150,20 @@ class TranscoderContext internal constructor(
 
                 // Check if compersion is h264
                 if (!mime.equals(MediaFormat.MIMETYPE_VIDEO_AVC)) {
-                    uploadInfo.shouldStandardize = true
+                    shouldStandardize = true
                 }
-                inputBitrate = format.getInteger(MediaFormat.KEY_BIT_RATE, -1)
-                inputDuration = format.getLong(MediaFormat.KEY_DURATION, -1)
+                inputBitrate = format.getIntegerCompat(MediaFormat.KEY_BIT_RATE, -1)
+                inputDuration = format.getLongCompat(MediaFormat.KEY_DURATION, -1)
                 if (inputBitrate == -1 && inputDuration != -1L) {
-                    inputBitrate = ((uploadInfo.file.length() * 8) / (inputDuration / 1000000)).toInt()
+                    inputBitrate = ((uploadInfo.inputFile.length() * 8) / (inputDuration / 1000000)).toInt()
                 }
                 if (inputBitrate > MAX_ALLOWED_BITRATE) {
-                    uploadInfo.shouldStandardize = true
+                    shouldStandardize = true
                     targetedBitrate = MAX_ALLOWED_BITRATE
                 }
-                inputFramerate = format.getInteger(MediaFormat.KEY_FRAME_RATE, -1)
+                inputFramerate = format.getIntegerCompat(MediaFormat.KEY_FRAME_RATE, -1)
                 if (inputFramerate > MAX_ALLOWED_FRAMERATE) {
-                    uploadInfo.shouldStandardize = true
+                    shouldStandardize = true
                     targetedFramerate = OPTIMAL_FRAMERATE
                 } else {
                     targetedFramerate = inputFramerate
@@ -165,12 +178,14 @@ class TranscoderContext internal constructor(
                 inputAudioFormat = format;
                 extractor.selectTrack(i)
             }
+
+            uploadInfo = uploadInfo.update(shouldStandardize = shouldStandardize)
         }
     }
 
     private fun configureDecoders() {
         // Init decoders and encoders
-        numberOfInputFrames = inputVideoFormat!!.getInteger("frame-count", -1)
+        numberOfInputFrames = inputVideoFormat!!.getIntegerCompat("frame-count", -1)
         videoDecoder =
             MediaCodec.createDecoderByType(inputVideoFormat!!.getString(MediaFormat.KEY_MIME)!!)
         videoDecoder!!.configure(inputVideoFormat, null, null, 0)
@@ -224,7 +239,9 @@ class TranscoderContext internal constructor(
                         break
                     }
                 }
-                outputVideoFormat!!.setInteger(MediaFormat.KEY_QUALITY, codecCap.encoderCapabilities.qualityRange.upper)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    outputVideoFormat!!.setInteger(MediaFormat.KEY_QUALITY, codecCap.encoderCapabilities.qualityRange.upper)
+                }
                 videoEncoder = MediaCodec.createByCodecName(encoder.name)
                 // Check if B-frame encoding is supported
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -250,6 +267,8 @@ class TranscoderContext internal constructor(
     }
 
     private fun releaseCodecs() {
+        logger.v(LOG_TAG, "releaseCodecs(): called")
+
         videoDecoder!!.stop()
         videoDecoder!!.release()
         videoEncoder!!.stop()
@@ -265,9 +284,12 @@ class TranscoderContext internal constructor(
         muxer!!.start()
     }
 
-    fun start() {
+    @JvmSynthetic
+    internal fun process(): UploadInfo {
+        logger.v(LOG_TAG, "process() starting")
         if (!configured) {
-            return;
+            logger.e(LOG_TAG, "Skipped: Did not self-configure. Check the logs for errors")
+            return uploadInfo;
         }
         val started = System.currentTimeMillis()
         try {
@@ -285,17 +307,23 @@ class TranscoderContext internal constructor(
             muxVideoFrame()
             releaseCodecs()
         } catch (err:Exception) {
-            err.printStackTrace()
+            logger.e(LOG_TAG, "Failed to standardize input file ${uploadInfo.inputFile}", err)
         }
         val duration = System.currentTimeMillis() - started
         try {
             muxer!!.stop()
             muxer!!.release()
             fileTranscoded = true;
+
+            logger.i("Muxer", "Transcoding duration time: $duration")
+            logger.i("Muxer", "Original file size: ${uploadInfo.inputFile.length()}")
+            logger.i("Muxer", "Transcoded file size: ${uploadInfo.standardizedFile?.length()}")
         } catch (ex:Exception) {
-            ex.printStackTrace()
+          // todo em - we might be able to slide by with a success as long as stop() completes
+          logger.e(LOG_TAG, "Couldn't stop the MediaMuxer!", ex)
         }
-        Log.e("Muxer", "Transcoding duration time: " + duration)
+
+        return uploadInfo
     }
 
     private fun muxVideoFrame() {
@@ -305,7 +333,7 @@ class TranscoderContext internal constructor(
 //                Log.i("Muxer", "We got B frame");
 //            }
             if (frame.isKeyFrame()) {
-                Log.i(
+                logger.i(
                     "Muxer", "Muxed video sample, size: " + frame.info.size
                             + ", pts: " + frame.info.presentationTimeUs
                 )
