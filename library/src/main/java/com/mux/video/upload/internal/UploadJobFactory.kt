@@ -71,7 +71,7 @@ internal class UploadJobFactory private constructor(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
           // See if the file need to be converted to a standard input
           val tcx = TranscoderContext(uploadInfo, MuxUploadManager.appContext!!)
-          tcx.start()
+          tcx.process()
           if (tcx.fileTranscoded) {
             // delete uploadInfo.file and use uploadInfo.
             uploadInfo.file.delete()
