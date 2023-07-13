@@ -16,7 +16,7 @@ import kotlin.experimental.and
 
 
 @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
-class TranscoderContext internal constructor(
+internal class TranscoderContext private constructor(
     private var uploadInfo: UploadInfo,
     private val appContext: Context
 ) {
@@ -73,6 +73,13 @@ class TranscoderContext internal constructor(
     private var audioEncoder:MediaCodec? = null
     public var  fileTranscoded = false
     private var configured = false
+
+    companion object {
+      @JvmSynthetic
+      internal fun create(uploadInfo: UploadInfo, appContext: Context): TranscoderContext {
+        return TranscoderContext(uploadInfo, appContext)
+      }
+    }
 
     init {
         val cacheDir = File(appContext.cacheDir, "mux-upload")
