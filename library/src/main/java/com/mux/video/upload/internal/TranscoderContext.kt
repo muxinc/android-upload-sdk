@@ -104,7 +104,7 @@ class TranscoderContext internal constructor(
         var result:ArrayList<MediaCodecInfo> = ArrayList<MediaCodecInfo>();
         for(codecInfo in list.codecInfos) {
             Log.i("CodecInfo", codecInfo.name)
-            if(codecInfo.name.contains(mimeType) && codecInfo.isEncoder && codecInfo.isHardwareAcceleratedCompat()) {
+            if(codecInfo.name.contains(mimeType) && codecInfo.isEncoder && codecInfo.isHardwareAcceleratedCompat) {
                 result.add(codecInfo);
             }
         }

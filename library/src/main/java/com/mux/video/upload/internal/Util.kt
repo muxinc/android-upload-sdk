@@ -59,8 +59,7 @@ internal fun MediaFormat.getLongCompat(key: String, default: Long): Long {
  * On API < Q, this information is not available so this method returns true. This behavior could
  * potentially be expanded in the future
  */
-@JvmSynthetic
-internal fun MediaCodecInfo.isHardwareAcceleratedCompat(): Boolean {
+internal val MediaCodecInfo.isHardwareAcceleratedCompat: Boolean get() {
   return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
     isHardwareAccelerated
   } else {
