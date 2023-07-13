@@ -1,5 +1,6 @@
 package com.mux.video.upload.internal
 
+import android.os.Build
 import android.util.Log
 import com.mux.video.upload.BuildConfig
 import com.mux.video.upload.MuxUploadSdk
@@ -67,15 +68,17 @@ internal class UploadJobFactory private constructor(
     val uploadJob = outerScope.async {
       val startTime = System.currentTimeMillis()
       try {
-        // See if the file need to be converted to a standard input
-        val tcx = TranscoderContext(uploadInfo, MuxUploadManager.appContext!!)
-        tcx.start()
-        if (tcx.fileTranscoded) {
-          // delete uploadInfo.file and use uploadInfo.
-          uploadInfo.file.delete()
-          uploadInfo.file = File(uploadInfo.standardizedFilePath)
-          fileStream = BufferedInputStream(FileInputStream(uploadInfo.file))
-          fileSize = uploadInfo.file.length()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+          // See if the file need to be converted to a standard input
+          val tcx = TranscoderContext(uploadInfo, MuxUploadManager.appContext!!)
+          tcx.start()
+          if (tcx.fileTranscoded) {
+            // delete uploadInfo.file and use uploadInfo.
+            uploadInfo.file.delete()
+            uploadInfo.file = File(uploadInfo.standardizedFilePath)
+            fileStream = BufferedInputStream(FileInputStream(uploadInfo.file))
+            fileSize = uploadInfo.file.length()
+          }
         }
 
         var totalBytesSent: Long = getAlreadyTransferredBytes(uploadInfo)

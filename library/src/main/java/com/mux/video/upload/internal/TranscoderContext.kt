@@ -8,6 +8,7 @@ import android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlan
 import android.os.Build
 import android.os.Environment
 import android.util.Log
+import androidx.annotation.RequiresApi
 import io.github.crow_misia.libyuv.FilterMode
 import io.github.crow_misia.libyuv.Nv12Buffer
 import java.io.File
@@ -16,6 +17,7 @@ import java.util.*
 import kotlin.experimental.and
 
 
+@RequiresApi(Build.VERSION_CODES.LOLLIPOP)
 class TranscoderContext internal constructor(
     private val uploadInfo: UploadInfo, private val appContext: Context
 ) {
@@ -102,7 +104,7 @@ class TranscoderContext internal constructor(
         var result:ArrayList<MediaCodecInfo> = ArrayList<MediaCodecInfo>();
         for(codecInfo in list.codecInfos) {
             Log.i("CodecInfo", codecInfo.name)
-            if(codecInfo.name.contains(mimeType) && codecInfo.isEncoder && codecInfo.isHardwareAccelerated) {
+            if(codecInfo.name.contains(mimeType) && codecInfo.isEncoder && codecInfo.isHardwareAcceleratedCompat()) {
                 result.add(codecInfo);
             }
         }
@@ -139,8 +141,8 @@ class TranscoderContext internal constructor(
                 if (!mime.equals(MediaFormat.MIMETYPE_VIDEO_AVC)) {
                     uploadInfo.shouldStandardize = true
                 }
-                inputBitrate = format.getInteger(MediaFormat.KEY_BIT_RATE, -1)
-                inputDuration = format.getLong(MediaFormat.KEY_DURATION, -1)
+                inputBitrate = format.getIntegerCompat(MediaFormat.KEY_BIT_RATE, -1)
+                inputDuration = format.getLongCompat(MediaFormat.KEY_DURATION, -1)
                 if (inputBitrate == -1 && inputDuration != -1L) {
                     inputBitrate = ((uploadInfo.file.length() * 8) / (inputDuration / 1000000)).toInt()
                 }
@@ -148,7 +150,7 @@ class TranscoderContext internal constructor(
                     uploadInfo.shouldStandardize = true
                     targetedBitrate = MAX_ALLOWED_BITRATE
                 }
-                inputFramerate = format.getInteger(MediaFormat.KEY_FRAME_RATE, -1)
+                inputFramerate = format.getIntegerCompat(MediaFormat.KEY_FRAME_RATE, -1)
                 if (inputFramerate > MAX_ALLOWED_FRAMERATE) {
                     uploadInfo.shouldStandardize = true
                     targetedFramerate = OPTIMAL_FRAMERATE
@@ -170,7 +172,7 @@ class TranscoderContext internal constructor(
 
     private fun configureDecoders() {
         // Init decoders and encoders
-        numberOfInputFrames = inputVideoFormat!!.getInteger("frame-count", -1)
+        numberOfInputFrames = inputVideoFormat!!.getIntegerCompat("frame-count", -1)
         videoDecoder =
             MediaCodec.createDecoderByType(inputVideoFormat!!.getString(MediaFormat.KEY_MIME)!!)
         videoDecoder!!.configure(inputVideoFormat, null, null, 0)
@@ -224,7 +226,9 @@ class TranscoderContext internal constructor(
                         break
                     }
                 }
-                outputVideoFormat!!.setInteger(MediaFormat.KEY_QUALITY, codecCap.encoderCapabilities.qualityRange.upper)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    outputVideoFormat!!.setInteger(MediaFormat.KEY_QUALITY, codecCap.encoderCapabilities.qualityRange.upper)
+                }
                 videoEncoder = MediaCodec.createByCodecName(encoder.name)
                 // Check if B-frame encoding is supported
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
