@@ -178,8 +178,6 @@ internal class TranscoderContext private constructor(
                 inputAudioFormat = format;
                 extractor.selectTrack(i)
             }
-
-            uploadInfo = uploadInfo.update(shouldStandardize = shouldStandardize)
         }
     }
 
