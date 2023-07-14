@@ -114,7 +114,7 @@ internal class TranscoderContext private constructor(
         val list = MediaCodecList(MediaCodecList.REGULAR_CODECS);
         var result:ArrayList<MediaCodecInfo> = ArrayList<MediaCodecInfo>();
         for(codecInfo in list.codecInfos) {
-            Log.i("CodecInfo", codecInfo.name)
+            logger.v("CodecInfo", codecInfo.name)
             if(codecInfo.name.contains(mimeType) && codecInfo.isEncoder && codecInfo.isHardwareAcceleratedCompat) {
                 result.add(codecInfo);
             }
@@ -254,7 +254,7 @@ internal class TranscoderContext private constructor(
                 videoEncoder!!.configure(outputVideoFormat,null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
                 break;
             } catch (err:java.lang.Exception) {
-                err.printStackTrace();
+              logger.w(LOG_TAG, "Couldn't evaluate encoder ${encoder.name}. Skipping it", err)
             }
         }
         videoEncoder!!.start()
