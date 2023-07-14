@@ -29,6 +29,7 @@ internal data class UploadInfo(
   @JvmSynthetic internal val progressFlow: SharedFlow<MuxUpload.Progress>?,
   @JvmSynthetic internal val errorFlow: SharedFlow<Exception>?,
 ) {
+  val fileForUpload: File get() = standardizedFile ?: inputFile
   fun isRunning(): Boolean = uploadJob?.isActive ?: false
 }
 
