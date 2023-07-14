@@ -269,10 +269,19 @@ internal class TranscoderContext private constructor(
     private fun releaseCodecs() {
         logger.v(LOG_TAG, "releaseCodecs(): called")
 
-        videoDecoder!!.stop()
-        videoDecoder!!.release()
-        videoEncoder!!.stop()
-        videoEncoder!!.release()
+        videoDecoder?.stop()
+        videoDecoder?.release()
+        videoEncoder?.stop()
+        videoEncoder?.release()
+
+        audioDecoder?.apply {
+          stop()
+          release()
+        }
+        audioEncoder?.apply {
+          stop()
+          release()
+        }
     }
 
     private fun configureMuxer() {
