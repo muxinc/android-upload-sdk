@@ -17,8 +17,10 @@ import java.io.File
  * Job and Flows populated
  */
 internal data class UploadInfo(
+  @JvmSynthetic internal val shouldStandardize: Boolean = false,
   @JvmSynthetic internal val remoteUri: Uri,
-  @JvmSynthetic internal val file: File,
+  @JvmSynthetic internal val inputFile: File,
+  @JvmSynthetic internal val standardizedFile: File? = null,
   @JvmSynthetic internal val chunkSize: Int,
   @JvmSynthetic internal val retriesPerChunk: Int,
   @JvmSynthetic internal val optOut: Boolean,
@@ -27,6 +29,7 @@ internal data class UploadInfo(
   @JvmSynthetic internal val progressFlow: SharedFlow<MuxUpload.Progress>?,
   @JvmSynthetic internal val errorFlow: SharedFlow<Exception>?,
 ) {
+  val fileForUpload: File get() = standardizedFile ?: inputFile
   fun isRunning(): Boolean = uploadJob?.isActive ?: false
 }
 
@@ -36,8 +39,10 @@ internal data class UploadInfo(
  */
 @JvmSynthetic
 internal fun UploadInfo.update(
+  shouldStandardize: Boolean = this.shouldStandardize,
   remoteUri: Uri = this.remoteUri,
-  file: File = this.file,
+  file: File = this.inputFile,
+  standardizedFile: File? = this.standardizedFile,
   chunkSize: Int = this.chunkSize,
   retriesPerChunk: Int = this.retriesPerChunk,
   optOut: Boolean = this.optOut,
@@ -46,8 +51,10 @@ internal fun UploadInfo.update(
   progressFlow: SharedFlow<MuxUpload.Progress>? = this.progressFlow,
   errorFlow: SharedFlow<Exception>? = this.errorFlow,
 ) = UploadInfo(
+  shouldStandardize,
   remoteUri,
   file,
+  standardizedFile,
   chunkSize,
   retriesPerChunk,
   optOut,

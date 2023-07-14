@@ -27,6 +27,7 @@ class PlainViewListExampleActivity : AppCompatActivity() {
     { grantedPermissions ->
       if (!grantedPermissions.containsKey(android.Manifest.permission.READ_EXTERNAL_STORAGE)
         || grantedPermissions.containsKey(android.Manifest.permission.READ_MEDIA_VIDEO)
+        || grantedPermissions.containsKey(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
       ) {
         maybeRequestPermissionsApi33()
       }
@@ -84,9 +85,17 @@ class PlainViewListExampleActivity : AppCompatActivity() {
         this,
         android.Manifest.permission.READ_EXTERNAL_STORAGE
       ) == PackageManager.PERMISSION_GRANTED
+    val hasWriteStorage =
+      ActivityCompat.checkSelfPermission(
+        this,
+        android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+      ) == PackageManager.PERMISSION_GRANTED
 
     if (!hasReadStorage) {
       requestPermissions.launch(arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE))
+    }
+    if (!hasWriteStorage) {
+      requestPermissions.launch(arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE))
     }
   }
 
@@ -101,12 +110,17 @@ class PlainViewListExampleActivity : AppCompatActivity() {
       this,
       android.Manifest.permission.READ_MEDIA_VIDEO
     ) == PackageManager.PERMISSION_GRANTED
+    val hasWriteStorage = ActivityCompat.checkSelfPermission(
+      this,
+      android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+    ) == PackageManager.PERMISSION_GRANTED
 
-    if (!hasReadVideo || !hasReadStorage) {
+    if (!hasReadVideo || !hasReadStorage || ! hasWriteStorage) {
       requestPermissions.launch(
         arrayOf(
           android.Manifest.permission.READ_EXTERNAL_STORAGE,
-          android.Manifest.permission.READ_MEDIA_VIDEO
+          android.Manifest.permission.READ_MEDIA_VIDEO,
+          android.Manifest.permission.WRITE_EXTERNAL_STORAGE
         )
       )
     }

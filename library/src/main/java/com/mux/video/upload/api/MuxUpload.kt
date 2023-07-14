@@ -37,7 +37,7 @@ class MuxUpload private constructor(
   /**
    * File containing the video to be uploaded
    */
-  val videoFile: File get() = uploadInfo.file
+  val videoFile: File get() = uploadInfo.inputFile
 
   /**
    * The current state of the upload. To be notified of state updates, you can use
@@ -112,7 +112,7 @@ class MuxUpload private constructor(
       /*uploadInfo =*/ MuxUploadSdk.uploadJobFactory().createUploadJob(uploadInfo, coroutineScope)
     }
 
-    logger.i("MuxUpload", "started upload: ${uploadInfo.file}")
+    logger.i("MuxUpload", "started upload: ${uploadInfo.inputFile}")
     maybeObserveUpload(uploadInfo)
   }
 
@@ -293,13 +293,14 @@ class MuxUpload private constructor(
      * @param videoFile a File that represents the video file you want to upload
      */
     @Suppress("unused")
-    constructor(uploadUri: String, videoFile: File) : this(Uri.parse(uploadUri), videoFile)
+    constructor(uploadUri: String, videoFile: File)
+            : this(Uri.parse(uploadUri), videoFile)
 
     private var manageTask: Boolean = true
     private var uploadInfo: UploadInfo = UploadInfo(
       // Default values
       remoteUri = uploadUri,
-      file = videoFile,
+      inputFile = videoFile,
       chunkSize = 8 * 1024 * 1024, // GCP recommends at least 8M chunk size
       retriesPerChunk = 3,
       optOut = false,
@@ -308,7 +309,6 @@ class MuxUpload private constructor(
       progressFlow = null,
       errorFlow = null
     )
-
     /**
      * Allow Mux to manage and remember the state of this upload
      */
