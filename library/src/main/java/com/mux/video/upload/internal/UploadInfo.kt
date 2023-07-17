@@ -17,7 +17,7 @@ import java.io.File
  * Job and Flows populated
  */
 internal data class UploadInfo(
-  @JvmSynthetic internal val standardizeEnabled: Boolean = true,
+  @JvmSynthetic internal val standardizeRequested: Boolean = true,
   @JvmSynthetic internal val remoteUri: Uri,
   @JvmSynthetic internal val inputFile: File,
   @JvmSynthetic internal val standardizedFile: File? = null,
@@ -38,7 +38,7 @@ internal data class UploadInfo(
  */
 @JvmSynthetic
 internal fun UploadInfo.update(
-  standardizeEnabled: Boolean = this.standardizeEnabled,
+  standardizeEnabled: Boolean = this.standardizeRequested,
   remoteUri: Uri = this.remoteUri,
   file: File = this.inputFile,
   standardizedFile: File? = this.standardizedFile,

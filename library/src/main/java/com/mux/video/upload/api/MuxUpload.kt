@@ -303,7 +303,7 @@ class MuxUpload private constructor(
       inputFile = videoFile,
       chunkSize = 8 * 1024 * 1024, // GCP recommends at least 8M chunk size
       retriesPerChunk = 3,
-      standardizeEnabled = true,
+      standardizeRequested = true,
       optOut = false,
       uploadJob = null,
       successFlow = null,
