@@ -4,6 +4,7 @@ import android.util.Log
 import com.google.gson.FieldNamingPolicy
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import com.mux.video.vod.demo.BuildConfig
 import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -54,10 +55,7 @@ object ImaginaryBackend {
   }
 
   // note: You shouldn't do basic auth with hard-coded keys in a real app
-  private fun basicCredential(): String = Credentials.basic(ACCESS_TOKEN_ID, ACCESS_TOKEN_SECRET)
-
-  private const val ACCESS_TOKEN_ID = "YOUR TOKEN ID HERE"
-  private const val ACCESS_TOKEN_SECRET = "YOUR TOKEN SECRET HERE"
+  private fun basicCredential(): String = Credentials.basic(BuildConfig.ACCESS_TOKEN_ID, BuildConfig.ACCESS_TOKEN_SECRET)
 }
 
 private interface ImaginaryWebapp {

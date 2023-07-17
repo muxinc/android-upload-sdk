@@ -2,6 +2,15 @@ plugins {
   id 'com.android.application'
   id 'org.jetbrains.kotlin.android'
 }
+// Creates a variable called keystorePropertiesFile, and initializes it to the
+// keystore.properties file.
+def localEnvPropertiesFile = rootProject.file("local-env.properties")
+
+// Initializes a new Properties() object called keystoreProperties.
+def localEnvProperties = new Properties()
+
+// Loads the keystore.properties file into the keystoreProperties object.
+localEnvProperties.load(new FileInputStream(localEnvPropertiesFile))
 
 android {
   namespace "com.mux.video.vod.demo"
@@ -24,6 +33,12 @@ android {
     release {
       minifyEnabled false
       proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+      buildConfigField("String", "ACCESS_TOKEN_ID", "\"${localEnvProperties['ACCESS_TOKEN_ID']}\"")
+      buildConfigField("String", "ACCESS_TOKEN_SECRET", "\"${localEnvProperties['ACCESS_TOKEN_SECRET']}\"")
+    }
+    debug {
+      buildConfigField("String", "ACCESS_TOKEN_ID", "\"${localEnvProperties['ACCESS_TOKEN_ID']}\"")
+      buildConfigField("String", "ACCESS_TOKEN_SECRET", "\"${localEnvProperties['ACCESS_TOKEN_SECRET']}\"")
     }
   }
   compileOptions {

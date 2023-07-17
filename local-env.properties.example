@@ -1,0 +1,11 @@
+# This is an example environment variable config file.
+# To set up your environment:
+#
+# 1. Copy this file to {PROJECT_ROOT}\local-env.properties
+# 2. Replace the values with real values.
+# NOTE: Currently, these values are only used by the example Application ("app").
+# For usage, see, e.g.: ./app/build.gradle
+
+# For help on creating Mux Access tokens, see: https://docs.mux.com/guides/system/make-api-requests#access-token-permissions
+ACCESS_TOKEN_ID=YOUR_MUX_TOKEN_ID
+ACCESS_TOKEN_SECRET=YOUR_MUX_TOKEN_SECRET
