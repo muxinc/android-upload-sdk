@@ -97,7 +97,7 @@ internal class TranscoderContext private constructor(
         return result;
     }
 
-    private fun configureCodecs() {
+    private fun configure() {
       val cacheDir = File(appContext.cacheDir, "mux-upload")
       cacheDir.mkdirs()
       val destFile = File(cacheDir, UUID.randomUUID().toString() + ".mp4")
@@ -299,7 +299,7 @@ internal class TranscoderContext private constructor(
         }
 
         logger.i(LOG_TAG, "Standardizing input")
-        configureCodecs()
+      configure()
         if (!configured) {
             logger.e(
               LOG_TAG,
