@@ -1,9 +1,13 @@
 package com.mux.video.upload.internal
 
+import android.media.MediaCodec
 import android.media.MediaCodecInfo
+import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.media.MediaMuxer
 import android.os.Build
 import android.os.Looper
+import com.mux.video.upload.MuxUploadSdk
 
 /**
  * Asserts that we are on the main thread, crashing if not.
@@ -65,5 +69,54 @@ internal val MediaCodecInfo.isHardwareAcceleratedCompat: Boolean get() {
   } else {
     // On < Q, we can't tell. Return true because there's no point in filtering codecs in this case
     true
+  }
+}
+
+/**
+ * Safely dispose of a MediaCodec, stopping it first unless requested otherwise
+ * If an exception is thrown during disposal, it will be logged and swallowed
+ *
+ * @param stop Stop the codec before releasing it. Default is true
+ */
+@JvmSynthetic
+internal fun MediaCodec.safeDispose(stop: Boolean = true) {
+  try {
+    if (stop) {
+      stop()
+    }
+    release()
+  } catch (e: Exception) {
+    MuxUploadSdk.logger.w("TranscoderContext", "Failed to dispose of MediaCodec", e)
+  }
+}
+
+/**
+ * Safely dispose of a MediaMuxer. Stopps it first unless requested otherwise (on API 18+)
+ * If an exception is thrown during disposal, it will be logged and swallowed
+ *
+ * @param stop Stop the codec before releasing it. Default is true
+ */
+internal fun MediaMuxer.safeDispose(stop: Boolean = true) {
+  try {
+    if (stop && Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+      stop()
+      release()
+    }
+  } catch (e: Exception) {
+    MuxUploadSdk.logger.w("TranscoderContext", "Failed to dispose of MediaCodec", e)
+  }
+}
+
+/**
+ * Safely dispose of a MediaMuxer. Stopps it first unless requested otherwise (on API 18+)
+ * If an exception is thrown during disposal, it will be logged and swallowed
+ *
+ * @param stop Stop the codec before releasing it. Default is true
+ */
+internal fun MediaExtractor.safeDispose(stop: Boolean = true) {
+  try {
+    release()
+  } catch (e: Exception) {
+    MuxUploadSdk.logger.w("TranscoderContext", "Failed to dispose of MediaCodec", e)
   }
 }
