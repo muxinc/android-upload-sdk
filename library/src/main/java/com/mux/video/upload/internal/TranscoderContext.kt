@@ -127,6 +127,7 @@ internal class TranscoderContext private constructor(
                 // Check if resolution is greater then 720p
                 if ((inputWidth > MAX_ALLOWED_WIDTH && inputHeighth > MAX_ALLOWED_HEIGTH)
                     || (inputHeighth > MAX_ALLOWED_WIDTH && inputWidth > MAX_ALLOWED_HEIGTH)) {
+                    logger.v(LOG_TAG, "Should standardize because the size is incorrect")
                     shouldStandardize = true
                     if(inputWidth > inputHeighth) {
                         targetedWidth = MAX_ALLOWED_WIDTH
@@ -143,6 +144,7 @@ internal class TranscoderContext private constructor(
 
                 // Check if compersion is h264
                 if (!mime.equals(MediaFormat.MIMETYPE_VIDEO_AVC)) {
+                    logger.v(LOG_TAG, "Should standardize because the input is not h.264")
                     shouldStandardize = true
                 }
                 inputBitrate = format.getIntegerCompat(MediaFormat.KEY_BIT_RATE, -1)
@@ -151,11 +153,13 @@ internal class TranscoderContext private constructor(
                     inputBitrate = ((uploadInfo.inputFile.length() * 8) / (inputDuration / 1000000)).toInt()
                 }
                 if (inputBitrate > MAX_ALLOWED_BITRATE) {
+                    logger.v(LOG_TAG, "Should standardize because the input bitrate is too high")
                     shouldStandardize = true
                     targetedBitrate = MAX_ALLOWED_BITRATE
                 }
                 inputFramerate = format.getIntegerCompat(MediaFormat.KEY_FRAME_RATE, -1)
                 if (inputFramerate > MAX_ALLOWED_FRAMERATE) {
+                  logger.v(LOG_TAG, "Should standardize because the input frame rate is too high")
                     shouldStandardize = true
                     targetedFramerate = OPTIMAL_FRAMERATE
                 } else {
