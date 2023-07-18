@@ -3,8 +3,12 @@ package com.mux.video.upload.api
 import android.content.Context
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
+import com.mux.video.upload.api.MuxUploadManager.allUploadJobs
+import com.mux.video.upload.api.MuxUploadManager.findUploadByFile
+import com.mux.video.upload.api.MuxUploadManager.resumeAllCachedJobs
 import com.mux.video.upload.internal.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.filter
 import java.io.File
 
 /**
@@ -21,7 +25,7 @@ import java.io.File
  */
 object MuxUploadManager {
 
-  public  var appContext: Context? = null;
+  public var appContext: Context? = null;
   private val mainScope = MainScope()
 
   private val uploadsByFilename: MutableMap<String, UploadInfo> = mutableMapOf()
@@ -100,9 +104,7 @@ object MuxUploadManager {
       cancelJobInner(it)
       val pausedUpload = upload.update(
         uploadJob = null,
-        progressFlow = null,
-        errorFlow = null,
-        successFlow = null,
+        statusFlow = null,
       )
       uploadsByFilename[pausedUpload.inputFile.absolutePath] = pausedUpload
       return pausedUpload
@@ -169,9 +171,15 @@ object MuxUploadManager {
   }
 
   private fun newObserveProgressJob(upload: UploadInfo): Job {
-    // This job has up to three children, one for each of the state flows on UploadInfo
+    // Clear finished uploads from cache and storage
     return mainScope.launch {
-      upload.successFlow?.let { flow -> launch { flow.collect { jobFinished(upload) } } }
+      upload.statusFlow?.let { statusFlow ->
+        launch {
+          statusFlow
+            .filter { it is UploadStatus.UPLOAD_SUCCESS }
+            .collect { jobFinished(upload) }
+        }
+      }
     }
   }
 
