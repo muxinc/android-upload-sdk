@@ -66,4 +66,10 @@ sealed class InputStatus {
     override fun getError(): Exception = exception
   }
 
+  /**
+   * The upload succeeded. The file has been uploaded to Mux Video and will be processed shortly
+   */
+  class UPLOAD_SUCCESS(val progress: MuxUpload.Progress): InputStatus() {
+    override fun getProgress(): MuxUpload.Progress = progress
+  }
 }
