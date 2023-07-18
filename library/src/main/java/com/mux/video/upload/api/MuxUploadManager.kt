@@ -176,7 +176,7 @@ object MuxUploadManager {
       upload.statusFlow?.let { statusFlow ->
         launch {
           statusFlow
-            .filter { it is UploadStatus.UPLOAD_SUCCESS }
+            .filter { it is UploadStatus.UploadSuccess }
             .collect { jobFinished(upload) }
         }
       }

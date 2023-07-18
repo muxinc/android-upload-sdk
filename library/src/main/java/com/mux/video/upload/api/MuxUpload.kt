@@ -33,7 +33,7 @@ import java.io.File
 class MuxUpload private constructor(
   private var uploadInfo: UploadInfo,
   private val autoManage: Boolean = true,
-  initialStatus: UploadStatus = UploadStatus.READY
+  initialStatus: UploadStatus = UploadStatus.Ready
 ) {
 
   /**
@@ -84,7 +84,7 @@ class MuxUpload private constructor(
   private var progressListener: UploadEventListener<Progress>? = null
   private var statusListener: UploadEventListener<UploadStatus>? = null
   private var observerJob: Job? = null
-  private var currentStatus: UploadStatus = UploadStatus.READY
+  private var currentStatus: UploadStatus = UploadStatus.Ready
   @Deprecated(message = "delete before PR is merged, (or keep it and remove this line)")
   private val lastKnownProgress: Progress? get() = currentStatus.getProgress()
 
@@ -149,7 +149,7 @@ class MuxUpload private constructor(
   suspend fun awaitSuccess(): Result<Progress> {
     // TODO: Return Result<InputStatus>? Only worthwhile if awaitSuccess() returns for like pause() etc also
     val status = uploadStatus // base our logic on a stable snapshot of the status
-    return if (status is UploadStatus.UPLOAD_SUCCESS) {
+    return if (status is UploadStatus.UploadSuccess) {
       Result.success(status.uploadProgress) // If we succeeded already, don't start again
     } else {
       coroutineScope {
@@ -258,13 +258,13 @@ class MuxUpload private constructor(
 
             // Notify the old listeners
             when (status) {
-              is UploadStatus.UPLOADING -> { updateProgress(status.uploadProgress) }
-              is UploadStatus.UPLOAD_PAUSED -> { updateProgress(status.uploadProgress) }
-              is UploadStatus.UPLOAD_SUCCESS -> {
+              is UploadStatus.Uploading -> { updateProgress(status.uploadProgress) }
+              is UploadStatus.UploadPaused -> { updateProgress(status.uploadProgress) }
+              is UploadStatus.UploadSuccess -> {
                 updateProgress(status.uploadProgress)
                 resultListener?.onEvent(Result.success(status.uploadProgress))
               }
-              is UploadStatus.UPLOAD_FAILED -> {
+              is UploadStatus.UploadFailed -> {
                 progressListener?.onEvent(status.uploadProgress) // Make sure we're most up-to-date
                 if (status.exception !is CancellationException) {
                   _error = status.exception
@@ -412,7 +412,7 @@ class MuxUpload private constructor(
      * [MuxUploadManager]
      */
     @JvmSynthetic
-    internal fun create(uploadInfo: UploadInfo, initialStatus: UploadStatus = UploadStatus.READY)
+    internal fun create(uploadInfo: UploadInfo, initialStatus: UploadStatus = UploadStatus.Ready)
       = MuxUpload(uploadInfo = uploadInfo, initialStatus = initialStatus)
   }
 }
