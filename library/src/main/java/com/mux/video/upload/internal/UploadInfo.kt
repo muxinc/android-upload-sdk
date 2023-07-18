@@ -17,7 +17,7 @@ import java.io.File
  * Job and Flows populated
  */
 internal data class UploadInfo(
-  @JvmSynthetic internal val shouldStandardize: Boolean = false,
+  @JvmSynthetic internal val standardizationRequested: Boolean = true,
   @JvmSynthetic internal val remoteUri: Uri,
   @JvmSynthetic internal val inputFile: File,
   @JvmSynthetic internal val standardizedFile: File? = null,
@@ -29,7 +29,6 @@ internal data class UploadInfo(
   @JvmSynthetic internal val progressFlow: SharedFlow<MuxUpload.Progress>?,
   @JvmSynthetic internal val errorFlow: SharedFlow<Exception>?,
 ) {
-  val fileForUpload: File get() = standardizedFile ?: inputFile
   fun isRunning(): Boolean = uploadJob?.isActive ?: false
 }
 
@@ -39,7 +38,7 @@ internal data class UploadInfo(
  */
 @JvmSynthetic
 internal fun UploadInfo.update(
-  shouldStandardize: Boolean = this.shouldStandardize,
+  standardizationRequested: Boolean = this.standardizationRequested,
   remoteUri: Uri = this.remoteUri,
   file: File = this.inputFile,
   standardizedFile: File? = this.standardizedFile,
@@ -51,7 +50,7 @@ internal fun UploadInfo.update(
   progressFlow: SharedFlow<MuxUpload.Progress>? = this.progressFlow,
   errorFlow: SharedFlow<Exception>? = this.errorFlow,
 ) = UploadInfo(
-  shouldStandardize,
+  standardizationRequested,
   remoteUri,
   file,
   standardizedFile,
