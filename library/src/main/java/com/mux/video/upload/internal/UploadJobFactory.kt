@@ -74,7 +74,7 @@ internal class UploadJobFactory private constructor(
       try {
         // See if the file need to be converted to a standard input.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
-          && uploadInfo.standardizeRequested
+          && uploadInfo.standardizationRequested
         ) {
           val tcx = TranscoderContext.create(innerUploadInfo, MuxUploadManager.appContext!!)
           innerUploadInfo = tcx.process()

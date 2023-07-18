@@ -303,7 +303,7 @@ class MuxUpload private constructor(
       inputFile = videoFile,
       chunkSize = 8 * 1024 * 1024, // GCP recommends at least 8M chunk size
       retriesPerChunk = 3,
-      standardizeRequested = true,
+      standardizationRequested = true,
       optOut = false,
       uploadJob = null,
       successFlow = null,
@@ -324,8 +324,8 @@ class MuxUpload private constructor(
      * for use with Mux Video
      */
     @Suppress("unused")
-    fun standardizeRequested(enabled: Boolean) {
-      uploadInfo.update(standardizeRequested = enabled)
+    fun standardizationRequested(enabled: Boolean) {
+      uploadInfo.update(standardizationRequested = enabled)
     }
 
     /**
