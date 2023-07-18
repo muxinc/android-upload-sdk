@@ -98,8 +98,10 @@ internal fun MediaCodec.safeDispose(stop: Boolean = true) {
  */
 internal fun MediaMuxer.safeDispose(stop: Boolean = true) {
   try {
-    if (stop && Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-      stop()
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+      if (stop) {
+        stop()
+      }
       release()
     }
   } catch (e: Exception) {
@@ -108,7 +110,7 @@ internal fun MediaMuxer.safeDispose(stop: Boolean = true) {
 }
 
 /**
- * Safely dispose of a MediaMuxer. Stopps it first unless requested otherwise (on API 18+)
+ * Safely dispose of a MediaExtractor
  * If an exception is thrown during disposal, it will be logged and swallowed
  */
 internal fun MediaExtractor.safeDispose() {
