@@ -62,8 +62,9 @@ sealed class InputStatus {
    * The upload has failed. Part of the file may have already been uploaded, and this upload can be
    * resumed from this state via [MuxUpload.start]
    */
-  class UPLOAD_FAILED(val exception: Exception): InputStatus() {
+  class UPLOAD_FAILED(val exception: Exception, val progress: MuxUpload.Progress): InputStatus() {
     override fun getError(): Exception = exception
+    override fun getProgress(): MuxUpload.Progress = progress
   }
 
   /**

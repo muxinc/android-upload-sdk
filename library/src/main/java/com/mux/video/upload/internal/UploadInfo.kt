@@ -1,8 +1,10 @@
 package com.mux.video.upload.internal
 
 import android.net.Uri
+import com.mux.video.upload.api.InputStatus
 import com.mux.video.upload.api.MuxUpload
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 import java.io.File
 
@@ -25,9 +27,7 @@ internal data class UploadInfo(
   @JvmSynthetic internal val retriesPerChunk: Int,
   @JvmSynthetic internal val optOut: Boolean,
   @JvmSynthetic internal val uploadJob: Deferred<Result<MuxUpload.Progress>>?,
-  @JvmSynthetic internal val successFlow: SharedFlow<MuxUpload.Progress>?,
-  @JvmSynthetic internal val progressFlow: SharedFlow<MuxUpload.Progress>?,
-  @JvmSynthetic internal val errorFlow: SharedFlow<Exception>?,
+  @JvmSynthetic internal val statusFlow: Flow<InputStatus>?,
 ) {
   fun isRunning(): Boolean = uploadJob?.isActive ?: false
 }
@@ -46,9 +46,7 @@ internal fun UploadInfo.update(
   retriesPerChunk: Int = this.retriesPerChunk,
   optOut: Boolean = this.optOut,
   uploadJob: Deferred<Result<MuxUpload.Progress>>? = this.uploadJob,
-  successFlow: SharedFlow<MuxUpload.Progress>? = this.successFlow,
-  progressFlow: SharedFlow<MuxUpload.Progress>? = this.progressFlow,
-  errorFlow: SharedFlow<Exception>? = this.errorFlow,
+  statusFlow: Flow<InputStatus>?
 ) = UploadInfo(
   standardizationRequested,
   remoteUri,
@@ -58,7 +56,5 @@ internal fun UploadInfo.update(
   retriesPerChunk,
   optOut,
   uploadJob,
-  successFlow,
-  progressFlow,
-  errorFlow
+  statusFlow,
 )
