@@ -31,7 +31,9 @@ import java.io.File
  * @see MuxUploadManager
  */
 class MuxUpload private constructor(
-  private var uploadInfo: UploadInfo, private val autoManage: Boolean = true
+  private var uploadInfo: UploadInfo,
+  private val autoManage: Boolean = true,
+  initialStatus: UploadStatus = UploadStatus.READY
 ) {
 
   /**
@@ -58,6 +60,7 @@ class MuxUpload private constructor(
    *
    * To be notified of status updates (including upload progress), use [setStatusListener]
    */
+  @Suppress("MemberVisibilityCanBePrivate")
   val uploadStatus: UploadStatus
 
   /**
@@ -143,10 +146,10 @@ class MuxUpload private constructor(
   @Suppress("unused")
   @JvmSynthetic
   suspend fun awaitSuccess(): Result<Progress> {
-    val result = uploadInfo.successFlow?.replayCache?.firstOrNull()
-    val status =
-    return if (result != null) {
-      Result.success(result) // If we succeeded already, don't start again
+    // TODO: Return Result<InputStatus>? Only worthwhile if awaitSuccess() returns for like pause() etc also
+    val status = uploadStatus // base our logic on a stable snapshot of the status
+    return if (status is UploadStatus.UPLOAD_SUCCESS) {
+      Result.success(status.uploadProgress) // If we succeeded already, don't start again
     } else {
       coroutineScope {
         startInner(coroutineScope = this)
@@ -170,9 +173,7 @@ class MuxUpload private constructor(
       uploadInfo.uploadJob?.cancel()
       /*uploadInfo =*/ uploadInfo.update(
         uploadJob = null,
-        successFlow = null,
-        errorFlow = null,
-        progressFlow = null,
+        statusFlow = null,
       )
     }
     lastKnownProgress?.let { state -> progressListener?.onEvent(state) }
@@ -229,30 +230,30 @@ class MuxUpload private constructor(
   private fun newObserveProgressJob(upload: UploadInfo): Job {
     // This job has up to three children, one for each of the state flows on UploadInfo
     return callbackScope.launch {
-      upload.errorFlow?.let { flow ->
+
+      upload.statusFlow?.let { flow ->
         launch {
-          flow.collect { error ->
-            if (error !is CancellationException) { // Canceled uploads shouldn't generate events
-              _error = error
-              resultListener?.onEvent(Result.failure(error))
+          flow.collect { status ->
+            // TODO: Notify the new listener and update the new fields
+            fun updateProgress(progress: Progress) {
+              lastKnownProgress = progress
+              progressListener?.onEvent(progress)
             }
-          }
-        }
-      }
-      upload.successFlow?.let { flow ->
-        launch {
-          flow.collect { state ->
-            lastKnownProgress = state
-            _successful = true
-            resultListener?.onEvent(Result.success(state))
-          }
-        }
-      }
-      upload.progressFlow?.let { flow ->
-        launch {
-          flow.collect { state ->
-            lastKnownProgress = state
-            progressListener?.onEvent(state)
+
+            // Notify the old listeners
+            when (status) {
+              is UploadStatus.UPLOADING -> { updateProgress(status.uploadProgress) }
+              is UploadStatus.UPLOAD_PAUSED -> { updateProgress(status.uploadProgress) }
+              is UploadStatus.UPLOAD_SUCCESS -> { updateProgress(status.uploadProgress) }
+              is UploadStatus.UPLOAD_FAILED -> {
+                progressListener?.onEvent(status.uploadProgress) // Make sure we're most up-to-date
+                if (status.exception !is CancellationException) {
+                  _error = status.exception
+                  resultListener?.onEvent(Result.failure(status.exception))
+                }
+              }
+              else -> { } // no relevant info
+            }
           }
         }
       }
@@ -262,6 +263,10 @@ class MuxUpload private constructor(
   private fun maybeObserveUpload(uploadInfo: UploadInfo) {
     observerJob?.cancel("switching observers")
     observerJob = newObserveProgressJob(uploadInfo)
+  }
+
+  init {
+    uploadStatus = initialStatus
   }
 
   /**
@@ -320,9 +325,7 @@ class MuxUpload private constructor(
       standardizationRequested = true,
       optOut = false,
       uploadJob = null,
-      successFlow = null,
-      progressFlow = null,
-      errorFlow = null
+      statusFlow = null,
     )
     /**
      * Allow Mux to manage and remember the state of this upload
@@ -385,7 +388,12 @@ class MuxUpload private constructor(
   }
 
   internal companion object {
+    /**
+     * Internal constructor-like method for creating instances of this class from the
+     * [MuxUploadManager]
+     */
     @JvmSynthetic
-    internal fun create(uploadInfo: UploadInfo) = MuxUpload(uploadInfo)
+    internal fun create(uploadInfo: UploadInfo, initialStatus: UploadStatus = UploadStatus.READY)
+      = MuxUpload(uploadInfo = uploadInfo, initialStatus = initialStatus)
   }
 }

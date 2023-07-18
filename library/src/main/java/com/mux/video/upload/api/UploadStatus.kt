@@ -46,31 +46,31 @@ sealed class UploadStatus {
   /**
    * The upload is currently being sent to Mux Video. The progress is available
    */
-  class UPLOADING(val progress: MuxUpload.Progress): UploadStatus() {
-    override fun getProgress(): MuxUpload.Progress = progress
+  class UPLOADING(val uploadProgress: MuxUpload.Progress): UploadStatus() {
+    override fun getProgress(): MuxUpload.Progress = uploadProgress
   }
 
   /**
    * The upload is currently paused. Part of the video file may have already been uploaded to Mux
    * Video, but no data is currently being sent
    */
-  class UPLOAD_PAUSED(val progress: MuxUpload.Progress): UploadStatus() {
-    override fun getProgress(): MuxUpload.Progress = progress
+  class UPLOAD_PAUSED(val uploadProgress: MuxUpload.Progress): UploadStatus() {
+    override fun getProgress(): MuxUpload.Progress = uploadProgress
   }
 
   /**
    * The upload has failed. Part of the file may have already been uploaded, and this upload can be
    * resumed from this state via [MuxUpload.start]
    */
-  class UPLOAD_FAILED(val exception: Exception, val progress: MuxUpload.Progress): UploadStatus() {
+  class UPLOAD_FAILED(val exception: Exception, val uploadProgress: MuxUpload.Progress): UploadStatus() {
     override fun getError(): Exception = exception
-    override fun getProgress(): MuxUpload.Progress = progress
+    override fun getProgress(): MuxUpload.Progress = uploadProgress
   }
 
   /**
    * The upload succeeded. The file has been uploaded to Mux Video and will be processed shortly
    */
-  class UPLOAD_SUCCESS(val progress: MuxUpload.Progress): UploadStatus() {
-    override fun getProgress(): MuxUpload.Progress = progress
+  class UPLOAD_SUCCESS(val uploadProgress: MuxUpload.Progress): UploadStatus() {
+    override fun getProgress(): MuxUpload.Progress = uploadProgress
   }
 }

@@ -45,7 +45,7 @@ internal fun UploadInfo.update(
   retriesPerChunk: Int = this.retriesPerChunk,
   optOut: Boolean = this.optOut,
   uploadJob: Deferred<Result<MuxUpload.Progress>>? = this.uploadJob,
-  statusFlow: StateFlow<UploadStatus>?
+  statusFlow: StateFlow<UploadStatus>? = this.statusFlow,
 ) = UploadInfo(
   standardizationRequested,
   remoteUri,
