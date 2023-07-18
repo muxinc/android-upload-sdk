@@ -82,10 +82,11 @@ class MuxUpload private constructor(
 
   private var resultListener: UploadEventListener<Result<Progress>>? = null
   private var progressListener: UploadEventListener<Progress>? = null
+  private var statusListener: UploadEventListener<UploadStatus>? = null
   private var observerJob: Job? = null
-  @Deprecated(message = "Delete me before merging this PR plx")
-  private var lastKnownProgress: Progress? = null
-  private var lastKnownStatus: UploadStatus = UploadStatus.READY
+  private var currentStatus: UploadStatus = UploadStatus.READY
+  @Deprecated(message = "delete before PR is merged, (or keep it and remove this line)")
+  private val lastKnownProgress: Progress? get() = currentStatus.getProgress()
 
   private val callbackScope: CoroutineScope = MainScope()
   private val logger get() = MuxUploadSdk.logger
@@ -190,14 +191,14 @@ class MuxUpload private constructor(
     } else {
       uploadInfo.uploadJob?.cancel("user requested cancel")
     }
-    lastKnownProgress = null
     observerJob?.cancel("user requested cancel")
   }
 
   /**
    * Sets a listener for progress updates on this upload
+   *
+   * @see setStatusListener
    */
-  @Deprecated(message = "probs delete before merge")
   @MainThread
   fun setProgressListener(listener: UploadEventListener<Progress>?) {
     progressListener = listener
@@ -206,8 +207,9 @@ class MuxUpload private constructor(
 
   /**
    * Sets a listener for success or failure updates on this upload
+   *
+   * @see setStatusListener
    */
-  @Deprecated(message = "probs delete before merge")
   @MainThread
   fun setResultListener(listener: UploadEventListener<Result<Progress>>) {
     resultListener = listener
@@ -219,32 +221,49 @@ class MuxUpload private constructor(
   }
 
   /**
+   * Set a listener for the overall status of this upload.
+   *
+   * @see UploadStatus
+   */
+  @MainThread
+  fun setStatusListener(listener: UploadEventListener<UploadStatus>?) {
+    statusListener = listener
+    listener?.onEvent(currentStatus)
+  }
+
+  /**
    * Clears all listeners set on this object
    */
+  @Suppress("unused")
   @MainThread
   fun clearListeners() {
     resultListener = null
     progressListener = null
+    statusListener = null
   }
 
   private fun newObserveProgressJob(upload: UploadInfo): Job {
-    // This job has up to three children, one for each of the state flows on UploadInfo
+    // Job that collects and notifies state updates on the main thread (suspending on main is safe)
     return callbackScope.launch {
-
       upload.statusFlow?.let { flow ->
         launch {
           flow.collect { status ->
-            // TODO: Notify the new listener and update the new fields
             fun updateProgress(progress: Progress) {
-              lastKnownProgress = progress
               progressListener?.onEvent(progress)
             }
+
+            // Update the status of our upload
+            currentStatus = status
+            statusListener?.onEvent(status)
 
             // Notify the old listeners
             when (status) {
               is UploadStatus.UPLOADING -> { updateProgress(status.uploadProgress) }
               is UploadStatus.UPLOAD_PAUSED -> { updateProgress(status.uploadProgress) }
-              is UploadStatus.UPLOAD_SUCCESS -> { updateProgress(status.uploadProgress) }
+              is UploadStatus.UPLOAD_SUCCESS -> {
+                updateProgress(status.uploadProgress)
+                resultListener?.onEvent(Result.success(status.uploadProgress))
+              }
               is UploadStatus.UPLOAD_FAILED -> {
                 progressListener?.onEvent(status.uploadProgress) // Make sure we're most up-to-date
                 if (status.exception !is CancellationException) {
