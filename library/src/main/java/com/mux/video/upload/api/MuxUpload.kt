@@ -140,11 +140,10 @@ class MuxUpload private constructor(
   @Throws
   @Suppress("unused")
   @JvmSynthetic
-  suspend fun awaitSuccess(): Result<Progress> {
-    // TODO: Return Result<InputStatus>? Only worthwhile if awaitSuccess() returns for like pause() etc also
+  suspend fun awaitSuccess(): Result<UploadStatus> {
     val status = uploadStatus // base our logic on a stable snapshot of the status
     return if (status is UploadStatus.UploadSuccess) {
-      Result.success(status.uploadProgress) // If we succeeded already, don't start again
+      Result.success(status) // If we succeeded already, don't start again
     } else {
       coroutineScope {
         startInner(coroutineScope = this)

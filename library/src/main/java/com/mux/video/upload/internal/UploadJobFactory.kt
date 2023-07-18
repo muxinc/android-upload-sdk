@@ -188,12 +188,14 @@ internal class UploadJobFactory private constructor(
 
         // finish up
         MainScope().launch { MuxUploadManager.jobFinished(innerUploadInfo) }
-        statusFlow.value = (UploadStatus.UploadSuccess(finalProgress))
-        Result.success(finalProgress)
+        val success = UploadStatus.UploadSuccess(finalProgress)
+        statusFlow.value = success
+        Result.success(success)
       } catch (e: Exception) {
         MuxUploadSdk.logger.e("MuxUpload", "Upload of ${innerUploadInfo.inputFile} failed", e)
         val finalState = createFinalState(fileSize, startTime)
-        statusFlow.value = UploadStatus.UploadFailed(e, finalState)
+        val failStatus = UploadStatus.UploadFailed(e, finalState)
+        statusFlow.value = failStatus
         MainScope().launch { MuxUploadManager.jobFinished(innerUploadInfo, false) }
         Result.failure(e)
       } finally {

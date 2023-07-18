@@ -25,7 +25,7 @@ internal data class UploadInfo(
   @JvmSynthetic internal val chunkSize: Int,
   @JvmSynthetic internal val retriesPerChunk: Int,
   @JvmSynthetic internal val optOut: Boolean,
-  @JvmSynthetic internal val uploadJob: Deferred<Result<MuxUpload.Progress>>?,
+  @JvmSynthetic internal val uploadJob: Deferred<Result<UploadStatus>>?,
   @JvmSynthetic internal val statusFlow: StateFlow<UploadStatus>?,
 ) {
   fun isRunning(): Boolean = uploadJob?.isActive ?: false
@@ -44,7 +44,7 @@ internal fun UploadInfo.update(
   chunkSize: Int = this.chunkSize,
   retriesPerChunk: Int = this.retriesPerChunk,
   optOut: Boolean = this.optOut,
-  uploadJob: Deferred<Result<MuxUpload.Progress>>? = this.uploadJob,
+  uploadJob: Deferred<Result<UploadStatus>>? = this.uploadJob,
   statusFlow: StateFlow<UploadStatus>? = this.statusFlow,
 ) = UploadInfo(
   standardizationRequested,
