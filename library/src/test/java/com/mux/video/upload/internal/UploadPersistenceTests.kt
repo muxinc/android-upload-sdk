@@ -135,9 +135,7 @@ class UploadPersistenceTests : AbsRobolectricTest() {
     retriesPerChunk = 3,
     optOut = false,
     uploadJob = null,
-    progressFlow = null,
-    successFlow = null,
-    errorFlow = null
+    statusFlow = null,
   )
 
   private fun mockContext(): Context {
