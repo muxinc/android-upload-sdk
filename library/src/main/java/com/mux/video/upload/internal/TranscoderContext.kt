@@ -324,13 +324,7 @@ internal class TranscoderContext private constructor(
         logger.i(LOG_TAG, "Transcoding duration time: $duration")
         logger.i(LOG_TAG, "Original file size: ${uploadInfo.inputFile.length()}")
         logger.i(LOG_TAG, "Transcoded file size: ${uploadInfo.standardizedFile?.length()}")
-        try {
-
-        } catch (ex:Exception) {
-          // todo em - we might be able to slide by with a success as long as stop() completes
-          logger.e(LOG_TAG, "Couldn't stop the MediaMuxer!", ex)
-        }
-
+      
         return uploadInfo
     }
 
