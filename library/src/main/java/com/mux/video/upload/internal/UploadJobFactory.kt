@@ -73,8 +73,8 @@ internal class UploadJobFactory private constructor(
       val startTime = System.currentTimeMillis()
       try {
         // See if the file need to be converted to a standard input.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
-          && uploadInfo.standardizationRequested
+        if (uploadInfo.standardizationRequested
+          && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
         ) {
           val tcx = TranscoderContext.create(innerUploadInfo, MuxUploadManager.appContext!!)
           innerUploadInfo = tcx.process()
@@ -82,7 +82,7 @@ internal class UploadJobFactory private constructor(
             fileStream = withContext(Dispatchers.IO) {
               BufferedInputStream(FileInputStream(innerUploadInfo.standardizedFile))
             }
-            // This !! is safe by contract: process() will set the standardizedFile
+            // This !! is safe by contract: process() will set the standardizedFile if it transcoded
             fileSize = innerUploadInfo.standardizedFile!!.length()
           }
         }

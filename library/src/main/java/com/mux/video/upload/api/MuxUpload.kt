@@ -135,10 +135,7 @@ class MuxUpload private constructor(
     } else {
       coroutineScope {
         startInner(coroutineScope = this)
-        uploadInfo.uploadJob?.let { job ->
-          val result = job.await()
-          result
-        } ?: Result.failure(Exception("Upload failed to start"))
+        uploadInfo.uploadJob?.await() ?: Result.failure(Exception("Upload failed to start"))
       }
     }
   }
