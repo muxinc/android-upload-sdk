@@ -265,20 +265,12 @@ internal class TranscoderContext private constructor(
 
     private fun releaseCodecs() {
         logger.v(LOG_TAG, "releaseCodecs(): called")
-
-        videoDecoder?.stop()
-        videoDecoder?.release()
-        videoEncoder?.stop()
-        videoEncoder?.release()
-
-        audioDecoder?.apply {
-          stop()
-          release()
-        }
-        audioEncoder?.apply {
-          stop()
-          release()
-        }
+        videoDecoder?.safeDispose()
+        audioDecoder?.safeDispose()
+        videoEncoder?.safeDispose()
+        audioEncoder?.safeDispose()
+        extractor.safeDispose()
+        muxer?.safeDispose()
     }
 
     private fun configureMuxer() {
@@ -322,24 +314,17 @@ internal class TranscoderContext private constructor(
             videoDecoder!!.flush()
             videoEncoder!!.flush()
             muxVideoFrame()
-            releaseCodecs()
         } catch (err:Exception) {
             logger.e(LOG_TAG, "Failed to standardize input file ${uploadInfo.inputFile}", err)
+        } finally {
+            releaseCodecs()
+            fileTranscoded = true
         }
         val duration = System.currentTimeMillis() - started
-        try {
-            muxer!!.stop()
-            muxer!!.release()
-            fileTranscoded = true
-
-            logger.i(LOG_TAG, "Transcoding duration time: $duration")
-            logger.i(LOG_TAG, "Original file size: ${uploadInfo.inputFile.length()}")
-            logger.i(LOG_TAG, "Transcoded file size: ${uploadInfo.standardizedFile?.length()}")
-        } catch (ex:Exception) {
-          // todo em - we might be able to slide by with a success as long as stop() completes
-          logger.e(LOG_TAG, "Couldn't stop the MediaMuxer!", ex)
-        }
-
+        logger.i(LOG_TAG, "Transcoding duration time: $duration")
+        logger.i(LOG_TAG, "Original file size: ${uploadInfo.inputFile.length()}")
+        logger.i(LOG_TAG, "Transcoded file size: ${uploadInfo.standardizedFile?.length()}")
+      
         return uploadInfo
     }
 
