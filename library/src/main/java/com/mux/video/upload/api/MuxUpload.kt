@@ -44,13 +44,8 @@ class MuxUpload private constructor(
   /**
    * The current state of the upload. To be notified of state updates, you can use
    * [setProgressListener] and [setResultListener]
-   * TODO: Delete this before merging this PR
    */
-  @Deprecated(
-    message = "More state data is available via currentStatus",
-    replaceWith = ReplaceWith("inputStatus")
-  )
-  val currentState: Progress
+  val currentProgress: Progress
     get() = lastKnownProgress ?: uploadInfo.statusFlow?.value?.getProgress() ?: Progress(
       totalBytes = videoFile.length()
     )
@@ -85,7 +80,6 @@ class MuxUpload private constructor(
   private var statusListener: UploadEventListener<UploadStatus>? = null
   private var observerJob: Job? = null
   private var currentStatus: UploadStatus = UploadStatus.Ready
-  @Deprecated(message = "delete before PR is merged, (or keep it and remove this line)")
   private val lastKnownProgress: Progress? get() = currentStatus.getProgress()
 
   private val callbackScope: CoroutineScope = MainScope()
@@ -93,7 +87,7 @@ class MuxUpload private constructor(
 
   init {
     // Catch Events if an upload was already in progress
-    maybeObserveUpload(uploadInfo)
+    observeUpload(uploadInfo)
   }
 
   /**
@@ -131,7 +125,7 @@ class MuxUpload private constructor(
     }
 
     logger.i("MuxUpload", "started upload: ${uploadInfo.inputFile}")
-    maybeObserveUpload(uploadInfo)
+    observeUpload(uploadInfo)
   }
 
   /**
@@ -248,20 +242,16 @@ class MuxUpload private constructor(
       upload.statusFlow?.let { flow ->
         launch {
           flow.collect { status ->
-            fun updateProgress(progress: Progress) {
-              progressListener?.onEvent(progress)
-            }
-
             // Update the status of our upload
             currentStatus = status
             statusListener?.onEvent(status)
 
             // Notify the old listeners
             when (status) {
-              is UploadStatus.Uploading -> { updateProgress(status.uploadProgress) }
-              is UploadStatus.UploadPaused -> { updateProgress(status.uploadProgress) }
+              is UploadStatus.Uploading -> { progressListener?.onEvent(status.uploadProgress) }
+              is UploadStatus.UploadPaused -> { progressListener?.onEvent(status.uploadProgress) }
               is UploadStatus.UploadSuccess -> {
-                updateProgress(status.uploadProgress)
+                progressListener?.onEvent(status.uploadProgress)
                 resultListener?.onEvent(Result.success(status.uploadProgress))
               }
               is UploadStatus.UploadFailed -> {
@@ -279,7 +269,7 @@ class MuxUpload private constructor(
     }
   }
 
-  private fun maybeObserveUpload(uploadInfo: UploadInfo) {
+  private fun observeUpload(uploadInfo: UploadInfo) {
     observerJob?.cancel("switching observers")
     observerJob = newObserveProgressJob(uploadInfo)
   }
@@ -351,7 +341,7 @@ class MuxUpload private constructor(
      */
     @Suppress("unused")
     fun manageUploadTask(autoManage: Boolean): Builder {
-      manageTask = autoManage;
+      manageTask = autoManage
       return this
     }
 
