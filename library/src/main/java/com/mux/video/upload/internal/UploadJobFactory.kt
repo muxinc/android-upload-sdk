@@ -4,9 +4,9 @@ import android.os.Build
 import android.util.Log
 import com.mux.video.upload.BuildConfig
 import com.mux.video.upload.MuxUploadSdk
-import com.mux.video.upload.api.UploadStatus
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
+import com.mux.video.upload.api.UploadStatus
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -68,6 +68,9 @@ internal class UploadJobFactory private constructor(
     val metrics = UploadMetrics.create()
 
     val uploadJob = outerScope.async {
+      // Inside the async { }, we have officially started
+      statusFlow.value = UploadStatus.STARTED
+
       // This UploadInfo never gets sent outside this coroutine. It contains info related to
       // standardizing the the client doesn't need to know/can't know synchronously
       var innerUploadInfo = uploadInfo
@@ -78,6 +81,7 @@ internal class UploadJobFactory private constructor(
         if (uploadInfo.standardizationRequested
           && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
         ) {
+          statusFlow.value = UploadStatus.PREPARING
           val tcx = TranscoderContext.create(innerUploadInfo, MuxUploadManager.appContext!!)
           innerUploadInfo = tcx.process()
           if (tcx.fileTranscoded) {
@@ -89,6 +93,8 @@ internal class UploadJobFactory private constructor(
           }
         }
 
+        // Now that we've standardized (or not), start the upload
+
         var totalBytesSent: Long = getAlreadyTransferredBytes(innerUploadInfo)
         Log.d("UploadJobFactory", "totalBytesSent: $totalBytesSent")
         val chunkBuffer = ByteArray(innerUploadInfo.chunkSize)
@@ -97,6 +103,15 @@ internal class UploadJobFactory private constructor(
         if (totalBytesSent != 0L) {
           withContext(Dispatchers.IO) { fileStream.skip(totalBytesSent) }
         }
+
+        statusFlow.value = UploadStatus.UPLOADING(
+          MuxUpload.Progress(
+            bytesUploaded = totalBytesSent,
+            totalBytes = fileSize,
+            startTime = startTime,
+            updatedTime = System.currentTimeMillis()
+          )
+        )
 
         // Upload each chunk starting from the current head of the stream
         do {
