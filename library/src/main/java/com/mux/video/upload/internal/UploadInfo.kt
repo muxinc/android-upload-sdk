@@ -38,7 +38,7 @@ internal data class UploadInfo(
  */
 @JvmSynthetic
 internal fun UploadInfo.update(
-  standardizeEnabled: Boolean = this.standardizeRequested,
+  standardizeRequested: Boolean = this.standardizeRequested,
   remoteUri: Uri = this.remoteUri,
   file: File = this.inputFile,
   standardizedFile: File? = this.standardizedFile,
@@ -50,7 +50,7 @@ internal fun UploadInfo.update(
   progressFlow: SharedFlow<MuxUpload.Progress>? = this.progressFlow,
   errorFlow: SharedFlow<Exception>? = this.errorFlow,
 ) = UploadInfo(
-  standardizeEnabled,
+  standardizeRequested,
   remoteUri,
   file,
   standardizedFile,

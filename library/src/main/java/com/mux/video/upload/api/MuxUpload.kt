@@ -320,12 +320,12 @@ class MuxUpload private constructor(
     }
 
     /**
-     * If enabled, the Upload SDK will try to standardize the input file in order to optimize it for
-     * use with Mux Video
+     * If requested, the Upload SDK will try to standardize the input file in order to optimize it
+     * for use with Mux Video
      */
     @Suppress("unused")
-    fun standardizeEnabled(enabled: Boolean) {
-      uploadInfo.update(standardizeEnabled = enabled)
+    fun standardizeRequested(enabled: Boolean) {
+      uploadInfo.update(standardizeRequested = enabled)
     }
 
     /**
