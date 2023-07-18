@@ -42,11 +42,23 @@ class MuxUpload private constructor(
   /**
    * The current state of the upload. To be notified of state updates, you can use
    * [setProgressListener] and [setResultListener]
+   * TODO: Delete this before merging this PR
    */
+  @Deprecated(
+    message = "More state data is available via currentStatus",
+    replaceWith = ReplaceWith("inputStatus")
+  )
   val currentState: Progress
-    get() = lastKnownState ?: uploadInfo.progressFlow?.replayCache?.firstOrNull() ?: Progress(
+    get() = lastKnownProgress ?: uploadInfo.statusFlow?.value?.getProgress() ?: Progress(
       totalBytes = videoFile.length()
     )
+
+  /**
+   * The current status of this upload.
+   *
+   * To be notified of status updates (including upload progress), use [setStatusListener]
+   */
+  val uploadStatus: UploadStatus
 
   /**
    * True when the upload is running, false if it's paused, failed, or canceled
@@ -56,7 +68,7 @@ class MuxUpload private constructor(
   /**
    * If the upload has failed, gets the error associated with the failure
    */
-  val error get() = _error ?: uploadInfo.errorFlow?.replayCache?.firstOrNull()
+  val error get() = _error ?: uploadInfo.statusFlow?.value?.getError()
   private var _error: Exception? = null
 
   /**
@@ -68,7 +80,9 @@ class MuxUpload private constructor(
   private var resultListener: UploadEventListener<Result<Progress>>? = null
   private var progressListener: UploadEventListener<Progress>? = null
   private var observerJob: Job? = null
-  private var lastKnownState: Progress? = null
+  @Deprecated(message = "Delete me before merging this PR plx")
+  private var lastKnownProgress: Progress? = null
+  private var lastKnownStatus: UploadStatus = UploadStatus.READY
 
   private val callbackScope: CoroutineScope = MainScope()
   private val logger get() = MuxUploadSdk.logger
@@ -130,6 +144,7 @@ class MuxUpload private constructor(
   @JvmSynthetic
   suspend fun awaitSuccess(): Result<Progress> {
     val result = uploadInfo.successFlow?.replayCache?.firstOrNull()
+    val status =
     return if (result != null) {
       Result.success(result) // If we succeeded already, don't start again
     } else {
@@ -160,7 +175,7 @@ class MuxUpload private constructor(
         progressFlow = null,
       )
     }
-    lastKnownState?.let { state -> progressListener?.onEvent(state) }
+    lastKnownProgress?.let { state -> progressListener?.onEvent(state) }
   }
 
   /**
@@ -174,26 +189,28 @@ class MuxUpload private constructor(
     } else {
       uploadInfo.uploadJob?.cancel("user requested cancel")
     }
-    lastKnownState = null
+    lastKnownProgress = null
     observerJob?.cancel("user requested cancel")
   }
 
   /**
    * Sets a listener for progress updates on this upload
    */
+  @Deprecated(message = "probs delete before merge")
   @MainThread
   fun setProgressListener(listener: UploadEventListener<Progress>?) {
     progressListener = listener
-    lastKnownState?.let { listener?.onEvent(it) }
+    lastKnownProgress?.let { listener?.onEvent(it) }
   }
 
   /**
    * Sets a listener for success or failure updates on this upload
    */
+  @Deprecated(message = "probs delete before merge")
   @MainThread
   fun setResultListener(listener: UploadEventListener<Result<Progress>>) {
     resultListener = listener
-    lastKnownState?.let {
+    lastKnownProgress?.let {
       if (it.bytesUploaded >= it.totalBytes) {
         listener.onEvent(Result.success(it))
       }
@@ -225,7 +242,7 @@ class MuxUpload private constructor(
       upload.successFlow?.let { flow ->
         launch {
           flow.collect { state ->
-            lastKnownState = state
+            lastKnownProgress = state
             _successful = true
             resultListener?.onEvent(Result.success(state))
           }
@@ -234,7 +251,7 @@ class MuxUpload private constructor(
       upload.progressFlow?.let { flow ->
         launch {
           flow.collect { state ->
-            lastKnownState = state
+            lastKnownProgress = state
             progressListener?.onEvent(state)
           }
         }

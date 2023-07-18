@@ -4,7 +4,7 @@ import android.os.Build
 import android.util.Log
 import com.mux.video.upload.BuildConfig
 import com.mux.video.upload.MuxUploadSdk
-import com.mux.video.upload.api.InputStatus
+import com.mux.video.upload.api.UploadStatus
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
 import kotlinx.coroutines.*
@@ -61,7 +61,7 @@ internal class UploadJobFactory private constructor(
 
   fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope): UploadInfo {
     logger
-    val statusFlow = MutableStateFlow<InputStatus>(InputStatus.READY)
+    val statusFlow = MutableStateFlow<UploadStatus>(UploadStatus.READY)
 
     var fileStream: InputStream = BufferedInputStream(FileInputStream(uploadInfo.inputFile))
     var fileSize = uploadInfo.inputFile.length()
@@ -130,7 +130,7 @@ internal class UploadJobFactory private constructor(
             // Bounce progress updates to callers
             updateProgressJob = launch {
               chunkProgressFlow.collect { chunkProgress ->
-                statusFlow.value = InputStatus.UPLOADING(
+                statusFlow.value = UploadStatus.UPLOADING(
                   MuxUpload.Progress(
                     bytesUploaded = chunkProgress.bytesUploaded + totalBytesSent,
                     totalBytes = fileSize,
@@ -151,7 +151,7 @@ internal class UploadJobFactory private constructor(
               updatedTime = chunkFinalState.updatedTime,
               startTime = startTime,
             )
-            statusFlow.value = InputStatus.UPLOADING(intermediateProgress)
+            statusFlow.value = UploadStatus.UPLOADING(intermediateProgress)
           } finally {
             updateProgressJob?.cancel()
           }
@@ -173,12 +173,12 @@ internal class UploadJobFactory private constructor(
 
         // finish up
         MainScope().launch { MuxUploadManager.jobFinished(innerUploadInfo) }
-        statusFlow.value = (InputStatus.UPLOAD_SUCCESS(finalProgress))
+        statusFlow.value = (UploadStatus.UPLOAD_SUCCESS(finalProgress))
         Result.success(finalProgress)
       } catch (e: Exception) {
         MuxUploadSdk.logger.e("MuxUpload", "Upload of ${innerUploadInfo.inputFile} failed", e)
         val finalState = createFinalState(fileSize, startTime)
-        statusFlow.value = InputStatus.UPLOAD_FAILED(e, finalState)
+        statusFlow.value = UploadStatus.UPLOAD_FAILED(e, finalState)
         MainScope().launch { MuxUploadManager.jobFinished(innerUploadInfo, false) }
         Result.failure(e)
       } finally {
