@@ -96,6 +96,7 @@ internal fun MediaCodec.safeDispose(stop: Boolean = true) {
  *
  * @param stop Stop the codec before releasing it. Default is true
  */
+@JvmSynthetic
 internal fun MediaMuxer.safeDispose(stop: Boolean = true) {
   try {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
@@ -113,6 +114,7 @@ internal fun MediaMuxer.safeDispose(stop: Boolean = true) {
  * Safely dispose of a MediaExtractor
  * If an exception is thrown during disposal, it will be logged and swallowed
  */
+@JvmSynthetic
 internal fun MediaExtractor.safeDispose() {
   try {
     release()
