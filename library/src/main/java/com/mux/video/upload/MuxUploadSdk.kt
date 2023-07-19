@@ -70,7 +70,7 @@ object MuxUploadSdk {
     initializeUploadPersistence(appContext)
     UploadMetrics.initialize(appContext)
     if (resumeStoppedUploads) {
-      val upl = MuxUploadManager.resumeAllCachedJobs()
+      MuxUploadManager.resumeAllCachedJobs()
     }
   }
 

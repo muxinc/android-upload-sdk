@@ -291,7 +291,7 @@ internal class TranscoderContext private constructor(
         }
 
         logger.i(LOG_TAG, "Standardizing input")
-      configure()
+        configure()
         if (!configured) {
             logger.e(
               LOG_TAG,

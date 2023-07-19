@@ -56,9 +56,7 @@ internal fun readAllCachedUploads(): List<UploadInfo> {
         retriesPerChunk = it.retriesPerChunk,
         optOut = it.optOut,
         uploadJob = null,
-        successFlow = null,
-        progressFlow = null,
-        errorFlow = null,
+        statusFlow = null,
       )
   }
 }
