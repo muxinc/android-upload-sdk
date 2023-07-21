@@ -182,7 +182,7 @@ private fun ListItemContent(upload: MuxUpload) {
       ErrorOverlay(modifier = Modifier.fillMaxSize())
     } else if (upload.isRunning) {
       ProgressOverlay(
-        upload.currentState,
+        upload.currentProgress,
         modifier = Modifier
           .align(Alignment.BottomStart)
           .fillMaxWidth()

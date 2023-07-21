@@ -1,9 +1,14 @@
 package com.mux.video.upload.api
 
+import android.content.Context
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
+import com.mux.video.upload.api.MuxUploadManager.allUploadJobs
+import com.mux.video.upload.api.MuxUploadManager.findUploadByFile
+import com.mux.video.upload.api.MuxUploadManager.resumeAllCachedJobs
 import com.mux.video.upload.internal.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.filter
 import java.io.File
 
 /**
@@ -20,6 +25,7 @@ import java.io.File
  */
 object MuxUploadManager {
 
+  public var appContext: Context? = null;
   private val mainScope = MainScope()
 
   private val uploadsByFilename: MutableMap<String, UploadInfo> = mutableMapOf()
@@ -94,15 +100,13 @@ object MuxUploadManager {
   internal fun pauseJob(upload: UploadInfo): UploadInfo {
     assertMainThread()
     // Paused jobs stay in the manager and remain persisted
-    uploadsByFilename[upload.file.absolutePath]?.let {
+    uploadsByFilename[upload.inputFile.absolutePath]?.let {
       cancelJobInner(it)
       val pausedUpload = upload.update(
         uploadJob = null,
-        progressFlow = null,
-        errorFlow = null,
-        successFlow = null,
+        statusFlow = null,
       )
-      uploadsByFilename[pausedUpload.file.absolutePath] = pausedUpload
+      uploadsByFilename[pausedUpload.inputFile.absolutePath] = pausedUpload
       return pausedUpload
     }
     notifyListListeners()
@@ -113,10 +117,10 @@ object MuxUploadManager {
   @MainThread
   internal fun cancelJob(upload: UploadInfo) {
     assertMainThread()
-    uploadsByFilename[upload.file.absolutePath]?.let {
-      observerJobsByFilename.remove(upload.file.absolutePath)?.cancel()
+    uploadsByFilename[upload.inputFile.absolutePath]?.let {
+      observerJobsByFilename.remove(upload.inputFile.absolutePath)?.cancel()
       cancelJobInner(it)
-      uploadsByFilename -= it.file.absolutePath
+      uploadsByFilename -= it.inputFile.absolutePath
       forgetUploadState(upload)
     }
     notifyListListeners()
@@ -126,8 +130,8 @@ object MuxUploadManager {
   @MainThread
   internal fun jobFinished(upload: UploadInfo, forgetJob: Boolean = true) {
     assertMainThread()
-    observerJobsByFilename.remove(upload.file.absolutePath)?.cancel()
-    uploadsByFilename -= upload.file.absolutePath
+    observerJobsByFilename.remove(upload.inputFile.absolutePath)?.cancel()
+    uploadsByFilename -= upload.inputFile.absolutePath
     if (forgetJob) {
       forgetUploadState(upload)
     }
@@ -146,7 +150,7 @@ object MuxUploadManager {
   }
 
   private fun insertOrUpdateUpload(upload: UploadInfo, restart: Boolean): UploadInfo {
-    val filename = upload.file.absolutePath
+    val filename = upload.inputFile.absolutePath
     var newUpload = uploadsByFilename[filename]
     // Use the old job if possible (unless requested otherwise)
     if (newUpload?.uploadJob == null) {
@@ -160,16 +164,22 @@ object MuxUploadManager {
         newUpload = startUploadJob(upload)
       }
     }
-    uploadsByFilename += upload.file.absolutePath to newUpload
-    observerJobsByFilename[upload.file.absolutePath]?.cancel()
-    observerJobsByFilename += upload.file.absolutePath to newObserveProgressJob(newUpload)
+    uploadsByFilename += upload.inputFile.absolutePath to newUpload
+    observerJobsByFilename[upload.inputFile.absolutePath]?.cancel()
+    observerJobsByFilename += upload.inputFile.absolutePath to newObserveProgressJob(newUpload)
     return newUpload
   }
 
   private fun newObserveProgressJob(upload: UploadInfo): Job {
-    // This job has up to three children, one for each of the state flows on UploadInfo
+    // Clear finished uploads from cache and storage
     return mainScope.launch {
-      upload.successFlow?.let { flow -> launch { flow.collect { jobFinished(upload) } } }
+      upload.statusFlow?.let { statusFlow ->
+        launch {
+          statusFlow
+            .filter { it is UploadStatus.UploadSuccess }
+            .collect { jobFinished(upload) }
+        }
+      }
     }
   }
 

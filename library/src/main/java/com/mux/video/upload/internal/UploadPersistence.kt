@@ -3,7 +3,6 @@ package com.mux.video.upload.internal
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
-import android.util.Log
 import com.mux.video.upload.api.MuxUpload
 import org.json.JSONArray
 import org.json.JSONObject
@@ -19,7 +18,7 @@ internal fun initializeUploadPersistence(appContext: Context) {
 internal fun writeUploadState(uploadInfo: UploadInfo, state: MuxUpload.Progress) {
   UploadPersistence.write(
     UploadEntry(
-      file = uploadInfo.file,
+      file = uploadInfo.inputFile,
       url = uploadInfo.remoteUri.toString(),
       savedAtLocalMs = Date().time,
       state = if (uploadInfo.isRunning()) {
@@ -37,7 +36,7 @@ internal fun writeUploadState(uploadInfo: UploadInfo, state: MuxUpload.Progress)
 
 @JvmSynthetic
 internal fun readLastByteForFile(upload: UploadInfo): Long {
-  return UploadPersistence.readEntries()[upload.file.absolutePath]?.bytesSent ?: 0
+  return UploadPersistence.readEntries()[upload.inputFile.absolutePath]?.bytesSent ?: 0
 }
 
 @JvmSynthetic
@@ -52,14 +51,12 @@ internal fun readAllCachedUploads(): List<UploadInfo> {
     .map {
       UploadInfo(
         remoteUri = Uri.parse(it.url),
-        file =  it.file,
+        inputFile =  it.file,
         chunkSize = it.chunkSize,
         retriesPerChunk = it.retriesPerChunk,
         optOut = it.optOut,
         uploadJob = null,
-        successFlow = null,
-        progressFlow = null,
-        errorFlow = null,
+        statusFlow = null,
       )
   }
 }
@@ -91,7 +88,7 @@ private object UploadPersistence {
   fun removeForFile(upload: UploadInfo) {
     checkInitialized()
     val entries = readEntries()
-    entries -= upload.file.absolutePath
+    entries -= upload.inputFile.absolutePath
     writeEntries(entries)
   }
 

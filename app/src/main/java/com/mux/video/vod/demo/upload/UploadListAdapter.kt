@@ -23,15 +23,15 @@ class UploadListAdapter(
 
   override fun onBindViewHolder(holder: MediaStoreVideoViewHolder, position: Int) {
     val listItem = items[position]
-    val elapsedTime = listItem.currentState.updatedTime - listItem.currentState.startTime
-    val bytesPerMs = listItem.currentState.bytesUploaded / elapsedTime.toDouble()
-    val stateMsg = if (listItem.currentState.bytesUploaded >= listItem.currentState.totalBytes) {
+    val elapsedTime = listItem.currentProgress.updatedTime - listItem.currentProgress.startTime
+    val bytesPerMs = listItem.currentProgress.bytesUploaded / elapsedTime.toDouble()
+    val stateMsg = if (listItem.currentProgress.bytesUploaded >= listItem.currentProgress.totalBytes) {
       "done"
     } else {
       "not done"
     }
     val progressPercent =
-      (listItem.currentState.bytesUploaded / listItem.currentState.totalBytes.toDouble()) * 100.0
+      (listItem.currentProgress.bytesUploaded / listItem.currentProgress.totalBytes.toDouble()) * 100.0
     val df = DecimalFormat("#.00")
     val formattedRate = df.format(bytesPerMs)
 
@@ -40,7 +40,7 @@ class UploadListAdapter(
     holder.viewBinding.mediastoreVideoProgress.max = 100
     holder.viewBinding.mediastoreVideoFilename.text = listItem.videoFile.absolutePath
     holder.viewBinding.mediastoreVideoDate.text =
-      "${listItem.currentState.bytesUploaded} bytes in ${elapsedTime / 1000F} s elapsed "
+      "${listItem.currentProgress.bytesUploaded} bytes in ${elapsedTime / 1000F} s elapsed "
     holder.viewBinding.mediastoreVideoFilesize.text = "${formattedRate} KBytes/s"
 
     if (listItem.isRunning) {

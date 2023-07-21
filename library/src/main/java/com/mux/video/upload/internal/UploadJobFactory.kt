@@ -1,15 +1,20 @@
 package com.mux.video.upload.internal
 
+import android.os.Build
 import android.util.Log
 import com.mux.video.upload.BuildConfig
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
+import com.mux.video.upload.api.UploadStatus
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.io.BufferedInputStream
 import java.io.FileInputStream
+import java.io.InputStream
 import java.util.*
 
 /**
@@ -56,47 +61,80 @@ internal class UploadJobFactory private constructor(
 
   fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope): UploadInfo {
     logger
-    val successFlow = callbackFlow<MuxUpload.Progress>()
-    val overallProgressFlow = callbackFlow<MuxUpload.Progress>()
-    val errorFlow = callbackFlow<Exception>()
-    val fileStream = BufferedInputStream(FileInputStream(uploadInfo.file))
-    val fileSize = uploadInfo.file.length()
+    val statusFlow = MutableStateFlow<UploadStatus>(UploadStatus.Ready)
+
+    var fileStream: InputStream = BufferedInputStream(FileInputStream(uploadInfo.inputFile))
+    var fileSize = uploadInfo.inputFile.length()
     val metrics = UploadMetrics.create()
 
     val uploadJob = outerScope.async {
+      // Inside the async { }, we have officially started
+      statusFlow.value = UploadStatus.Started
+
+      // This UploadInfo never gets sent outside this coroutine. It contains info related to
+      // standardizing the the client doesn't need to know/can't know synchronously
+      var innerUploadInfo = uploadInfo
+
       val startTime = System.currentTimeMillis()
       try {
-        var totalBytesSent: Long = getAlreadyTransferredBytes(uploadInfo)
+        // See if the file need to be converted to a standard input.
+        if (uploadInfo.standardizationRequested
+          && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
+        ) {
+          statusFlow.value = UploadStatus.Preparing
+          val tcx = TranscoderContext.create(innerUploadInfo, MuxUploadManager.appContext!!)
+          innerUploadInfo = tcx.process()
+          if (tcx.fileTranscoded) {
+            fileStream = withContext(Dispatchers.IO) {
+              BufferedInputStream(FileInputStream(innerUploadInfo.standardizedFile))
+            }
+            // This !! is safe by contract: process() will set the standardizedFile if it transcoded
+            fileSize = innerUploadInfo.standardizedFile!!.length()
+          }
+        }
+
+        // Now that we've standardized (or not), start the upload
+
+        var totalBytesSent: Long = getAlreadyTransferredBytes(innerUploadInfo)
         Log.d("UploadJobFactory", "totalBytesSent: $totalBytesSent")
-        val chunkBuffer = ByteArray(uploadInfo.chunkSize)
+        val chunkBuffer = ByteArray(innerUploadInfo.chunkSize)
 
         // If we're resuming, we must skip to the current file pos
         if (totalBytesSent != 0L) {
           withContext(Dispatchers.IO) { fileStream.skip(totalBytesSent) }
         }
 
+        statusFlow.value = UploadStatus.Uploading(
+          MuxUpload.Progress(
+            bytesUploaded = totalBytesSent,
+            totalBytes = fileSize,
+            startTime = startTime,
+            updatedTime = System.currentTimeMillis()
+          )
+        )
+
         // Upload each chunk starting from the current head of the stream
         do {
           // The last chunk will almost definitely be smaller than a whole chunk
           val bytesLeft = fileSize - totalBytesSent
-          val chunkSize = if (uploadInfo.chunkSize > bytesLeft) {
+          val thisChunkSize = if (innerUploadInfo.chunkSize > bytesLeft) {
             bytesLeft.toInt()
           } else {
-            uploadInfo.chunkSize
+            innerUploadInfo.chunkSize
           }
-
+          logger.i("UploadJob", "Trying to read $thisChunkSize bytes")
           //read-in a chunk
           val fileReadSize = withContext(Dispatchers.IO) {
-            fileStream.read(chunkBuffer, 0, chunkSize)
+            fileStream.read(chunkBuffer, 0, thisChunkSize)
           }
-          if (fileReadSize != chunkSize) { // Guaranteed unless the file was changed under us or sth
-            throw IllegalStateException("expected to read $chunkSize bytes, but read $fileReadSize")
+          if (fileReadSize != thisChunkSize) { // Guaranteed unless the file was changed under us or sth
+            throw IllegalStateException("expected to read $thisChunkSize bytes, but read $fileReadSize")
           }
 
           val chunk = ChunkWorker.Chunk(
-            contentLength = chunkSize,
+            contentLength = thisChunkSize,
             startByte = totalBytesSent,
-            endByte = totalBytesSent + chunkSize - 1,
+            endByte = totalBytesSent + thisChunkSize - 1,
             totalFileSize = fileSize,
             sliceData = chunkBuffer,
           )
@@ -107,19 +145,20 @@ internal class UploadJobFactory private constructor(
             // Bounce progress updates to callers
             updateProgressJob = launch {
               chunkProgressFlow.collect { chunkProgress ->
-                overallProgressFlow.emit(
+                statusFlow.value = UploadStatus.Uploading(
                   MuxUpload.Progress(
                     bytesUploaded = chunkProgress.bytesUploaded + totalBytesSent,
                     totalBytes = fileSize,
                     startTime = startTime,
                     updatedTime = chunkProgress.updatedTime,
                   )
-                ) // overallProgressChannel.emit(
+                ) // statusFlow.value = ... (
               } // chunkProgressChannel.collect {
             }
 
-            val chunkFinalState = createWorker(chunk, uploadInfo, chunkProgressFlow).upload()
+            val chunkFinalState = createWorker(chunk, innerUploadInfo, chunkProgressFlow).upload()
 
+            // Done with a chunk, so update the state again to capture all progress before looping
             totalBytesSent += chunkFinalState.bytesUploaded
             val intermediateProgress = MuxUpload.Progress(
               bytesUploaded = totalBytesSent,
@@ -127,47 +166,47 @@ internal class UploadJobFactory private constructor(
               updatedTime = chunkFinalState.updatedTime,
               startTime = startTime,
             )
-            overallProgressFlow.emit(intermediateProgress)
+            statusFlow.value = UploadStatus.Uploading(intermediateProgress)
           } finally {
             updateProgressJob?.cancel()
           }
         } while (totalBytesSent < fileSize)
 
         // We made it!
-        val finalState = createFinalState(fileSize, startTime)
+        val finalProgress = createFinalState(fileSize, startTime)
         // report this upload asynchronously (unless a debug build of the SDK)
         @Suppress("KotlinConstantConditions")
-        if (BuildConfig.BUILD_TYPE != "debug" && !uploadInfo.optOut) {
+        if (BuildConfig.BUILD_TYPE != "debug" && !innerUploadInfo.optOut) {
           launch {
             metrics.reportUpload(
-              startTimeMillis = finalState.startTime,
-              endTimeMillis = finalState.updatedTime,
-              uploadInfo = uploadInfo,
+              startTimeMillis = finalProgress.startTime,
+              endTimeMillis = finalProgress.updatedTime,
+              uploadInfo = innerUploadInfo,
             )
           }
         }
 
         // finish up
-        MainScope().launch { MuxUploadManager.jobFinished(uploadInfo) }
-        successFlow.emit(finalState)
-        Result.success(finalState)
+        MainScope().launch { MuxUploadManager.jobFinished(innerUploadInfo) }
+        val success = UploadStatus.UploadSuccess(finalProgress)
+        statusFlow.value = success
+        Result.success(success)
       } catch (e: Exception) {
-        MuxUploadSdk.logger.e("MuxUpload", "Upload of ${uploadInfo.file} failed", e)
+        MuxUploadSdk.logger.e("MuxUpload", "Upload of ${innerUploadInfo.inputFile} failed", e)
         val finalState = createFinalState(fileSize, startTime)
-        overallProgressFlow.emit(finalState)
-        errorFlow.emit(e)
-        MainScope().launch { MuxUploadManager.jobFinished(uploadInfo, false) }
+        val failStatus = UploadStatus.UploadFailed(e, finalState)
+        statusFlow.value = failStatus
+        MainScope().launch { MuxUploadManager.jobFinished(innerUploadInfo, false) }
         Result.failure(e)
       } finally {
         @Suppress("BlockingMethodInNonBlockingContext") // the streams we use don't block on close
         fileStream.close()
+        innerUploadInfo.standardizedFile?.delete()
       }
-    }
+    } // val uploadJob = ...
 
     return uploadInfo.update(
-      successFlow = successFlow,
-      progressFlow = overallProgressFlow,
-      errorFlow = errorFlow,
+      statusFlow = statusFlow.asStateFlow(),
       uploadJob = uploadJob,
     )
   }

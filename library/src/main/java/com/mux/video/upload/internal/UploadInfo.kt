@@ -1,9 +1,10 @@
 package com.mux.video.upload.internal
 
 import android.net.Uri
+import com.mux.video.upload.api.UploadStatus
 import com.mux.video.upload.api.MuxUpload
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 
 /**
@@ -17,15 +18,15 @@ import java.io.File
  * Job and Flows populated
  */
 internal data class UploadInfo(
+  @JvmSynthetic internal val standardizationRequested: Boolean = true,
   @JvmSynthetic internal val remoteUri: Uri,
-  @JvmSynthetic internal val file: File,
+  @JvmSynthetic internal val inputFile: File,
+  @JvmSynthetic internal val standardizedFile: File? = null,
   @JvmSynthetic internal val chunkSize: Int,
   @JvmSynthetic internal val retriesPerChunk: Int,
   @JvmSynthetic internal val optOut: Boolean,
-  @JvmSynthetic internal val uploadJob: Deferred<Result<MuxUpload.Progress>>?,
-  @JvmSynthetic internal val successFlow: SharedFlow<MuxUpload.Progress>?,
-  @JvmSynthetic internal val progressFlow: SharedFlow<MuxUpload.Progress>?,
-  @JvmSynthetic internal val errorFlow: SharedFlow<Exception>?,
+  @JvmSynthetic internal val uploadJob: Deferred<Result<UploadStatus>>?,
+  @JvmSynthetic internal val statusFlow: StateFlow<UploadStatus>?,
 ) {
   fun isRunning(): Boolean = uploadJob?.isActive ?: false
 }
@@ -36,23 +37,23 @@ internal data class UploadInfo(
  */
 @JvmSynthetic
 internal fun UploadInfo.update(
+  standardizationRequested: Boolean = this.standardizationRequested,
   remoteUri: Uri = this.remoteUri,
-  file: File = this.file,
+  file: File = this.inputFile,
+  standardizedFile: File? = this.standardizedFile,
   chunkSize: Int = this.chunkSize,
   retriesPerChunk: Int = this.retriesPerChunk,
   optOut: Boolean = this.optOut,
-  uploadJob: Deferred<Result<MuxUpload.Progress>>? = this.uploadJob,
-  successFlow: SharedFlow<MuxUpload.Progress>? = this.successFlow,
-  progressFlow: SharedFlow<MuxUpload.Progress>? = this.progressFlow,
-  errorFlow: SharedFlow<Exception>? = this.errorFlow,
+  uploadJob: Deferred<Result<UploadStatus>>? = this.uploadJob,
+  statusFlow: StateFlow<UploadStatus>? = this.statusFlow,
 ) = UploadInfo(
+  standardizationRequested,
   remoteUri,
   file,
+  standardizedFile,
   chunkSize,
   retriesPerChunk,
   optOut,
   uploadJob,
-  successFlow,
-  progressFlow,
-  errorFlow
+  statusFlow,
 )

@@ -86,12 +86,16 @@ private fun RequestPermissionsEffect(context: Context) {
           launcher.launch(
             arrayOf(
               Manifest.permission.READ_EXTERNAL_STORAGE,
-              Manifest.permission.READ_MEDIA_VIDEO
+              Manifest.permission.READ_MEDIA_VIDEO,
+              Manifest.permission.WRITE_EXTERNAL_STORAGE
             )
           )
         } else {
           launcher.launch(
-            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+            arrayOf(
+              Manifest.permission.READ_EXTERNAL_STORAGE,
+              Manifest.permission.WRITE_EXTERNAL_STORAGE
+            )
           )
         }
       } // MainScope().launch {
@@ -293,10 +297,18 @@ private fun hasPermissions(context: Context): Boolean {
       context,
       Manifest.permission.READ_MEDIA_VIDEO
     ) == PackageManager.PERMISSION_GRANTED
+    ContextCompat.checkSelfPermission(
+      context,
+      Manifest.permission.WRITE_EXTERNAL_STORAGE
+    ) == PackageManager.PERMISSION_GRANTED
   } else {
     ContextCompat.checkSelfPermission(
       context,
       Manifest.permission.READ_EXTERNAL_STORAGE
+    ) == PackageManager.PERMISSION_GRANTED
+    ContextCompat.checkSelfPermission(
+      context,
+      Manifest.permission.WRITE_EXTERNAL_STORAGE
     ) == PackageManager.PERMISSION_GRANTED
   }
 }

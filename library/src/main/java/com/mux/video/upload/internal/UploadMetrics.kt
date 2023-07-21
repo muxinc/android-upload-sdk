@@ -3,18 +3,23 @@ package com.mux.video.upload.internal
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.MediaMetadataRetriever
+import android.net.Uri
 import android.os.Build
 import com.mux.video.upload.BuildConfig
 import com.mux.video.upload.MuxUploadSdk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 internal class UploadMetrics private constructor() {
+
+  private val logger get() = MuxUploadSdk.logger
 
   @JvmSynthetic
   internal suspend fun reportUpload(
@@ -25,7 +30,7 @@ internal class UploadMetrics private constructor() {
     val videoDuration = withContext(Dispatchers.IO) {
       try {
         MediaMetadataRetriever().use { retriever ->
-          retriever.setDataSource(uploadInfo.file.absolutePath)
+          retriever.setDataSource(uploadInfo.inputFile.absolutePath)
           retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toInt()
         }
       } catch (e: Exception) {
@@ -37,8 +42,9 @@ internal class UploadMetrics private constructor() {
     val eventJson = UploadEvent(
       startTimeMillis = startTimeMillis,
       endTimeMillis = endTimeMillis,
-      fileSize = uploadInfo.file.length(),
+      fileSize = uploadInfo.inputFile.length(),
       videoDuration = videoDuration ?: 0,
+      uploadURL = uploadInfo.remoteUri.toString(),
       sdkVersion = BuildConfig.LIB_VERSION,
       osName = "Android",
       osVersion = Build.VERSION.RELEASE,
@@ -48,10 +54,30 @@ internal class UploadMetrics private constructor() {
       regionCode = Locale.getDefault().country
     ).toJson()
 
-    // For this case, redirect-following is desired
     val httpClient = MuxUploadSdk.httpClient().newBuilder()
-      .followRedirects(true)
-      .followSslRedirects(true)
+      // The SDK's http client is configured for uploading. We want the tighter default timeouts
+      .callTimeout(0, TimeUnit.SECONDS)
+      .writeTimeout(10, TimeUnit.SECONDS)
+      // We need to do a non-compliant redirect: 301 or 302 but preserving method and body
+      .addInterceptor(Interceptor { chain ->
+        val response = chain.proceed(chain.request())
+        if (response.code in 301..302) {
+          val redirectUri = response.headers("Location").firstOrNull()?.let { Uri.parse(it) }
+          // If 'Location' was present and was a real URL, redirect to it
+          if (redirectUri == null) {
+            logger.w("UploadMetrics", "redirect with invalid or blank url. ignoring")
+            response
+          } else {
+            response.close() // Required before starting a new request in the chain
+            val redirectedReq = response.request.newBuilder()
+              .url(redirectUri.toString())
+              .build()
+            chain.proceed(redirectedReq)
+          }
+        } else {
+          response
+        }
+      })
       .build()
     val request = Request.Builder()
       .url("https://mobile.muxanalytics.com")
@@ -93,6 +119,7 @@ private data class UploadEvent(
   val endTimeMillis: Long,
   val fileSize: Long,
   val videoDuration: Int,
+  val uploadURL: String,
   // Device-Derived
   val sdkVersion: String,
   val osName: String,
@@ -109,6 +136,7 @@ private data class UploadEvent(
       put("end_time", endTimeMillis / 1000.0)
       put("file_size", fileSize)
       put("video_duration", videoDuration)
+      put("upload_url", uploadURL)
       put("sdk_version", sdkVersion)
       put("os_name", osName)
       put("os_version", osVersion)
