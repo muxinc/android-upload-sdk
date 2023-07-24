@@ -12,6 +12,7 @@ class UploadResult {
      * Returns true of the upload was successful,
      * Returns false if the upload wasn't successful, or if the passed object wasn't a [Result]
      */
+    @Suppress("unused")
     @JvmStatic
     fun isSuccessful(result: Result<MuxUpload.Progress>): Boolean {
       @Suppress("USELESS_IS_CHECK") // java interprets inline classes like Result as Object
@@ -27,6 +28,7 @@ class UploadResult {
      * Returns the final Progress update from [MuxUpload]'s [Result] if if was successful
      * Returns `null` if the upload was not successful, or if the passed object wasn't a result
      */
+    @Suppress("unused")
     @JvmStatic
     fun getFinalProgress(result: Result<MuxUpload.Progress>): MuxUpload.Progress? {
       @Suppress("USELESS_IS_CHECK") // java interprets inline classes like Result as Object
@@ -40,6 +42,7 @@ class UploadResult {
     /**
      * If the Result was not successful, returns the Exception that caused the failure
      */
+    @Suppress("unused")
     @JvmStatic
     fun getError(result: Result<MuxUpload.Progress>): Throwable? {
       @Suppress("USELESS_IS_CHECK") // java interprets inline classes like Result as Object
