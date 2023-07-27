@@ -29,10 +29,11 @@ object MuxUploadManager {
   private val uploadsByFilename: MutableMap<String, UploadInfo> = mutableMapOf()
   private val observerJobsByFilename: MutableMap<String, Job> = mutableMapOf()
   private val listeners: MutableSet<UploadEventListener<List<MuxUpload>>> = mutableSetOf()
+  @Suppress("unused")
   private val logger by MuxUploadSdk::logger
 
   @JvmSynthetic
-  internal var appContext: Context? = null;
+  internal var appContext: Context? = null
 
   /**
    * Finds an in-progress, paused, or failed upload and returns a [MuxUpload] to track it, if it was
