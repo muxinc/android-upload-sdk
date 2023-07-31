@@ -107,7 +107,6 @@ internal class TranscoderContext private constructor(
       uploadInfo = uploadInfo.update(standardizedFile = destFile)
 
       try {
-        extractor.setDataSource(uploadInfo.inputFile.absolutePath)
         configureDecoders()
         configured = true
       } catch (e:Exception) {
@@ -117,66 +116,78 @@ internal class TranscoderContext private constructor(
 
     private fun checkIfTranscodingIsNeeded(): Boolean {
         var shouldStandardize = false
-        for (i in 0 until extractor.trackCount) {
-            val format = extractor.getTrackFormat(i)
-            val mime = format.getString(MediaFormat.KEY_MIME)
-            var inputDuration:Long = -1;
-            if (mime?.lowercase()?.contains("video") == true) {
-                inputWidth = format.getInteger(MediaFormat.KEY_WIDTH)
-                inputHeighth = format.getInteger(MediaFormat.KEY_HEIGHT)
-                // Check if resolution is greater then 720p
-                if ((inputWidth > MAX_ALLOWED_WIDTH && inputHeighth > MAX_ALLOWED_HEIGTH)
-                    || (inputHeighth > MAX_ALLOWED_WIDTH && inputWidth > MAX_ALLOWED_HEIGTH)) {
-                    logger.v(LOG_TAG, "Should standardize because the size is incorrect")
-                    shouldStandardize = true
-                    if(inputWidth > inputHeighth) {
-                        targetedWidth = MAX_ALLOWED_WIDTH
-                        targetedHeight = targetedWidth * (inputHeighth / inputWidth)
+        try {
+            extractor.setDataSource(uploadInfo.inputFile.absolutePath)
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME)
+                var inputDuration: Long = -1;
+                if (mime?.lowercase()?.contains("video") == true) {
+                    inputWidth = format.getInteger(MediaFormat.KEY_WIDTH)
+                    inputHeighth = format.getInteger(MediaFormat.KEY_HEIGHT)
+                    // Check if resolution is greater then 720p
+                    if ((inputWidth > MAX_ALLOWED_WIDTH && inputHeighth > MAX_ALLOWED_HEIGTH)
+                        || (inputHeighth > MAX_ALLOWED_WIDTH && inputWidth > MAX_ALLOWED_HEIGTH)
+                    ) {
+                        logger.v(LOG_TAG, "Should standardize because the size is incorrect")
+                        shouldStandardize = true
+                        if (inputWidth > inputHeighth) {
+                            targetedWidth = MAX_ALLOWED_WIDTH
+                            targetedHeight = targetedWidth * (inputHeighth / inputWidth)
+                        } else {
+                            targetedHeight = MAX_ALLOWED_WIDTH
+                            targetedWidth = targetedHeight * (inputWidth / inputHeighth)
+                        }
                     } else {
-                        targetedHeight = MAX_ALLOWED_WIDTH
-                        targetedWidth = targetedHeight * (inputWidth / inputHeighth)
+                        targetedWidth = inputWidth
+                        targetedHeight = inputHeighth
                     }
-                } else {
-                    targetedWidth = inputWidth
-                    targetedHeight = inputHeighth
-                }
-                scaledSizeYuv = Nv12Buffer.allocate(targetedWidth, targetedHeight)
+                    scaledSizeYuv = Nv12Buffer.allocate(targetedWidth, targetedHeight)
 
-                // Check if compersion is h264
-                if (!mime.equals(MediaFormat.MIMETYPE_VIDEO_AVC)) {
-                    logger.v(LOG_TAG, "Should standardize because the input is not h.264")
-                    shouldStandardize = true
+                    // Check if compersion is h264
+                    if (!mime.equals(MediaFormat.MIMETYPE_VIDEO_AVC)) {
+                        logger.v(LOG_TAG, "Should standardize because the input is not h.264")
+                        shouldStandardize = true
+                    }
+                    inputBitrate = format.getIntegerCompat(MediaFormat.KEY_BIT_RATE, -1)
+                    inputDuration = format.getLongCompat(MediaFormat.KEY_DURATION, -1)
+                    if (inputBitrate == -1 && inputDuration != -1L) {
+                        inputBitrate =
+                            ((uploadInfo.inputFile.length() * 8) / (inputDuration / 1000000)).toInt()
+                    }
+                    if (inputBitrate > MAX_ALLOWED_BITRATE) {
+                        logger.v(
+                            LOG_TAG,
+                            "Should standardize because the input bitrate is too high"
+                        )
+                        shouldStandardize = true
+                        targetedBitrate = MAX_ALLOWED_BITRATE
+                    }
+                    inputFramerate = format.getIntegerCompat(MediaFormat.KEY_FRAME_RATE, -1)
+                    if (inputFramerate > MAX_ALLOWED_FRAMERATE) {
+                        logger.v(
+                            LOG_TAG,
+                            "Should standardize because the input frame rate is too high"
+                        )
+                        shouldStandardize = true
+                        targetedFramerate = OPTIMAL_FRAMERATE
+                    } else {
+                        targetedFramerate = inputFramerate
+                    }
+                    videoTrackIndex = i;
+                    inputVideoFormat = format;
+                    extractor.selectTrack(i)
                 }
-                inputBitrate = format.getIntegerCompat(MediaFormat.KEY_BIT_RATE, -1)
-                inputDuration = format.getLongCompat(MediaFormat.KEY_DURATION, -1)
-                if (inputBitrate == -1 && inputDuration != -1L) {
-                    inputBitrate = ((uploadInfo.inputFile.length() * 8) / (inputDuration / 1000000)).toInt()
+                if (mime?.lowercase()?.contains("audio") == true) {
+                    // TODO check if audio need to be standardized
+                    audioTrackIndex = i;
+                    inputAudioFormat = format;
+                    extractor.selectTrack(i)
                 }
-                if (inputBitrate > MAX_ALLOWED_BITRATE) {
-                    logger.v(LOG_TAG, "Should standardize because the input bitrate is too high")
-                    shouldStandardize = true
-                    targetedBitrate = MAX_ALLOWED_BITRATE
-                }
-                inputFramerate = format.getIntegerCompat(MediaFormat.KEY_FRAME_RATE, -1)
-                if (inputFramerate > MAX_ALLOWED_FRAMERATE) {
-                  logger.v(LOG_TAG, "Should standardize because the input frame rate is too high")
-                    shouldStandardize = true
-                    targetedFramerate = OPTIMAL_FRAMERATE
-                } else {
-                    targetedFramerate = inputFramerate
-                }
-                videoTrackIndex = i;
-                inputVideoFormat = format;
-                extractor.selectTrack(i)
             }
-            if (mime?.lowercase()?.contains("audio") == true) {
-                // TODO check if audio need to be standardized
-                audioTrackIndex = i;
-                inputAudioFormat = format;
-                extractor.selectTrack(i)
-            }
+        } catch (ex:Exception) {
+            ex.printStackTrace()
         }
-
         return shouldStandardize
     }
 
@@ -314,11 +325,12 @@ internal class TranscoderContext private constructor(
             videoDecoder!!.flush()
             videoEncoder!!.flush()
             muxVideoFrame()
+            muxer!!.stop()
+            fileTranscoded = true
         } catch (err:Exception) {
             logger.e(LOG_TAG, "Failed to standardize input file ${uploadInfo.inputFile}", err)
         } finally {
             releaseCodecs()
-            fileTranscoded = true
         }
         val duration = System.currentTimeMillis() - started
         logger.i(LOG_TAG, "Transcoding duration time: $duration")
