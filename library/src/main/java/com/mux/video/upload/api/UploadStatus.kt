@@ -24,6 +24,12 @@ sealed class UploadStatus {
    */
   open fun getError(): Exception? = null
 
+  /**
+   * Returns whether or not the uplod was successful
+   */
+  @Suppress("unused")
+  fun isSuccessful(): Boolean = this is UploadSuccess
+
   // Subclasses
 
   /**

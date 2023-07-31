@@ -349,8 +349,9 @@ class MuxUpload private constructor(
      * for use with Mux Video
      */
     @Suppress("unused")
-    fun standardizationRequested(enabled: Boolean) {
+    fun standardizationRequested(enabled: Boolean): Builder {
       uploadInfo.update(standardizationRequested = enabled)
+      return this
     }
 
     /**
@@ -373,8 +374,9 @@ class MuxUpload private constructor(
      * here.
      */
     @Suppress("unused")
-    fun optOutOfEventTracking(optOut: Boolean) {
+    fun optOutOfEventTracking(optOut: Boolean): Builder {
       uploadInfo.update(optOut = optOut)
+      return this
     }
 
     /**
