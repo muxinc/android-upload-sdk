@@ -51,6 +51,22 @@ muxDistribution {
     footer = "(c) " + new Date().format("yyyy") + " Mux, Inc. Have questions or need help?" +
             " Contact support@mux.com"
   }
+  pom {
+    description "The Mux Upload SDK for Android"
+    inceptionYear = "2023"
+    url = "https://github.com/muxinc/android-upload-sdk"
+    organization {
+      name = "Mux, Inc"
+      url = "https://www.mux.com"
+    }
+    developers {
+      developer {
+        email = "support@mux.com"
+        name = "The player and sdks team @mux"
+        organization = "Mux, inc"
+      }
+    }
+  }
 }
 
 dependencies {
