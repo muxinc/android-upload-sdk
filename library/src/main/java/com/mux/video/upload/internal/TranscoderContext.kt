@@ -45,6 +45,7 @@ internal class TranscoderContext private constructor(
 
     // This is what decoder actually provide as an output, bit different then what we used to configure it
     private var videoDecoderOutputFormat: MediaFormat? = null
+    private var audioDecoderOutputFormat: MediaFormat? = null
     private var decodedFrameWidth: Int = -1;
     private var decodedFrameHeight: Int = -1;
     private var targetedWidth = -1
@@ -67,6 +68,8 @@ internal class TranscoderContext private constructor(
     private var muxerConfigured = false;
     private var numberOfDecodedFrames = 0;
     private var numberOfEncodedFrames = 0;
+    private var numberOfDecodedSamples = 0;
+    private var numberOfEncodedSamples = 0;
     private var numberOfInputFrames = -1;
 
     private var videoDecoder:MediaCodec? = null
@@ -107,7 +110,6 @@ internal class TranscoderContext private constructor(
       uploadInfo = uploadInfo.update(standardizedFile = destFile)
 
       try {
-        extractor.setDataSource(uploadInfo.inputFile.absolutePath)
         configureDecoders()
         configured = true
       } catch (e:Exception) {
@@ -117,66 +119,81 @@ internal class TranscoderContext private constructor(
 
     private fun checkIfTranscodingIsNeeded(): Boolean {
         var shouldStandardize = false
-        for (i in 0 until extractor.trackCount) {
-            val format = extractor.getTrackFormat(i)
-            val mime = format.getString(MediaFormat.KEY_MIME)
-            var inputDuration:Long = -1;
-            if (mime?.lowercase()?.contains("video") == true) {
-                inputWidth = format.getInteger(MediaFormat.KEY_WIDTH)
-                inputHeighth = format.getInteger(MediaFormat.KEY_HEIGHT)
-                // Check if resolution is greater then 720p
-                if ((inputWidth > MAX_ALLOWED_WIDTH && inputHeighth > MAX_ALLOWED_HEIGTH)
-                    || (inputHeighth > MAX_ALLOWED_WIDTH && inputWidth > MAX_ALLOWED_HEIGTH)) {
-                    logger.v(LOG_TAG, "Should standardize because the size is incorrect")
-                    shouldStandardize = true
-                    if(inputWidth > inputHeighth) {
-                        targetedWidth = MAX_ALLOWED_WIDTH
-                        targetedHeight = targetedWidth * (inputHeighth / inputWidth)
+        try {
+            extractor.setDataSource(uploadInfo.inputFile.absolutePath)
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME)
+                var inputDuration: Long = -1;
+                if (mime?.lowercase()?.contains("video") == true) {
+                    inputWidth = format.getInteger(MediaFormat.KEY_WIDTH)
+                    inputHeighth = format.getInteger(MediaFormat.KEY_HEIGHT)
+                    // Check if resolution is greater then 720p
+                    if ((inputWidth > MAX_ALLOWED_WIDTH && inputHeighth > MAX_ALLOWED_HEIGTH)
+                        || (inputHeighth > MAX_ALLOWED_WIDTH && inputWidth > MAX_ALLOWED_HEIGTH)
+                    ) {
+                        logger.v(LOG_TAG, "Should standardize because the size is incorrect")
+                        shouldStandardize = true
+                        if (inputWidth > inputHeighth) {
+                            targetedWidth = MAX_ALLOWED_WIDTH
+                            targetedHeight = targetedWidth * (inputHeighth / inputWidth)
+                        } else {
+                            targetedHeight = MAX_ALLOWED_WIDTH
+                            targetedWidth = targetedHeight * (inputWidth / inputHeighth)
+                        }
                     } else {
-                        targetedHeight = MAX_ALLOWED_WIDTH
-                        targetedWidth = targetedHeight * (inputWidth / inputHeighth)
+                        targetedWidth = inputWidth
+                        targetedHeight = inputHeighth
                     }
-                } else {
-                    targetedWidth = inputWidth
-                    targetedHeight = inputHeighth
-                }
-                scaledSizeYuv = Nv12Buffer.allocate(targetedWidth, targetedHeight)
+                    scaledSizeYuv = Nv12Buffer.allocate(targetedWidth, targetedHeight)
 
-                // Check if compersion is h264
-                if (!mime.equals(MediaFormat.MIMETYPE_VIDEO_AVC)) {
-                    logger.v(LOG_TAG, "Should standardize because the input is not h.264")
-                    shouldStandardize = true
+                    // Check if compersion is h264
+                    if (!mime.equals(MediaFormat.MIMETYPE_VIDEO_AVC)) {
+                        logger.v(LOG_TAG, "Should standardize because the input is not h.264")
+                        shouldStandardize = true
+                    }
+                    inputBitrate = format.getIntegerCompat(MediaFormat.KEY_BIT_RATE, -1)
+                    inputDuration = format.getLongCompat(MediaFormat.KEY_DURATION, -1)
+                    if (inputBitrate == -1 && inputDuration != -1L) {
+                        inputBitrate =
+                            ((uploadInfo.inputFile.length() * 8) / (inputDuration / 1000000)).toInt()
+                    }
+                    if (inputBitrate > MAX_ALLOWED_BITRATE) {
+                        logger.v(
+                            LOG_TAG,
+                            "Should standardize because the input bitrate is too high"
+                        )
+                        shouldStandardize = true
+                        targetedBitrate = MAX_ALLOWED_BITRATE
+                    }
+                    inputFramerate = format.getIntegerCompat(MediaFormat.KEY_FRAME_RATE, -1)
+                    if (inputFramerate > MAX_ALLOWED_FRAMERATE) {
+                        logger.v(
+                            LOG_TAG,
+                            "Should standardize because the input frame rate is too high"
+                        )
+                        shouldStandardize = true
+                        targetedFramerate = OPTIMAL_FRAMERATE
+                    } else {
+                        targetedFramerate = inputFramerate
+                    }
+                    videoTrackIndex = i;
+                    inputVideoFormat = format;
+                    extractor.selectTrack(i)
                 }
-                inputBitrate = format.getIntegerCompat(MediaFormat.KEY_BIT_RATE, -1)
-                inputDuration = format.getLongCompat(MediaFormat.KEY_DURATION, -1)
-                if (inputBitrate == -1 && inputDuration != -1L) {
-                    inputBitrate = ((uploadInfo.inputFile.length() * 8) / (inputDuration / 1000000)).toInt()
+                if (mime?.lowercase()?.contains("audio") == true) {
+                    // TODO check if audio need to be standardized
+                    audioTrackIndex = i;
+                    inputAudioFormat = format;
+                    extractor.selectTrack(i)
+                    if (!mime.equals(MediaFormat.MIMETYPE_AUDIO_AAC)) {
+                        transcodeAudio = true;
+                    }
                 }
-                if (inputBitrate > MAX_ALLOWED_BITRATE) {
-                    logger.v(LOG_TAG, "Should standardize because the input bitrate is too high")
-                    shouldStandardize = true
-                    targetedBitrate = MAX_ALLOWED_BITRATE
-                }
-                inputFramerate = format.getIntegerCompat(MediaFormat.KEY_FRAME_RATE, -1)
-                if (inputFramerate > MAX_ALLOWED_FRAMERATE) {
-                  logger.v(LOG_TAG, "Should standardize because the input frame rate is too high")
-                    shouldStandardize = true
-                    targetedFramerate = OPTIMAL_FRAMERATE
-                } else {
-                    targetedFramerate = inputFramerate
-                }
-                videoTrackIndex = i;
-                inputVideoFormat = format;
-                extractor.selectTrack(i)
             }
-            if (mime?.lowercase()?.contains("audio") == true) {
-                // TODO check if audio need to be standardized
-                audioTrackIndex = i;
-                inputAudioFormat = format;
-                extractor.selectTrack(i)
-            }
+        } catch (ex:Exception) {
+            ex.printStackTrace()
         }
-
         return shouldStandardize
     }
 
@@ -302,7 +319,6 @@ internal class TranscoderContext private constructor(
 
         val started = System.currentTimeMillis()
         try {
-            extractor.selectTrack(videoTrackIndex)
             while (!eofReached) {
                 if (extractor.sampleTrackIndex == audioTrackIndex) {
                     muxAudioFrame()
@@ -314,17 +330,16 @@ internal class TranscoderContext private constructor(
             videoDecoder!!.flush()
             videoEncoder!!.flush()
             muxVideoFrame()
+            fileTranscoded = true
         } catch (err:Exception) {
             logger.e(LOG_TAG, "Failed to standardize input file ${uploadInfo.inputFile}", err)
         } finally {
             releaseCodecs()
-            fileTranscoded = true
         }
         val duration = System.currentTimeMillis() - started
         logger.i(LOG_TAG, "Transcoding duration time: $duration")
         logger.i(LOG_TAG, "Original file size: ${uploadInfo.inputFile.length()}")
         logger.i(LOG_TAG, "Transcoded file size: ${uploadInfo.standardizedFile?.length()}")
-      
         return uploadInfo
     }
 
@@ -345,26 +360,22 @@ internal class TranscoderContext private constructor(
     }
 
     private fun muxAudioFrame() {
-        val audioFrame = getNextAudioFrame()
-        // This is an audio frame, for now just copy, in the future, transcode maybe
-        if (outputAudioTrackIndex == -1) {
-            // Muxer not initialized yet, store these and mux later
-//            Log.i(
-//                "Muxer", "Not ready, save audio frame for later muxing, pts: "
-//                        + audioFrame!!.info.presentationTimeUs
-//            )
-            audioFrames.add(audioFrame!!)
-        } else {
-            // if we have some accumulated audio samples write them first
-            for (audioFrame in audioFrames) {
-//                Log.i(
-//                    "Muxer", "Muxing accumulated audio frame, pts: "
-//                            + audioFrame.info.presentationTimeUs
-//                )
-                muxAudioFrame(audioFrame)
+        if (transcodeAudio) {
+            if (!eofReached) {
+                // This will advance the extractor
+                feedAudioDecoder()
             }
-            audioFrames.clear()
-            muxAudioFrame(audioFrame!!)
+            val decodedFrames = getDecodedAudioFrame()
+            for (decoded in decodedFrames ) {
+                feedAudioEncoder(decoded);
+                decoded.release()
+            }
+            // iterate encoded audio frames and mux them
+            for(frame:AVFrame in getEncodedAudioFrames()) {
+                muxAudioFrame(frame)
+            }
+        } else {
+            copyAudioFrame();
         }
     }
 
@@ -381,7 +392,6 @@ internal class TranscoderContext private constructor(
     }
 
     private fun getVideoFrames() : ArrayList<AVFrame> {
-        // TODO if EOF is reached maybe call flush on decoder and encoder some frames may still be in there
         if (!eofReached) {
             // This will advance the extractor
             feedVideoDecoder()
@@ -392,22 +402,6 @@ internal class TranscoderContext private constructor(
             decoded.release()
         }
         return getEncodedVideoFrames()
-    }
-
-    private fun getNextAudioFrame(): AVFrame? {
-        val extractorBuffer:ByteBuffer = ByteBuffer.allocate(1024)
-        val extractedFrame = AVFrame(-1, extractorBuffer, BufferInfo(), isRaw = false)
-        val sampleSize = extractor.readSampleData(extractorBuffer, 0);
-        if (sampleSize == -1) {
-            eofReached = true;
-            // TODO fuls encoders / decoders
-            return null;
-        } else {
-            extractedFrame.info.size = sampleSize
-            extractedFrame.info.presentationTimeUs = extractor.sampleTime
-            extractor.advance()
-        }
-        return extractedFrame;
     }
 
     private fun feedVideoDecoder() {
@@ -422,7 +416,6 @@ internal class TranscoderContext private constructor(
             } else {
                 videoDecoder!!.queueInputBuffer(inIndex, 0, sampleSize, extractor.sampleTime, 0)
                 extractor.advance()
-                numberOfInputFrames++
             }
         }
     }
@@ -434,7 +427,6 @@ internal class TranscoderContext private constructor(
         var outIndex = videoDecoder!!.dequeueOutputBuffer(info, dequeueTimeout);
         while(outIndex > 0) {
             outputBuffer = videoDecoder!!.getOutputBuffer(outIndex);
-            numberOfDecodedFrames++;
             result.add(AVFrame(
                 outIndex, outputBuffer!!, info, decodedFrameWidth, decodedFrameHeight,
                 videoDecoder!!, true
@@ -525,8 +517,84 @@ internal class TranscoderContext private constructor(
         return result;
     }
 
-    private fun encodeVideoFrame(rawInput:AVFrame): AVFrame? {
-        val result:AVFrame? = null;
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    ///////////// Audio ////////////////////////////////////////////////////////////////////////
+
+    private fun copyAudioFrame() {
+        val audioFrame = getNextAudioFrame()
+        // This is an audio frame, for now just copy, in the future, transcode maybe
+        if (outputAudioTrackIndex == -1) {
+            // Muxer not initialized yet, store these and mux later
+            audioFrames.add(audioFrame!!)
+        } else {
+            // if we have some accumulated audio samples write them first
+            for (audioFrame in audioFrames) {
+                muxAudioFrame(audioFrame)
+            }
+            audioFrames.clear()
+            muxAudioFrame(audioFrame!!)
+        }
+    }
+
+    private fun getNextAudioFrame(): AVFrame? {
+        val extractorBuffer:ByteBuffer = ByteBuffer.allocate(1024)
+        val extractedFrame = AVFrame(-1, extractorBuffer, BufferInfo(), isRaw = false)
+        val sampleSize = extractor.readSampleData(extractorBuffer, 0);
+        if (sampleSize == -1) {
+            eofReached = true;
+            // TODO fuls encoders / decoders
+            return null;
+        } else {
+            extractedFrame.info.size = sampleSize
+            extractedFrame.info.presentationTimeUs = extractor.sampleTime
+            extractor.advance()
+        }
+        return extractedFrame;
+    }
+
+    private fun feedAudioDecoder() {
+        val inIndex: Int = audioDecoder!!.dequeueInputBuffer(dequeueTimeout)
+        if (inIndex >= 0) {
+            val buffer: ByteBuffer = audioDecoder!!.getInputBuffer(inIndex)!!;
+            val sampleSize = extractor.readSampleData(buffer, 0)
+            if (sampleSize < 0) {
+                // We have reached the end of video
+                eofReached = true;
+            } else {
+                audioDecoder!!.queueInputBuffer(inIndex, 0, sampleSize, extractor.sampleTime, 0)
+                extractor.advance()
+            }
+        }
+    }
+
+    private fun getDecodedAudioFrame():ArrayList<AVFrame> {
+        var info = BufferInfo()
+        var outputBuffer:ByteBuffer? = null
+        val result = ArrayList<AVFrame>()
+        var outIndex = audioDecoder!!.dequeueOutputBuffer(info, dequeueTimeout);
+        while(outIndex > 0) {
+            outputBuffer = audioDecoder!!.getOutputBuffer(outIndex);
+            result.add(AVFrame(
+                outIndex, outputBuffer!!, info, decodedFrameWidth, decodedFrameHeight,
+                videoDecoder!!, true
+            ))
+            numberOfDecodedSamples++
+            outIndex = audioDecoder!!.dequeueOutputBuffer(info, dequeueTimeout);
+        }
+        when (outIndex) {
+            MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                // Not sure what to do here
+                audioDecoderOutputFormat = audioDecoder!!.outputFormat;
+//                configureEncoders()
+            }
+            MediaCodec.INFO_TRY_AGAIN_LATER -> {
+                // Timedout also not good
+            }
+        }
+        return result
+    }
+
+    private fun feedAudioEncoder(rawInput:AVFrame) {
         val inIndex: Int = videoEncoder!!.dequeueInputBuffer(dequeueTimeout)
         if (inIndex >= 0) {
             // Scale input to match output
@@ -537,42 +605,36 @@ internal class TranscoderContext private constructor(
             videoEncoder!!.queueInputBuffer(inIndex, 0,
                 buffer.capacity(), rawInput.info.presentationTimeUs, 0)
         }
+    }
 
-        var info = BufferInfo()
-        var outIndex = videoEncoder!!.dequeueOutputBuffer(info, dequeueTimeout)
-        var outputBuffer:ByteBuffer?
-        val encodedBuffers:ArrayList<AVFrame> = ArrayList<AVFrame>()
-        var totalBufferSize:Int = 0
-        while (outIndex >= 0) {
-            outputBuffer = videoEncoder!!.getOutputBuffer(outIndex)
-            totalBufferSize += info.size
-            encodedBuffers.add(AVFrame(outIndex, outputBuffer!!, info, 0, 0,
-                videoEncoder, true, false))
-            numberOfEncodedFrames++
-            info = BufferInfo()
-            outIndex = videoEncoder!!.dequeueOutputBuffer(info, dequeueTimeout)
+    private fun getEncodedAudioFrames():ArrayList<AVFrame> {
+        val result = ArrayList<AVFrame>()
+        if (audioEncoder == null) {
+            return result;
         }
-        if (encodedBuffers.size > 0) {
-            val outputBuffer = ByteBuffer.allocate(totalBufferSize)
-            var offset = 0
-            val info = BufferInfo()
-            for (frame in encodedBuffers) {
-                // TODO maybe convert annexB to avcc, pay attention, sps and pps are in single buffer
-//                frame.buff.position(4)
-                frame.buff.get(outputBuffer.array(), offset, frame.info.size)
-                offset += frame.info.size
-                info.flags = info.flags or frame.info.flags
-                info.presentationTimeUs = frame.info.presentationTimeUs
-                frame.release()
+        var info = BufferInfo()
+        var outIndex = audioEncoder!!.dequeueOutputBuffer(info, dequeueTimeout)
+        var outputBuffer:ByteBuffer?
+        while (outIndex >= 0) {
+            if (!muxerConfigured) {
+                // TODO maybe note that audio is ready to be configured in a muxer
             }
-
-            info.offset = 0
-            info.size = totalBufferSize
-            return AVFrame(outIndex, outputBuffer, info, targetedWidth,
-                targetedHeight, videoEncoder!!, false, false)
+            outputBuffer = audioEncoder!!.getOutputBuffer(outIndex)
+            val buff = ByteBuffer.allocate(info.size)
+            outputBuffer!!.get(buff.array(), 0, info.size)
+            result.add(AVFrame(outIndex, buff, info, 0, 0,
+                audioEncoder, true, false))
+            numberOfEncodedSamples++
+            audioEncoder!!.releaseOutputBuffer(outIndex, false)
+            info = BufferInfo()
+            outIndex = audioEncoder!!.dequeueOutputBuffer(info, dequeueTimeout)
         }
         return result;
     }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+
 
     class AVFrame constructor(val index:Int, val buff:ByteBuffer, val info:BufferInfo,
                               val width:Int = 0, val heigth:Int = 0,
