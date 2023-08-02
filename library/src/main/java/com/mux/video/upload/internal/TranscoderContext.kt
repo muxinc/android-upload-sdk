@@ -8,12 +8,12 @@ import android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlan
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
-import com.asha.libresample2.Resample
 import com.mux.video.upload.MuxUploadSdk
 import io.github.crow_misia.libyuv.FilterMode
 import io.github.crow_misia.libyuv.Nv12Buffer
 import java.io.File
 import java.io.OutputStream
+import java.nio.BufferOverflowException
 import java.nio.ByteBuffer
 import java.util.*
 import kotlin.experimental.and
@@ -69,7 +69,8 @@ internal class TranscoderContext private constructor(
     private var inputHeighth = -1
     private var inputBitrate = -1
     private var inputFramerate = -1
-    private var inputChannelCount = -1;
+    private var inputChannelCount = -1
+    private var inputSamplerate = -1
 
     // Wait indefinetly for negative value, exit imidetly on 0, or timeout after a given us+
     private var dequeueTimeout:Long = 0;
@@ -81,6 +82,7 @@ internal class TranscoderContext private constructor(
     private var numberOfDecodedSamples = 0;
     private var numberOfEncodedSamples = 0;
     private var numberOfInputFrames = -1;
+    private var numberOfLostAudioFrames = 0;
 
     private var videoDecoder:MediaCodec? = null
     private var audioDecoder:MediaCodec? = null
@@ -119,23 +121,24 @@ internal class TranscoderContext private constructor(
     }
 
     private fun configure() {
-//      val cacheDir = File(appContext.cacheDir, "mux-upload")
-        val cacheDir = File(appContext.externalCacheDir, "mux-upload")
+      val cacheDir = File(appContext.cacheDir, "mux-upload")
+//        val cacheDir = File(appContext.externalCacheDir, "mux-upload")
         cacheDir.mkdirs()
-//      val destFile = File(cacheDir, UUID.randomUUID().toString() + ".mp4")
-        val videoOutput = File(cacheDir,  "video.h264")
-        videoOutputStream = videoOutput.outputStream()
 
-        val audioOutput = File(cacheDir,  "audio.aac")
-        audioOutputStream = audioOutput.outputStream()
+//        val videoOutput = File(cacheDir,  "video.h264")
+//        videoOutputStream = videoOutput.outputStream()
+//
+//        val audioOutput = File(cacheDir,  "audio.aac")
+//        audioOutputStream = audioOutput.outputStream()
+//
+//        val rawAudioOutput = File(cacheDir,  "audio_original.raw")
+//        rawAudioOutputStream = rawAudioOutput.outputStream()
+//
+//        val resampledAudioOutput = File(cacheDir,  "audio_resampled.raw")
+//        resampledAudioOutputStream = resampledAudioOutput.outputStream()
 
-        val rawAudioOutput = File(cacheDir,  "audio_original.raw")
-        rawAudioOutputStream = rawAudioOutput.outputStream()
-
-        val resampledAudioOutput = File(cacheDir,  "audio_resampled.raw")
-        resampledAudioOutputStream = resampledAudioOutput.outputStream()
-
-        val destFile = File(cacheDir,  "output.mp4")
+        val destFile = File(cacheDir, UUID.randomUUID().toString() + ".mp4")
+//        val destFile = File(cacheDir,  "output.mp4")
         destFile.createNewFile()
 
         muxer = MediaMuxer(destFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
@@ -220,6 +223,7 @@ internal class TranscoderContext private constructor(
                     inputAudioFormat = format;
                     extractor.selectTrack(i)
                     inputChannelCount = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    inputSamplerate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
                     if (inputChannelCount > 2) {
                         // We do not support this
                         transcodeAudio = false
@@ -227,9 +231,9 @@ internal class TranscoderContext private constructor(
                         if (!mime.equals(MediaFormat.MIMETYPE_AUDIO_AAC)) {
                             transcodeAudio = true;
                         }
-                        if (format.getInteger(MediaFormat.KEY_SAMPLE_RATE) != 48000) {
-                            transcodeAudio = true;
-                        }
+//                        if (format.getInteger(MediaFormat.KEY_SAMPLE_RATE) != 48000) {
+//                            transcodeAudio = true;
+//                        }
                     }
                 }
             }
@@ -257,7 +261,7 @@ internal class TranscoderContext private constructor(
     private fun configureAudioEncoder() {
         if (transcodeAudio) {
             outputAudioFormat = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC,
-                OUTPUT_SAMPLERATE, OUTPUT_NUMBER_OF_CHANNELS)
+                inputSamplerate, inputChannelCount)
             outputAudioFormat!!.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
             outputAudioFormat!!.setInteger(MediaFormat.KEY_PROFILE, 2)
             outputAudioFormat!!.setInteger(MediaFormat.KEY_BIT_RATE, OUTPUT_AUDIO_BITRATE)
@@ -420,7 +424,6 @@ internal class TranscoderContext private constructor(
                 )
             }
             muxer!!.writeSampleData(outputVideoTrackIndex, frame.buff, frame.info)
-            videoOutputStream!!.write(frame.buff.array(), frame.info.offset, frame.info.size)
         }
     }
 
@@ -433,10 +436,6 @@ internal class TranscoderContext private constructor(
             val decodedFrames = getDecodedAudioFrame()
             for (decoded in decodedFrames ) {
                 feedAudioEncoder(decoded)
-                if (inputChannelCount == 1) {
-                    // feed encoder twice with same frame, we expect stereo output
-                    feedAudioEncoder(decoded)
-                }
                 decoded.release()
             }
             // iterate encoded audio frames and mux them
@@ -465,7 +464,6 @@ internal class TranscoderContext private constructor(
             frame.buff,
             frame.info
         )
-        audioOutputStream!!.write(frame.buff.array(), frame.info.offset, frame.info.size)
 //        Log.i(
 //            "Muxer", "Muxed audio sample, size: " + frame.info.size
 //                    + ", pts: " + frame.info.presentationTimeUs
@@ -644,30 +642,44 @@ internal class TranscoderContext private constructor(
 
     private fun feedAudioEncoder(rawInput:AVFrame) {
         rawInput.buff.rewind()
-        val inIndex: Int = audioEncoder!!.dequeueInputBuffer(dequeueTimeout)
-        if (!resampleCreated) {
-            val inputSamplerate = inputAudioFormat!!.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-            resample.create(inputSamplerate, OUTPUT_SAMPLERATE, rawInput.info.size, 1)
-            resampleCreated = true
-        }
-        if (inIndex >= 0) {
-            // resample input to match output
-            val buffer: ByteBuffer = audioEncoder!!.getInputBuffer(inIndex)!!
-            var tmp:ByteBuffer = ByteBuffer.allocate(rawInput.info.size)
-            tmp.put(rawInput.buff)
-            rawInput.buff.rewind()
-            tmp.rewind()
-            rawAudioOutputStream!!.write(tmp.array(), 0, tmp.remaining())
-            buffer.rewind()
-            val output_len = resample.resampleEx(rawInput.buff, buffer, rawInput.buff.remaining())
-            tmp = ByteBuffer.allocate(buffer.capacity())
-            tmp.put(buffer)
-            tmp.rewind()
-            resampledAudioOutputStream!!.write(tmp.array(), 0, tmp.remaining())
-            buffer.rewind()
-            audioEncoder!!.queueInputBuffer(inIndex, 0,
-                buffer.remaining(), rawInput.info.presentationTimeUs, 0)
-        }
+        // Resampling not working as expected, we need a better solution
+//        var tmp:ByteBuffer = ByteBuffer.allocate(rawInput.info.size)
+//        tmp.put(rawInput.buff)
+//        rawInput.buff.rewind()
+//        tmp.rewind()
+//        rawAudioOutputStream!!.write(tmp.array(), 0, tmp.remaining())
+//        tmp.rewind()
+//        val resampled = resample.resample(tmp.array(), rawInput.info.size, true, inputSamplerate, OUTPUT_SAMPLERATE)
+////            val output_len = resample.resampleEx(rawInput.buff, buffer, rawInput.buff.remaining())
+//        if (resampled == null) {
+//            logger.i(LOG_TAG, "It is a problem :-D")
+//        }
+//        resampledAudioOutputStream!!.write(resampled, 0, resampled!!.size)
+//        var bytesQueued = 0;
+
+//        while (bytesQueued < resampled!!.size) {
+            val inIndex: Int = audioEncoder!!.dequeueInputBuffer(dequeueTimeout)
+            if (inIndex >= 0) {
+                // resample input to match output
+                val buffer: ByteBuffer = audioEncoder!!.getInputBuffer(inIndex)!!
+                buffer.rewind()
+//                val remaining = resampled!!.size - bytesQueued
+//                var toWrite =  buffer.capacity()
+//                if (remaining < buffer.capacity()) {
+//                    toWrite = remaining
+//                }
+                buffer.put(rawInput.buff)
+                buffer.rewind()
+                audioEncoder!!.queueInputBuffer(
+                    inIndex, 0,
+                    buffer.remaining(), rawInput.info.presentationTimeUs, 0
+                )
+//                bytesQueued+=toWrite
+            } else {
+                logger.e(LOG_TAG, "We lost audio frame :-D")
+                numberOfLostAudioFrames++;
+            }
+//        }
     }
 
     private fun getEncodedAudioFrames():ArrayList<AVFrame> {
