@@ -60,6 +60,7 @@ internal class TranscoderContext private constructor(
     private var targetedFramerate = -1
     private var targetedBitrate = -1
     private var scaledSizeYuv: Nv12Buffer? = null
+    private var resampleCreated = false
     private var resample: Resample = Resample()
     private val audioFrames = ArrayList<AVFrame>()
 
@@ -68,6 +69,7 @@ internal class TranscoderContext private constructor(
     private var inputHeighth = -1
     private var inputBitrate = -1
     private var inputFramerate = -1
+    private var inputChannelCount = -1;
 
     // Wait indefinetly for negative value, exit imidetly on 0, or timeout after a given us+
     private var dequeueTimeout:Long = 0;
@@ -86,6 +88,8 @@ internal class TranscoderContext private constructor(
     private var audioEncoder:MediaCodec? = null
     private var videoOutputStream:OutputStream? = null;
     private var audioOutputStream:OutputStream? = null;
+    private var rawAudioOutputStream:OutputStream? = null;
+    private var resampledAudioOutputStream:OutputStream? = null;
     var fileTranscoded = false
     private var configured = false
 
@@ -124,6 +128,12 @@ internal class TranscoderContext private constructor(
 
         val audioOutput = File(cacheDir,  "audio.aac")
         audioOutputStream = audioOutput.outputStream()
+
+        val rawAudioOutput = File(cacheDir,  "audio_original.raw")
+        rawAudioOutputStream = rawAudioOutput.outputStream()
+
+        val resampledAudioOutput = File(cacheDir,  "audio_resampled.raw")
+        resampledAudioOutputStream = resampledAudioOutput.outputStream()
 
         val destFile = File(cacheDir,  "output.mp4")
         destFile.createNewFile()
@@ -192,15 +202,13 @@ internal class TranscoderContext private constructor(
                         targetedBitrate = inputBitrate
                     }
                     inputFramerate = format.getIntegerCompat(MediaFormat.KEY_FRAME_RATE, -1)
+                    targetedFramerate = OPTIMAL_FRAMERATE
                     if (inputFramerate > MAX_ALLOWED_FRAMERATE) {
                         logger.v(
                             LOG_TAG,
                             "Should standardize because the input frame rate is too high"
                         )
                         shouldStandardize = true
-                        targetedFramerate = OPTIMAL_FRAMERATE
-                    } else {
-                        targetedFramerate = inputFramerate
                     }
                     videoTrackIndex = i;
                     inputVideoFormat = format;
@@ -211,8 +219,17 @@ internal class TranscoderContext private constructor(
                     audioTrackIndex = i;
                     inputAudioFormat = format;
                     extractor.selectTrack(i)
-                    if (!mime.equals(MediaFormat.MIMETYPE_AUDIO_AAC)) {
-                        transcodeAudio = true;
+                    inputChannelCount = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    if (inputChannelCount > 2) {
+                        // We do not support this
+                        transcodeAudio = false
+                    } else {
+                        if (!mime.equals(MediaFormat.MIMETYPE_AUDIO_AAC)) {
+                            transcodeAudio = true;
+                        }
+                        if (format.getInteger(MediaFormat.KEY_SAMPLE_RATE) != 48000) {
+                            transcodeAudio = true;
+                        }
                     }
                 }
             }
@@ -234,8 +251,6 @@ internal class TranscoderContext private constructor(
                 MediaCodec.createDecoderByType(inputAudioFormat!!.getString(MediaFormat.KEY_MIME)!!)
             audioDecoder!!.configure(inputAudioFormat, null, null, 0)
             audioDecoder!!.start()
-            val inputSamplerate = inputAudioFormat!!.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-            resample.create(inputSamplerate, OUTPUT_SAMPLERATE, 96000 * 2 , 1)
         }
     }
 
@@ -284,11 +299,6 @@ internal class TranscoderContext private constructor(
         outputVideoFormat!!.setInteger("slice-height", targetedHeight + targetedHeight/2);
         outputVideoFormat!!.setInteger("stride", targetedWidth);
         outputVideoFormat!!.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, I_FRAME_INTERVAL)
-
-        if (targetedBitrate < MAX_ALLOWED_BITRATE / 4) {
-            // USE constant quality
-            targetedBitrate = MAX_ALLOWED_BITRATE / 4
-        }
         outputVideoFormat!!.setInteger(
             MediaFormat.KEY_BITRATE_MODE,
             MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
@@ -422,7 +432,11 @@ internal class TranscoderContext private constructor(
             }
             val decodedFrames = getDecodedAudioFrame()
             for (decoded in decodedFrames ) {
-                feedAudioEncoder(decoded);
+                feedAudioEncoder(decoded)
+                if (inputChannelCount == 1) {
+                    // feed encoder twice with same frame, we expect stereo output
+                    feedAudioEncoder(decoded)
+                }
                 decoded.release()
             }
             // iterate encoded audio frames and mux them
@@ -629,13 +643,30 @@ internal class TranscoderContext private constructor(
     }
 
     private fun feedAudioEncoder(rawInput:AVFrame) {
+        rawInput.buff.rewind()
         val inIndex: Int = audioEncoder!!.dequeueInputBuffer(dequeueTimeout)
+        if (!resampleCreated) {
+            val inputSamplerate = inputAudioFormat!!.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            resample.create(inputSamplerate, OUTPUT_SAMPLERATE, rawInput.info.size, 1)
+            resampleCreated = true
+        }
         if (inIndex >= 0) {
             // resample input to match output
-            val buffer: ByteBuffer = audioEncoder!!.getInputBuffer(inIndex)!!;
-            val output_len = resample.resample(rawInput.buff, buffer, rawInput.buff.remaining())
+            val buffer: ByteBuffer = audioEncoder!!.getInputBuffer(inIndex)!!
+            var tmp:ByteBuffer = ByteBuffer.allocate(rawInput.info.size)
+            tmp.put(rawInput.buff)
+            rawInput.buff.rewind()
+            tmp.rewind()
+            rawAudioOutputStream!!.write(tmp.array(), 0, tmp.remaining())
+            buffer.rewind()
+            val output_len = resample.resampleEx(rawInput.buff, buffer, rawInput.buff.remaining())
+            tmp = ByteBuffer.allocate(buffer.capacity())
+            tmp.put(buffer)
+            tmp.rewind()
+            resampledAudioOutputStream!!.write(tmp.array(), 0, tmp.remaining())
+            buffer.rewind()
             audioEncoder!!.queueInputBuffer(inIndex, 0,
-                output_len, rawInput.info.presentationTimeUs, 0)
+                buffer.remaining(), rawInput.info.presentationTimeUs, 0)
         }
     }
 
