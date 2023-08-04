@@ -241,7 +241,11 @@ internal class TranscoderContext private constructor(
                 }
             }
         } catch (ex:Exception) {
-            ex.printStackTrace()
+          logger.e(
+            LOG_TAG,
+            "Couldn't completely inspect input. Will standardize? $shouldStandardize",
+            ex
+          )
         }
         return shouldStandardize
     }
