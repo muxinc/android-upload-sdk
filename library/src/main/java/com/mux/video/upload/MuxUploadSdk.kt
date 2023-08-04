@@ -66,9 +66,10 @@ object MuxUploadSdk {
   @Suppress("unused")
   @JvmOverloads
   fun initialize(appContext: Context, resumeStoppedUploads: Boolean = true) {
-    MuxUploadManager.appContext = appContext;
-    initializeUploadPersistence(appContext)
-    UploadMetrics.initialize(appContext)
+    val realAppContext = appContext.applicationContext // Just in case they give us something else
+    MuxUploadManager.appContext = realAppContext
+    initializeUploadPersistence(realAppContext)
+    UploadMetrics.initialize(realAppContext)
     if (resumeStoppedUploads) {
       MuxUploadManager.resumeAllCachedJobs()
     }

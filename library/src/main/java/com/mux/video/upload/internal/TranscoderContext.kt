@@ -212,13 +212,16 @@ internal class TranscoderContext private constructor(
                             "Should standardize because the input frame rate is too high"
                         )
                         shouldStandardize = true
+                        targetedFramerate = OPTIMAL_FRAMERATE
+                    } else {
+                        targetedFramerate = inputFramerate
                     }
                     videoTrackIndex = i;
                     inputVideoFormat = format;
                     extractor.selectTrack(i)
                 }
                 if (mime?.lowercase()?.contains("audio") == true) {
-                    // TODO check if audio need to be standardized
+                    //  check if audio need to be standardized
                     audioTrackIndex = i;
                     inputAudioFormat = format;
                     extractor.selectTrack(i)
@@ -398,6 +401,7 @@ internal class TranscoderContext private constructor(
             videoDecoder!!.flush()
             videoEncoder!!.flush()
             muxVideoFrame()
+            muxer!!.stop()
             fileTranscoded = true
         } catch (err:Exception) {
             logger.e(LOG_TAG, "Failed to standardize input file ${uploadInfo.inputFile}", err)
