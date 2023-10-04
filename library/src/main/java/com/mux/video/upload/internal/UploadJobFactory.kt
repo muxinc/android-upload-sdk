@@ -189,6 +189,7 @@ internal class UploadJobFactory private constructor(
         // finish up
         MainScope().launch { MuxUploadManager.jobFinished(innerUploadInfo) }
         val success = UploadStatus.UploadSuccess(finalProgress)
+        metrics.reportUploadSucceeded(startTime, finalProgress.updatedTime, 0, uploadInfo)
         statusFlow.value = success
         Result.success(success)
       } catch (e: Exception) {
@@ -196,6 +197,9 @@ internal class UploadJobFactory private constructor(
         val finalState = createFinalState(fileSize, startTime)
         val failStatus = UploadStatus.UploadFailed(e, finalState)
         statusFlow.value = failStatus
+        metrics.reportUploadFailed(startTime, System.currentTimeMillis(), 0,
+          e.localizedMessage,
+          uploadInfo)
         MainScope().launch { MuxUploadManager.jobFinished(innerUploadInfo, false) }
         Result.failure(e)
       } finally {

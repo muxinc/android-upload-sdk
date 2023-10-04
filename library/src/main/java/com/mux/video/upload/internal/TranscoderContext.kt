@@ -9,6 +9,7 @@ import androidx.annotation.RequiresApi
 import com.mux.video.upload.MuxUploadSdk
 import io.github.crow_misia.libyuv.FilterMode
 import io.github.crow_misia.libyuv.Nv12Buffer
+import org.json.JSONArray
 import java.io.File
 import java.nio.ByteBuffer
 import java.util.*
@@ -75,6 +76,9 @@ internal class TranscoderContext private constructor(
     private var audioEncoder:MediaCodec? = null
     var fileTranscoded = false
     private var configured = false
+    private var nonStandardInputReasons:JSONArray = JSONArray()
+    private var inputFileDurationMs:Long = 0 // Ms
+    private var errorDescription = ""
 
     companion object {
       const val LOG_TAG = "TranscoderContext"
@@ -94,7 +98,7 @@ internal class TranscoderContext private constructor(
                 result.add(codecInfo);
             }
         }
-        return result;
+        return result
     }
 
     private fun configure() {
@@ -138,6 +142,7 @@ internal class TranscoderContext private constructor(
                             targetedHeight = MAX_ALLOWED_WIDTH
                             targetedWidth = targetedHeight * (inputWidth / inputHeighth)
                         }
+                        nonStandardInputReasons.put("video_resolution")
                     } else {
                         targetedWidth = inputWidth
                         targetedHeight = inputHeighth
@@ -148,6 +153,7 @@ internal class TranscoderContext private constructor(
                     if (!mime.equals(MediaFormat.MIMETYPE_VIDEO_AVC)) {
                         logger.v(LOG_TAG, "Should standardize because the input is not h.264")
                         shouldStandardize = true
+                        nonStandardInputReasons.put("video_codec")
                     }
                     inputBitrate = format.getIntegerCompat(MediaFormat.KEY_BIT_RATE, -1)
                     inputDuration = format.getLongCompat(MediaFormat.KEY_DURATION, -1)
@@ -162,6 +168,7 @@ internal class TranscoderContext private constructor(
                         )
                         shouldStandardize = true
                         targetedBitrate = MAX_ALLOWED_BITRATE
+                        nonStandardInputReasons.put("video_bitrate")
                     }
                     inputFramerate = format.getIntegerCompat(MediaFormat.KEY_FRAME_RATE, -1)
                     if (inputFramerate > MAX_ALLOWED_FRAMERATE) {
@@ -171,6 +178,7 @@ internal class TranscoderContext private constructor(
                         )
                         shouldStandardize = true
                         targetedFramerate = OPTIMAL_FRAMERATE
+                        nonStandardInputReasons.put("video_framerate")
                     } else {
                         targetedFramerate = inputFramerate
                     }
@@ -294,24 +302,26 @@ internal class TranscoderContext private constructor(
     }
 
     @JvmSynthetic
-    internal fun process(): UploadInfo {
+    internal suspend fun process(): UploadInfo {
         logger.v(LOG_TAG, "process() starting")
         if (!checkIfTranscodingIsNeeded()) {
-          logger.i(LOG_TAG, "Standardization was not required. Skipping")
-          return uploadInfo
+            logger.i(LOG_TAG, "Standardization was not required. Skipping")
+            return uploadInfo
         }
 
         logger.i(LOG_TAG, "Standardizing input")
         configure()
         if (!configured) {
             logger.e(
-              LOG_TAG,
-              "Skipped: Components could not be configured. Check the logs for errors"
+                LOG_TAG,
+                "Skipped: Components could not be configured. Check the logs for errors"
             )
             return uploadInfo;
         }
 
         val started = System.currentTimeMillis()
+        val metrics = UploadMetrics.create()
+        var maxStandardInputRes = ""
         try {
             extractor.selectTrack(videoTrackIndex)
             while (!eofReached) {
@@ -328,15 +338,24 @@ internal class TranscoderContext private constructor(
             muxer!!.stop()
             fileTranscoded = true
         } catch (err:Exception) {
+            errorDescription += err.localizedMessage
             logger.e(LOG_TAG, "Failed to standardize input file ${uploadInfo.inputFile}", err)
         } finally {
             releaseCodecs()
         }
-        val duration = System.currentTimeMillis() - started
+        val ended = System.currentTimeMillis();
+        val duration = ended - started
         logger.i(LOG_TAG, "Transcoding duration time: $duration")
         logger.i(LOG_TAG, "Original file size: ${uploadInfo.inputFile.length()}")
         logger.i(LOG_TAG, "Transcoded file size: ${uploadInfo.standardizedFile?.length()}")
-      
+        maxStandardInputRes = targetedWidth.toString() + "x" + targetedHeight.toString()
+        if (fileTranscoded) {
+            metrics.reportStandardizationSuccess(started, ended, inputFileDurationMs,
+                nonStandardInputReasons, maxStandardInputRes, uploadInfo)
+        } else {
+            metrics.reportStandardizationFailed(started, ended, inputFileDurationMs,
+                errorDescription, nonStandardInputReasons, maxStandardInputRes, uploadInfo)
+        }
         return uploadInfo
     }
 
@@ -352,6 +371,7 @@ internal class TranscoderContext private constructor(
                             + ", pts: " + frame.info.presentationTimeUs
                 )
             }
+            inputFileDurationMs = frame.info.presentationTimeUs * 1000;
             muxer!!.writeSampleData(outputVideoTrackIndex, frame.buff, frame.info)
         }
     }
@@ -381,6 +401,7 @@ internal class TranscoderContext private constructor(
     }
 
     private fun muxAudioFrame(frame:AVFrame) {
+        inputFileDurationMs = frame.info.presentationTimeUs * 1000;
         muxer!!.writeSampleData(
             outputAudioTrackIndex,
             frame.buff,

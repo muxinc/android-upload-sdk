@@ -13,13 +13,152 @@ import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
+import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
+
 
 internal class UploadMetrics private constructor() {
 
   private val logger get() = MuxUploadSdk.logger
+
+
+  private fun formatMilliseconds(ms:Long):String {
+    return String.format("%02d:%02d:%02d",
+      TimeUnit.MILLISECONDS.toHours(ms),
+      TimeUnit.MILLISECONDS.toMinutes(ms) -
+              TimeUnit.HOURS.toMinutes(TimeUnit.MILLISECONDS.toHours(ms)), // The change is in this line
+      TimeUnit.MILLISECONDS.toSeconds(ms) -
+              TimeUnit.MINUTES.toSeconds(TimeUnit.MILLISECONDS.toMinutes(ms)));
+  }
+
+  private suspend fun getEventInfo(startTimeMillis: Long,
+                           endTimeMillis: Long,
+                           inputFileDurationMs: Long,
+                           uploadInfo: UploadInfo): JSONObject {
+    val iso8601Sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.getDefault())
+    var videoDuration = inputFileDurationMs
+    if (inputFileDurationMs <= 0) {
+        videoDuration = withContext(Dispatchers.IO) {
+        try {
+          MediaMetadataRetriever().use { retriever ->
+            retriever.setDataSource(uploadInfo.inputFile.absolutePath)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toInt()
+          }
+        } catch (e: Exception) {
+          MuxUploadSdk.logger.e("UploadMetrics", "Failed to get video duration", e)
+          null
+        }
+      }!!.toLong()
+    }
+    return JSONObject().apply {
+      put("standardization_start_time", iso8601Sdf.format(startTimeMillis)) // ISO8601
+      put("standardization_end_time", iso8601Sdf.format(endTimeMillis)) // ISO8601
+      put("input_size", uploadInfo.inputFile.length())
+      put("input_duration", formatMilliseconds(videoDuration)) // HH:mm:ss
+      put("upload_url", uploadInfo.remoteUri.toString())
+      put("sdk_version", BuildConfig.LIB_VERSION)
+      put("os_name", "Android")
+      put("os_version", Build.VERSION.RELEASE)
+      put("device_model", Build.MODEL)
+      put("app_name", appName)
+      put("app_version", appVersion)
+      put("region_code", Locale.getDefault().country)
+    }
+  }
+
+  private suspend fun sendPost(body:JSONObject) {
+    val httpClient = MuxUploadSdk.httpClient()
+    val request = Request.Builder()
+      .url("https://mobile.muxanalytics.com")
+      .method("POST", body.toString().toRequestBody("application/json".toMediaType()))
+      .build()
+    // The HTTP Client will log if this fails or succeeds
+    withContext(Dispatchers.IO) { httpClient.newCall(request).execute() }
+  }
+
+  @JvmSynthetic
+  internal suspend fun reportStandardizationSuccess(
+    startTimeMillis: Long,
+    endTimeMillis: Long,
+    inputFileDurationMs: Long,
+    inputReasons: JSONArray,
+    maximumResolution:String,
+    uploadInfo: UploadInfo
+  ) {
+    var body = JSONObject()
+    body.put("type", "upload_input_standardization_succeeded")
+//        body.put("session_id", uploadInfo) // TODO: see what to put here
+    body.put("version", "1")
+    val data = getEventInfo(startTimeMillis, endTimeMillis, inputFileDurationMs, uploadInfo)
+    data.put("maximum_resolution", maximumResolution)
+    data.put("non_standard_input_reasons", inputReasons)
+    body.put("data", data)
+    sendPost(body)
+  }
+
+  @JvmSynthetic
+  internal suspend fun reportStandardizationFailed(
+    startTimeMillis: Long,
+    endTimeMillis: Long,
+    inputFileDurationMs: Long,
+    errorDescription: String,
+    inputReasons: JSONArray,
+    maximumResolution:String,
+    uploadInfo: UploadInfo
+  ) {
+    var body = JSONObject()
+    body.put("type", "upload_input_standardization_failed")
+//        body.put("session_id", uploadInfo) // TODO: see what to put here
+    body.put("version", "1")
+    val data = getEventInfo(startTimeMillis, endTimeMillis, inputFileDurationMs, uploadInfo)
+    data.put("error_description", errorDescription)
+    data.put("maximum_resolution", maximumResolution)
+    data.put("non_standard_input_reasons", inputReasons)
+    data.put("upload_canceled", false)
+    body.put("data", data)
+    sendPost(body)
+  }
+
+  @JvmSynthetic
+  internal suspend fun reportUploadSucceeded(
+    startTimeMillis: Long,
+    endTimeMillis: Long,
+    inputFileDurationMs: Long,
+    uploadInfo: UploadInfo
+  ) {
+    var body = JSONObject()
+    body.put("type", "upload_succeeded")
+//        body.put("session_id", uploadInfo) // TODO: see what to put here
+    body.put("version", "1")
+    val data = getEventInfo(startTimeMillis, endTimeMillis, inputFileDurationMs, uploadInfo)
+    data.put("input_standardization_enabled", uploadInfo.standardizationRequested
+            && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
+    body.put("data", data)
+    sendPost(body)
+  }
+
+  @JvmSynthetic
+  internal suspend fun reportUploadFailed(
+    startTimeMillis: Long,
+    endTimeMillis: Long,
+    inputFileDurationMs: Long,
+    errorDescription:String,
+    uploadInfo: UploadInfo
+  ) {
+    var body = JSONObject()
+    body.put("type", "uploadfailed")
+//        body.put("session_id", uploadInfo) // TODO: see what to put here
+    body.put("version", "1")
+    val data = getEventInfo(startTimeMillis, endTimeMillis, inputFileDurationMs, uploadInfo)
+    data.put("input_standardization_enabled", uploadInfo.standardizationRequested
+            && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
+    data.put("error_description", errorDescription)
+    body.put("data", data)
+    sendPost(body)
+  }
 
   @JvmSynthetic
   internal suspend fun reportUpload(
