@@ -35,13 +35,13 @@ internal class UploadMetrics private constructor() {
   }
 
   private suspend fun getEventInfo(startTimeMillis: Long,
-                           endTimeMillis: Long,
-                           inputFileDurationMs: Long,
-                           uploadInfo: UploadInfo): JSONObject {
+                                   endTimeMillis: Long,
+                                   inputFileDurationMs: Long,
+                                   uploadInfo: UploadInfo): JSONObject {
     val iso8601Sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.getDefault())
     var videoDuration = inputFileDurationMs
     if (inputFileDurationMs <= 0) {
-        videoDuration = withContext(Dispatchers.IO) {
+      videoDuration = withContext(Dispatchers.IO) {
         try {
           MediaMetadataRetriever().use { retriever ->
             retriever.setDataSource(uploadInfo.inputFile.absolutePath)
@@ -71,8 +71,42 @@ internal class UploadMetrics private constructor() {
 
   private suspend fun sendPost(body:JSONObject) {
     val httpClient = MuxUploadSdk.httpClient()
+      .newBuilder()
+      // The SDK's http client is configured for uploading. We want the tighter default timeouts
+      .callTimeout(0, TimeUnit.SECONDS)
+      .writeTimeout(10, TimeUnit.SECONDS)
+      // We need to do a non-compliant redirect: 301 or 302 but preserving method and body
+      .addInterceptor(Interceptor { chain ->
+        val response = chain.proceed(chain.request())
+        if (response.code in 301..302 || response.code in 307..308) {
+          val redirectUri = response.headers("Location").firstOrNull()?.let { Uri.parse(it) }
+          // If 'Location' was present and was a real URL, redirect to it
+          if (redirectUri == null) {
+            logger.w("UploadMetrics", "redirect with invalid or blank url. ignoring")
+            response
+          } else {
+            response.close() // Required before starting a new request in the chain
+            val redirectedReq = response.request.newBuilder()
+            if (redirectUri.isRelative) {
+              val requestUrl = response.request.url
+              var relativePathDelimiter = "/"
+              if (redirectUri.toString().startsWith("/")) {
+                relativePathDelimiter = "";
+              }
+              redirectedReq.url(requestUrl.scheme + "//" + requestUrl.host + ":"
+                      + requestUrl.port + relativePathDelimiter + redirectUri.toString())
+            } else {
+              redirectedReq.url(redirectUri.toString())
+            }
+            chain.proceed(redirectedReq.build())
+          }
+        } else {
+          response
+        }
+      })
+      .build()
     val request = Request.Builder()
-      .url("https://mobile.muxanalytics.com")
+      .url("https://mux-sdks-telemetry.vercel.app/api/upload-sdk-native")
       .method("POST", body.toString().toRequestBody("application/json".toMediaType()))
       .build()
     // The HTTP Client will log if this fails or succeeds
@@ -86,11 +120,12 @@ internal class UploadMetrics private constructor() {
     inputFileDurationMs: Long,
     inputReasons: JSONArray,
     maximumResolution:String,
+    sessionId: String,
     uploadInfo: UploadInfo
   ) {
     var body = JSONObject()
     body.put("type", "upload_input_standardization_succeeded")
-//        body.put("session_id", uploadInfo) // TODO: see what to put here
+    body.put("session_id", sessionId)
     body.put("version", "1")
     val data = getEventInfo(startTimeMillis, endTimeMillis, inputFileDurationMs, uploadInfo)
     data.put("maximum_resolution", maximumResolution)
@@ -107,11 +142,12 @@ internal class UploadMetrics private constructor() {
     errorDescription: String,
     inputReasons: JSONArray,
     maximumResolution:String,
+    sessionId: String,
     uploadInfo: UploadInfo
   ) {
     var body = JSONObject()
     body.put("type", "upload_input_standardization_failed")
-//        body.put("session_id", uploadInfo) // TODO: see what to put here
+    body.put("session_id", sessionId)
     body.put("version", "1")
     val data = getEventInfo(startTimeMillis, endTimeMillis, inputFileDurationMs, uploadInfo)
     data.put("error_description", errorDescription)
@@ -127,11 +163,12 @@ internal class UploadMetrics private constructor() {
     startTimeMillis: Long,
     endTimeMillis: Long,
     inputFileDurationMs: Long,
+    sessionId: String,
     uploadInfo: UploadInfo
   ) {
     var body = JSONObject()
     body.put("type", "upload_succeeded")
-//        body.put("session_id", uploadInfo) // TODO: see what to put here
+    body.put("session_id", sessionId)
     body.put("version", "1")
     val data = getEventInfo(startTimeMillis, endTimeMillis, inputFileDurationMs, uploadInfo)
     data.put("input_standardization_enabled", uploadInfo.standardizationRequested
@@ -146,11 +183,12 @@ internal class UploadMetrics private constructor() {
     endTimeMillis: Long,
     inputFileDurationMs: Long,
     errorDescription:String,
+    sessionId: String,
     uploadInfo: UploadInfo
   ) {
     var body = JSONObject()
     body.put("type", "uploadfailed")
-//        body.put("session_id", uploadInfo) // TODO: see what to put here
+    body.put("session_id", sessionId)
     body.put("version", "1")
     val data = getEventInfo(startTimeMillis, endTimeMillis, inputFileDurationMs, uploadInfo)
     data.put("input_standardization_enabled", uploadInfo.standardizationRequested
@@ -192,39 +230,7 @@ internal class UploadMetrics private constructor() {
       appVersion = appVersion,
       regionCode = Locale.getDefault().country
     ).toJson()
-
-    val httpClient = MuxUploadSdk.httpClient().newBuilder()
-      // The SDK's http client is configured for uploading. We want the tighter default timeouts
-      .callTimeout(0, TimeUnit.SECONDS)
-      .writeTimeout(10, TimeUnit.SECONDS)
-      // We need to do a non-compliant redirect: 301 or 302 but preserving method and body
-      .addInterceptor(Interceptor { chain ->
-        val response = chain.proceed(chain.request())
-        if (response.code in 301..302) {
-          val redirectUri = response.headers("Location").firstOrNull()?.let { Uri.parse(it) }
-          // If 'Location' was present and was a real URL, redirect to it
-          if (redirectUri == null) {
-            logger.w("UploadMetrics", "redirect with invalid or blank url. ignoring")
-            response
-          } else {
-            response.close() // Required before starting a new request in the chain
-            val redirectedReq = response.request.newBuilder()
-              .url(redirectUri.toString())
-              .build()
-            chain.proceed(redirectedReq)
-          }
-        } else {
-          response
-        }
-      })
-      .build()
-    val request = Request.Builder()
-      .url("https://mobile.muxanalytics.com")
-      .method("POST", eventJson.toRequestBody("application/json".toMediaType()))
-      .build()
-
-    // The HTTP Client will log if this fails or succeeds
-    withContext(Dispatchers.IO) { httpClient.newCall(request).execute() }
+    sendPost(JSONObject(eventJson))
   }
 
   companion object {

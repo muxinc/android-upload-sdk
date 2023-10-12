@@ -19,7 +19,8 @@ import kotlin.experimental.and
 @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
 internal class TranscoderContext private constructor(
     private var uploadInfo: UploadInfo,
-    private val appContext: Context
+    private val appContext: Context,
+    private val sessionId: String
 ) {
     private val logger get() = MuxUploadSdk.logger
 
@@ -84,8 +85,8 @@ internal class TranscoderContext private constructor(
       const val LOG_TAG = "TranscoderContext"
 
       @JvmSynthetic
-      internal fun create(uploadInfo: UploadInfo, appContext: Context): TranscoderContext {
-        return TranscoderContext(uploadInfo, appContext)
+      internal fun create(uploadInfo: UploadInfo, appContext: Context, sessionId: String): TranscoderContext {
+        return TranscoderContext(uploadInfo, appContext, sessionId)
       }
     }
 
@@ -351,10 +352,10 @@ internal class TranscoderContext private constructor(
         maxStandardInputRes = targetedWidth.toString() + "x" + targetedHeight.toString()
         if (fileTranscoded) {
             metrics.reportStandardizationSuccess(started, ended, inputFileDurationMs,
-                nonStandardInputReasons, maxStandardInputRes, uploadInfo)
+                nonStandardInputReasons, maxStandardInputRes, sessionId, uploadInfo)
         } else {
             metrics.reportStandardizationFailed(started, ended, inputFileDurationMs,
-                errorDescription, nonStandardInputReasons, maxStandardInputRes, uploadInfo)
+                errorDescription, nonStandardInputReasons, maxStandardInputRes, sessionId, uploadInfo)
         }
         return uploadInfo
     }

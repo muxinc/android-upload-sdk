@@ -70,7 +70,7 @@ internal class UploadJobFactory private constructor(
     val uploadJob = outerScope.async {
       // Inside the async { }, we have officially started
       statusFlow.value = UploadStatus.Started
-
+      val sessionId = UUID.randomUUID().toString()
       // This UploadInfo never gets sent outside this coroutine. It contains info related to
       // standardizing the the client doesn't need to know/can't know synchronously
       var innerUploadInfo = uploadInfo
@@ -82,7 +82,7 @@ internal class UploadJobFactory private constructor(
           && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
         ) {
           statusFlow.value = UploadStatus.Preparing
-          val tcx = TranscoderContext.create(innerUploadInfo, MuxUploadManager.appContext!!)
+          val tcx = TranscoderContext.create(innerUploadInfo, MuxUploadManager.appContext!!, sessionId)
           innerUploadInfo = tcx.process()
           if (tcx.fileTranscoded) {
             fileStream = withContext(Dispatchers.IO) {
@@ -189,7 +189,9 @@ internal class UploadJobFactory private constructor(
         // finish up
         MainScope().launch { MuxUploadManager.jobFinished(innerUploadInfo) }
         val success = UploadStatus.UploadSuccess(finalProgress)
-        metrics.reportUploadSucceeded(startTime, finalProgress.updatedTime, 0, uploadInfo)
+        metrics.reportUploadSucceeded(startTime, finalProgress.updatedTime, 0,
+          sessionId,
+          uploadInfo)
         statusFlow.value = success
         Result.success(success)
       } catch (e: Exception) {
@@ -199,6 +201,7 @@ internal class UploadJobFactory private constructor(
         statusFlow.value = failStatus
         metrics.reportUploadFailed(startTime, System.currentTimeMillis(), 0,
           e.localizedMessage,
+          sessionId,
           uploadInfo)
         MainScope().launch { MuxUploadManager.jobFinished(innerUploadInfo, false) }
         Result.failure(e)
