@@ -54,14 +54,14 @@ internal class UploadMetrics private constructor() {
       }!!.toLong()
     }
     return JSONObject().apply {
-      put("standardization_start_time", iso8601Sdf.format(startTimeMillis)) // ISO8601
-      put("standardization_end_time", iso8601Sdf.format(endTimeMillis)) // ISO8601
+      put("upload_start_time", iso8601Sdf.format(startTimeMillis)) // ISO8601
+      put("upload_start_time", iso8601Sdf.format(endTimeMillis)) // ISO8601
       put("input_size", uploadInfo.inputFile.length())
       put("input_duration", formatMilliseconds(videoDuration)) // HH:mm:ss
       put("upload_url", uploadInfo.remoteUri.toString())
       put("sdk_version", BuildConfig.LIB_VERSION)
-      put("os_name", "Android")
-      put("os_version", Build.VERSION.RELEASE)
+      put("platform_name", "Android")
+      put("platform_version", Build.VERSION.RELEASE)
       put("device_model", Build.MODEL)
       put("app_name", appName)
       put("app_version", appVersion)
@@ -130,6 +130,7 @@ internal class UploadMetrics private constructor() {
     val data = getEventInfo(startTimeMillis, endTimeMillis, inputFileDurationMs, uploadInfo)
     data.put("maximum_resolution", maximumResolution)
     data.put("non_standard_input_reasons", inputReasons)
+    data.put("input_standardization_enabled", true)
     body.put("data", data)
     sendPost(body)
   }
@@ -154,6 +155,7 @@ internal class UploadMetrics private constructor() {
     data.put("maximum_resolution", maximumResolution)
     data.put("non_standard_input_reasons", inputReasons)
     data.put("upload_canceled", false)
+    data.put("input_standardization_enabled", true)
     body.put("data", data)
     sendPost(body)
   }
@@ -173,6 +175,8 @@ internal class UploadMetrics private constructor() {
     val data = getEventInfo(startTimeMillis, endTimeMillis, inputFileDurationMs, uploadInfo)
     data.put("input_standardization_requested", uploadInfo.standardizationRequested
             && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
+    data.remove("upload_start_time")
+    data.remove("upload_start_time")
     body.put("data", data)
     sendPost(body)
   }
@@ -194,6 +198,8 @@ internal class UploadMetrics private constructor() {
     data.put("input_standardization_requested", uploadInfo.standardizationRequested
             && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
     data.put("error_description", errorDescription)
+    data.remove("upload_start_time")
+    data.remove("upload_start_time")
     body.put("data", data)
     sendPost(body)
   }

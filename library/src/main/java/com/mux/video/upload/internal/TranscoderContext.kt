@@ -349,7 +349,7 @@ internal class TranscoderContext private constructor(
         logger.i(LOG_TAG, "Transcoding duration time: $duration")
         logger.i(LOG_TAG, "Original file size: ${uploadInfo.inputFile.length()}")
         logger.i(LOG_TAG, "Transcoded file size: ${uploadInfo.standardizedFile?.length()}")
-        maxStandardInputRes = targetedWidth.toString() + "x" + targetedHeight.toString()
+        maxStandardInputRes = (MAX_ALLOWED_WIDTH / MAX_ALLOWED_HEIGTH).toString()
         if (fileTranscoded) {
             metrics.reportStandardizationSuccess(started, ended, inputFileDurationMs,
                 nonStandardInputReasons, maxStandardInputRes, sessionId, uploadInfo)
