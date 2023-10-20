@@ -174,24 +174,16 @@ internal class UploadJobFactory private constructor(
 
         // We made it!
         val finalProgress = createFinalState(fileSize, startTime)
-        // report this upload asynchronously (unless a debug build of the SDK)
-        @Suppress("KotlinConstantConditions")
-        if (BuildConfig.BUILD_TYPE != "debug" && !innerUploadInfo.optOut) {
-          launch {
-            metrics.reportUpload(
-              startTimeMillis = finalProgress.startTime,
-              endTimeMillis = finalProgress.updatedTime,
-              uploadInfo = innerUploadInfo,
-            )
-          }
-        }
-
         // finish up
         MainScope().launch { MuxUploadManager.jobFinished(innerUploadInfo) }
         val success = UploadStatus.UploadSuccess(finalProgress)
-        metrics.reportUploadSucceeded(startTime, finalProgress.updatedTime, 0,
-          sessionId,
-          uploadInfo)
+        if (!innerUploadInfo.optOut) {
+          metrics.reportUploadSucceeded(
+            startTime, finalProgress.updatedTime, 0,
+            sessionId,
+            uploadInfo
+          )
+        }
         statusFlow.value = success
         Result.success(success)
       } catch (e: Exception) {
@@ -199,10 +191,14 @@ internal class UploadJobFactory private constructor(
         val finalState = createFinalState(fileSize, startTime)
         val failStatus = UploadStatus.UploadFailed(e, finalState)
         statusFlow.value = failStatus
-        metrics.reportUploadFailed(startTime, System.currentTimeMillis(), 0,
-          e.localizedMessage,
-          sessionId,
-          uploadInfo)
+        if (!innerUploadInfo.optOut) {
+          metrics.reportUploadFailed(
+            startTime, System.currentTimeMillis(), 0,
+            e.localizedMessage,
+            sessionId,
+            uploadInfo
+          )
+        }
         MainScope().launch { MuxUploadManager.jobFinished(innerUploadInfo, false) }
         Result.failure(e)
       } finally {

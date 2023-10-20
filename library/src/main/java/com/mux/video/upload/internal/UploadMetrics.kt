@@ -55,7 +55,7 @@ internal class UploadMetrics private constructor() {
     }
     return JSONObject().apply {
       put("upload_start_time", iso8601Sdf.format(startTimeMillis)) // ISO8601
-      put("upload_start_time", iso8601Sdf.format(endTimeMillis)) // ISO8601
+      put("upload_end_time", iso8601Sdf.format(endTimeMillis)) // ISO8601
       put("input_size", uploadInfo.inputFile.length())
       put("input_duration", formatMilliseconds(videoDuration)) // HH:mm:ss
       put("upload_url", uploadInfo.remoteUri.toString())
@@ -63,6 +63,7 @@ internal class UploadMetrics private constructor() {
       put("platform_name", "Android")
       put("platform_version", Build.VERSION.RELEASE)
       put("device_model", Build.MODEL)
+      put("device_version", Build.VERSION.SDK_INT)
       put("app_name", appName)
       put("app_version", appVersion)
       put("region_code", Locale.getDefault().country)
@@ -106,7 +107,7 @@ internal class UploadMetrics private constructor() {
       })
       .build()
     val request = Request.Builder()
-      .url("https://mux-sdks-telemetry.vercel.app/api/upload-sdk-native")
+      .url("https://mobile.muxanalytics.com/api/upload-sdk-native")
       .method("POST", body.toString().toRequestBody("application/json".toMediaType()))
       .build()
     // The HTTP Client will log if this fails or succeeds
@@ -175,8 +176,6 @@ internal class UploadMetrics private constructor() {
     val data = getEventInfo(startTimeMillis, endTimeMillis, inputFileDurationMs, uploadInfo)
     data.put("input_standardization_requested", uploadInfo.standardizationRequested
             && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
-    data.remove("upload_start_time")
-    data.remove("upload_start_time")
     body.put("data", data)
     sendPost(body)
   }
@@ -198,45 +197,8 @@ internal class UploadMetrics private constructor() {
     data.put("input_standardization_requested", uploadInfo.standardizationRequested
             && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
     data.put("error_description", errorDescription)
-    data.remove("upload_start_time")
-    data.remove("upload_start_time")
     body.put("data", data)
     sendPost(body)
-  }
-
-  @JvmSynthetic
-  internal suspend fun reportUpload(
-    startTimeMillis: Long,
-    endTimeMillis: Long,
-    uploadInfo: UploadInfo
-  ) {
-    val videoDuration = withContext(Dispatchers.IO) {
-      try {
-        MediaMetadataRetriever().use { retriever ->
-          retriever.setDataSource(uploadInfo.inputFile.absolutePath)
-          retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toInt()
-        }
-      } catch (e: Exception) {
-        MuxUploadSdk.logger.e("UploadMetrics", "Failed to get video duration", e)
-        null
-      }
-    }
-
-    val eventJson = UploadEvent(
-      startTimeMillis = startTimeMillis,
-      endTimeMillis = endTimeMillis,
-      fileSize = uploadInfo.inputFile.length(),
-      videoDuration = videoDuration ?: 0,
-      uploadURL = uploadInfo.remoteUri.toString(),
-      sdkVersion = BuildConfig.LIB_VERSION,
-      osName = "Android",
-      osVersion = Build.VERSION.RELEASE,
-      deviceModel = Build.MODEL,
-      appName = appName,
-      appVersion = appVersion,
-      regionCode = Locale.getDefault().country
-    ).toJson()
-    sendPost(JSONObject(eventJson))
   }
 
   companion object {
@@ -261,40 +223,5 @@ internal class UploadMetrics private constructor() {
       appName = packageInfo.packageName
       appVersion = packageInfo.versionName
     }
-  }
-}
-
-private data class UploadEvent(
-  // Video-Specific
-  val startTimeMillis: Long,
-  val endTimeMillis: Long,
-  val fileSize: Long,
-  val videoDuration: Int,
-  val uploadURL: String,
-  // Device-Derived
-  val sdkVersion: String,
-  val osName: String,
-  val osVersion: String,
-  val deviceModel: String,
-  val appName: String,
-  val appVersion: String,
-  val regionCode: String
-) {
-  fun toJson(): String {
-    return JSONObject().apply {
-      put("type", "upload")
-      put("start_time", startTimeMillis / 1000.0)
-      put("end_time", endTimeMillis / 1000.0)
-      put("file_size", fileSize)
-      put("video_duration", videoDuration)
-      put("upload_url", uploadURL)
-      put("sdk_version", sdkVersion)
-      put("os_name", osName)
-      put("os_version", osVersion)
-      put("device_model", deviceModel)
-      put("app_name", appName)
-      put("app_version", appVersion)
-      put("region_code", regionCode)
-    }.toString()
   }
 }
