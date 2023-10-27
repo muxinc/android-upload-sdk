@@ -59,7 +59,7 @@ internal class UploadMetrics private constructor() {
       put(startTimeKey, iso8601Sdf.format(startTimeMillis)) // ISO8601
       put(endTimeKey, iso8601Sdf.format(endTimeMillis)) // ISO8601
       put("input_size", uploadInfo.inputFile.length())
-      put("input_duration", formatMilliseconds(videoDuration)) // HH:mm:ss
+      put("input_duration", videoDuration / 1000) // HH:mm:ss
       put("upload_url", uploadInfo.remoteUri.toString())
       put("sdk_version", BuildConfig.LIB_VERSION)
       put("platform_name", "Android")
