@@ -35,7 +35,9 @@ internal class UploadMetrics private constructor() {
   }
 
   private suspend fun getEventInfo(startTimeMillis: Long,
+                                   startTimeKey: String,
                                    endTimeMillis: Long,
+                                   endTimeKey: String,
                                    inputFileDurationMs: Long,
                                    uploadInfo: UploadInfo): JSONObject {
     val iso8601Sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.getDefault())
@@ -51,11 +53,11 @@ internal class UploadMetrics private constructor() {
           MuxUploadSdk.logger.e("UploadMetrics", "Failed to get video duration", e)
           null
         }
-      }!!.toLong()
+      }?.toLong() ?: -1L
     }
     return JSONObject().apply {
-      put("upload_start_time", iso8601Sdf.format(startTimeMillis)) // ISO8601
-      put("upload_end_time", iso8601Sdf.format(endTimeMillis)) // ISO8601
+      put(startTimeKey, iso8601Sdf.format(startTimeMillis)) // ISO8601
+      put(endTimeKey, iso8601Sdf.format(endTimeMillis)) // ISO8601
       put("input_size", uploadInfo.inputFile.length())
       put("input_duration", formatMilliseconds(videoDuration)) // HH:mm:ss
       put("upload_url", uploadInfo.remoteUri.toString())
@@ -128,7 +130,8 @@ internal class UploadMetrics private constructor() {
     body.put("type", "upload_input_standardization_succeeded")
     body.put("session_id", sessionId)
     body.put("version", "1")
-    val data = getEventInfo(startTimeMillis, endTimeMillis, inputFileDurationMs, uploadInfo)
+    val data = getEventInfo(startTimeMillis, "standardization_start_time", endTimeMillis,
+      "standardization_end_time", inputFileDurationMs, uploadInfo)
     data.put("maximum_resolution", maximumResolution)
     data.put("non_standard_input_reasons", inputReasons)
     data.put("input_standardization_enabled", true)
@@ -151,7 +154,8 @@ internal class UploadMetrics private constructor() {
     body.put("type", "upload_input_standardization_failed")
     body.put("session_id", sessionId)
     body.put("version", "1")
-    val data = getEventInfo(startTimeMillis, endTimeMillis, inputFileDurationMs, uploadInfo)
+    val data = getEventInfo(startTimeMillis, "standardization_start_time",
+      endTimeMillis, "standardization_end_time", inputFileDurationMs, uploadInfo)
     data.put("error_description", errorDescription)
     data.put("maximum_resolution", maximumResolution)
     data.put("non_standard_input_reasons", inputReasons)
@@ -173,7 +177,8 @@ internal class UploadMetrics private constructor() {
     body.put("type", "upload_succeeded")
     body.put("session_id", sessionId)
     body.put("version", "1")
-    val data = getEventInfo(startTimeMillis, endTimeMillis, inputFileDurationMs, uploadInfo)
+    val data = getEventInfo(startTimeMillis, "upload_start_time", endTimeMillis,
+      "upload_end_time", inputFileDurationMs, uploadInfo)
     data.put("input_standardization_requested", uploadInfo.standardizationRequested
             && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
     body.put("data", data)
@@ -193,7 +198,8 @@ internal class UploadMetrics private constructor() {
     body.put("type", "uploadfailed")
     body.put("session_id", sessionId)
     body.put("version", "1")
-    val data = getEventInfo(startTimeMillis, endTimeMillis, inputFileDurationMs, uploadInfo)
+    val data = getEventInfo(startTimeMillis, "upload_start_time", endTimeMillis,
+      "upload_end_time", inputFileDurationMs, uploadInfo)
     data.put("input_standardization_requested", uploadInfo.standardizationRequested
             && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
     data.put("error_description", errorDescription)
