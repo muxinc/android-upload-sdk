@@ -134,7 +134,7 @@ internal class UploadMetrics private constructor() {
       "standardization_end_time", inputFileDurationMs, uploadInfo)
     data.put("maximum_resolution", maximumResolution)
     data.put("non_standard_input_reasons", inputReasons)
-    data.put("input_standardization_enabled", true)
+    data.put("input_standardization_requested", true)
     body.put("data", data)
     sendPost(body)
   }
@@ -160,7 +160,7 @@ internal class UploadMetrics private constructor() {
     data.put("maximum_resolution", maximumResolution)
     data.put("non_standard_input_reasons", inputReasons)
     data.put("upload_canceled", false)
-    data.put("input_standardization_enabled", true)
+    data.put("input_standardization_requested", true)
     body.put("data", data)
     sendPost(body)
   }
