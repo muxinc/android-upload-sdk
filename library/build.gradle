@@ -6,11 +6,10 @@ plugins {
 
 android {
   namespace 'com.mux.video.upload'
-  compileSdk 33
+  compileSdk 34
 
   defaultConfig {
     minSdk 16
-    targetSdk 33
 
     testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     consumerProguardFiles "consumer-rules.pro"
@@ -80,5 +79,5 @@ dependencies {
   testImplementation 'junit:junit:4.13.2'
   testImplementation 'androidx.test.ext:junit:1.1.5'
   testImplementation "io.mockk:mockk:1.13.5"
-  testImplementation 'org.robolectric:robolectric:4.10.3'
+  testImplementation 'org.robolectric:robolectric:4.11'
 }
