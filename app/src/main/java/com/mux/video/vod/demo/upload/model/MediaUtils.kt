@@ -12,7 +12,12 @@ suspend fun extractThumbnail(videoFile: File): Bitmap? {
     try {
       MediaMetadataRetriever().use {
         it.setDataSource(videoFile.absolutePath)
-        it.getFrameAtTime(0)
+        val frameTime =
+          it.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            ?.toLong()
+            ?.div(2)
+            ?: 0
+        it.getFrameAtTime(frameTime * 1000)
       }
     } catch (e: Exception) {
       Log.d("CreateUploadViewModel", "Error getting thumb bitmap")
