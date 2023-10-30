@@ -10,6 +10,7 @@ android {
   defaultConfig {
     applicationId "com.mux.video.vod.demo"
     minSdk 21
+    targetSdkVersion 34
     versionCode 1
     versionName "1.0"
 
