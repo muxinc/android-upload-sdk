@@ -70,7 +70,7 @@ internal class UploadJobFactory private constructor(
     val uploadJob = outerScope.async {
       // Inside the async { }, we have officially started
       statusFlow.value = UploadStatus.Started
-
+      val sessionId = UUID.randomUUID().toString()
       // This UploadInfo never gets sent outside this coroutine. It contains info related to
       // standardizing the the client doesn't need to know/can't know synchronously
       var innerUploadInfo = uploadInfo
@@ -82,7 +82,7 @@ internal class UploadJobFactory private constructor(
           && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
         ) {
           statusFlow.value = UploadStatus.Preparing
-          val tcx = TranscoderContext.create(innerUploadInfo, MuxUploadManager.appContext!!)
+          val tcx = TranscoderContext.create(innerUploadInfo, MuxUploadManager.appContext!!, sessionId)
           innerUploadInfo = tcx.process()
           if (tcx.fileTranscoded) {
             fileStream = withContext(Dispatchers.IO) {
@@ -174,21 +174,16 @@ internal class UploadJobFactory private constructor(
 
         // We made it!
         val finalProgress = createFinalState(fileSize, startTime)
-        // report this upload asynchronously (unless a debug build of the SDK)
-        @Suppress("KotlinConstantConditions")
-        if (BuildConfig.BUILD_TYPE != "debug" && !innerUploadInfo.optOut) {
-          launch {
-            metrics.reportUpload(
-              startTimeMillis = finalProgress.startTime,
-              endTimeMillis = finalProgress.updatedTime,
-              uploadInfo = innerUploadInfo,
-            )
-          }
-        }
-
         // finish up
         MainScope().launch { MuxUploadManager.jobFinished(innerUploadInfo) }
         val success = UploadStatus.UploadSuccess(finalProgress)
+        if (!innerUploadInfo.optOut) {
+          metrics.reportUploadSucceeded(
+            startTime, finalProgress.updatedTime, 0,
+            sessionId,
+            uploadInfo
+          )
+        }
         statusFlow.value = success
         Result.success(success)
       } catch (e: Exception) {
@@ -196,6 +191,14 @@ internal class UploadJobFactory private constructor(
         val finalState = createFinalState(fileSize, startTime)
         val failStatus = UploadStatus.UploadFailed(e, finalState)
         statusFlow.value = failStatus
+        if (!innerUploadInfo.optOut) {
+          metrics.reportUploadFailed(
+            startTime, System.currentTimeMillis(), 0,
+            e.localizedMessage,
+            sessionId,
+            uploadInfo
+          )
+        }
         MainScope().launch { MuxUploadManager.jobFinished(innerUploadInfo, false) }
         Result.failure(e)
       } finally {
