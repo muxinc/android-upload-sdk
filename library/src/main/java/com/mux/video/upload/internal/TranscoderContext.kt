@@ -1,16 +1,20 @@
 package com.mux.video.upload.internal
 
+import android.R.id.input
 import android.content.Context
 import android.media.*
 import android.media.MediaCodec.BufferInfo
 import android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar
 import android.os.Build
+import android.util.Log
 import androidx.annotation.RequiresApi
 import com.mux.video.upload.MuxUploadSdk
 import io.github.crow_misia.libyuv.FilterMode
 import io.github.crow_misia.libyuv.Nv12Buffer
 import org.json.JSONArray
 import java.io.File
+import java.io.OutputStream
+import java.nio.BufferOverflowException
 import java.nio.ByteBuffer
 import java.util.*
 import kotlin.experimental.and
@@ -30,6 +34,9 @@ internal class TranscoderContext private constructor(
     val MAX_ALLOWED_HEIGTH = 1080
     val OPTIMAL_FRAMERATE = 30
     val I_FRAME_INTERVAL = 5 // in seconds
+    val OUTPUT_SAMPLERATE = 48000
+    val OUTPUT_NUMBER_OF_CHANNELS = 2
+    val OUTPUT_AUDIO_BITRATE = 96000
 
     private val extractor: MediaExtractor = MediaExtractor()
     private var muxer: MediaMuxer? = null
@@ -47,6 +54,7 @@ internal class TranscoderContext private constructor(
 
     // This is what decoder actually provide as an output, bit different then what we used to configure it
     private var videoDecoderOutputFormat: MediaFormat? = null
+    private var audioDecoderOutputFormat: MediaFormat? = null
     private var decodedFrameWidth: Int = -1;
     private var decodedFrameHeight: Int = -1;
     private var targetedWidth = -1
@@ -54,13 +62,17 @@ internal class TranscoderContext private constructor(
     private var targetedFramerate = -1
     private var targetedBitrate = -1
     private var scaledSizeYuv: Nv12Buffer? = null
-    val audioFrames = ArrayList<AVFrame>()
+    private var resampleCreated = false
+    private var resample: Resample = Resample()
+    private val audioFrames = ArrayList<AVFrame>()
 
     // Input parameters
     private var inputWidth = -1
     private var inputHeighth = -1
     private var inputBitrate = -1
     private var inputFramerate = -1
+    private var inputChannelCount = -1
+    private var inputSamplerate = -1
 
     // Wait indefinetly for negative value, exit imidetly on 0, or timeout after a given us+
     private var dequeueTimeout:Long = 0;
@@ -69,12 +81,19 @@ internal class TranscoderContext private constructor(
     private var muxerConfigured = false;
     private var numberOfDecodedFrames = 0;
     private var numberOfEncodedFrames = 0;
+    private var numberOfDecodedSamples = 0;
+    private var numberOfEncodedSamples = 0;
     private var numberOfInputFrames = -1;
+    private var numberOfLostAudioFrames = 0;
 
     private var videoDecoder:MediaCodec? = null
     private var audioDecoder:MediaCodec? = null
     private var videoEncoder:MediaCodec? = null
     private var audioEncoder:MediaCodec? = null
+    private var videoOutputStream:OutputStream? = null;
+    private var audioOutputStream:OutputStream? = null;
+    private var rawAudioOutputStream:OutputStream? = null;
+    private var resampledAudioOutputStream:OutputStream? = null;
     var fileTranscoded = false
     private var configured = false
     private var nonStandardInputReasons:JSONArray = JSONArray()
@@ -90,13 +109,17 @@ internal class TranscoderContext private constructor(
       }
     }
 
-    private fun getHWCapableEncoders(mimeType: String): ArrayList<MediaCodecInfo> {
+    private fun getEncoders(mimeType: String, hwCapableOnly:Boolean): ArrayList<MediaCodecInfo> {
         val list = MediaCodecList(MediaCodecList.REGULAR_CODECS);
         var result:ArrayList<MediaCodecInfo> = ArrayList<MediaCodecInfo>();
         for(codecInfo in list.codecInfos) {
             logger.v("CodecInfo", codecInfo.name)
-            if(codecInfo.name.contains(mimeType) && codecInfo.isEncoder && codecInfo.isHardwareAcceleratedCompat) {
-                result.add(codecInfo);
+            if(codecInfo.name.contains(mimeType) && codecInfo.isEncoder) {
+                if (!hwCapableOnly) {
+                    result.add(codecInfo);
+                } else if (codecInfo.isHardwareAcceleratedCompat) {
+                    result.add(codecInfo);
+                }
             }
         }
         return result
@@ -104,19 +127,35 @@ internal class TranscoderContext private constructor(
 
     private fun configure() {
       val cacheDir = File(appContext.cacheDir, "mux-upload")
+//        val cacheDir = File(appContext.externalCacheDir, "mux-upload")
       cacheDir.mkdirs()
-      val destFile = File(cacheDir, UUID.randomUUID().toString() + ".mp4")
-      destFile.createNewFile()
 
-      muxer = MediaMuxer(destFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-      uploadInfo = uploadInfo.update(standardizedFile = destFile)
+//        val videoOutput = File(cacheDir,  "video.h264")
+//        videoOutputStream = videoOutput.outputStream()
+//
+//        val audioOutput = File(cacheDir,  "audio.aac")
+//        audioOutputStream = audioOutput.outputStream()
+//
+//        val rawAudioOutput = File(cacheDir,  "audio_original.raw")
+//        rawAudioOutputStream = rawAudioOutput.outputStream()
+//
+//        val resampledAudioOutput = File(cacheDir,  "audio_resampled.raw")
+//        resampledAudioOutputStream = resampledAudioOutput.outputStream()
 
-      try {
-        configureDecoders()
-        configured = true
-      } catch (e:Exception) {
-        logger.e(LOG_TAG, "Failed to initialize.", e)
-      }
+        val destFile = File(cacheDir, UUID.randomUUID().toString() + ".mp4")
+//        val destFile = File(cacheDir,  "output.mp4")
+        destFile.createNewFile()
+
+        muxer = MediaMuxer(destFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        uploadInfo = uploadInfo.update(standardizedFile = destFile)
+
+        try {
+            configureDecoders()
+            configureAudioEncoder()
+            configured = true
+        } catch (e:Exception) {
+            logger.e(LOG_TAG, "Failed to initialize.", e)
+        }
     }
 
     private fun checkIfTranscodingIsNeeded(): Boolean {
@@ -172,6 +211,7 @@ internal class TranscoderContext private constructor(
                         nonStandardInputReasons.put("video_bitrate")
                     }
                     inputFramerate = format.getIntegerCompat(MediaFormat.KEY_FRAME_RATE, -1)
+                    targetedFramerate = OPTIMAL_FRAMERATE
                     if (inputFramerate > MAX_ALLOWED_FRAMERATE) {
                         logger.v(
                             LOG_TAG,
@@ -188,14 +228,31 @@ internal class TranscoderContext private constructor(
                     extractor.selectTrack(i)
                 }
                 if (mime?.lowercase()?.contains("audio") == true) {
-                    // TODO check if audio need to be standardized
+                    //  check if audio need to be standardized
                     audioTrackIndex = i;
                     inputAudioFormat = format;
                     extractor.selectTrack(i)
+                    inputChannelCount = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    inputSamplerate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                    if (inputChannelCount > 2) {
+                        // We do not support this
+                        transcodeAudio = false
+                    } else {
+                        if (!mime.equals(MediaFormat.MIMETYPE_AUDIO_AAC)) {
+                            transcodeAudio = true;
+                        }
+//                        if (format.getInteger(MediaFormat.KEY_SAMPLE_RATE) != 48000) {
+//                            transcodeAudio = true;
+//                        }
+                    }
                 }
             }
         } catch (ex:Exception) {
-            ex.printStackTrace()
+          logger.e(
+            LOG_TAG,
+            "Couldn't completely inspect input. Will standardize? $shouldStandardize",
+            ex
+          )
         }
         return shouldStandardize
     }
@@ -215,7 +272,34 @@ internal class TranscoderContext private constructor(
         }
     }
 
-    private fun configureEncoders() {
+    private fun configureAudioEncoder() {
+        if (transcodeAudio) {
+            outputAudioFormat = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC,
+                inputSamplerate, inputChannelCount)
+            outputAudioFormat!!.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+            outputAudioFormat!!.setInteger(MediaFormat.KEY_PROFILE, 2)
+            outputAudioFormat!!.setInteger(MediaFormat.KEY_BIT_RATE, OUTPUT_AUDIO_BITRATE)
+            outputAudioFormat!!.setInteger("max-bitrate", OUTPUT_AUDIO_BITRATE)
+            outputAudioFormat!!.setInteger("aac-format-adif", 0)
+            val audioEncoders = getEncoders("aac", false)
+            for (encoder in audioEncoders) {
+                try {
+                    // TODO see the codec capabileties
+                    val codecCap = encoder.getCapabilitiesForType(MediaFormat.MIMETYPE_AUDIO_AAC)
+                    audioEncoder = MediaCodec.createByCodecName(encoder.name)
+                    audioEncoder!!.configure(outputAudioFormat,null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                    audioEncoder!!.start()
+                    break
+                } catch (err:java.lang.Exception) {
+                    logger.w(LOG_TAG, "Couldn't evaluate audio encoder ${encoder.name}. Skipping it", err)
+                }
+            }
+        } else {
+            outputAudioFormat = inputAudioFormat
+        }
+    }
+
+    private fun configureVideoEncoder() {
         // We will need this when we apply the image resize
         decodedFrameWidth = videoDecoderOutputFormat!!.getInteger(MediaFormat.KEY_WIDTH)
         decodedFrameHeight = videoDecoderOutputFormat!!.getInteger(MediaFormat.KEY_HEIGHT)
@@ -232,20 +316,15 @@ internal class TranscoderContext private constructor(
         )
         outputVideoFormat!!.setInteger("slice-height", targetedHeight + targetedHeight/2);
         outputVideoFormat!!.setInteger("stride", targetedWidth);
-        outputVideoFormat!!.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, I_FRAME_INTERVAL);
-        outputVideoFormat!!.setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+        outputVideoFormat!!.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, I_FRAME_INTERVAL)
+        outputVideoFormat!!.setInteger(
+            MediaFormat.KEY_BITRATE_MODE,
+            MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
+        )
         outputVideoFormat!!.setInteger(MediaFormat.KEY_BIT_RATE, targetedBitrate)
-        // configure output audio format, if input format is already AAC, then just do copy
-        transcodeAudio = !inputAudioFormat!!.getString(MediaFormat.KEY_MIME)?.contains(MediaFormat.MIMETYPE_AUDIO_AAC)!!
-        if (transcodeAudio) {
-            outputAudioFormat = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, 48000, 2)
-            outputAudioFormat!!.setString(MediaFormat.KEY_AAC_PROFILE, "2")
-            outputAudioFormat!!.setString(MediaFormat.KEY_PROFILE, "2")
-        } else {
-            outputAudioFormat = inputAudioFormat
-        }
 
-        val encoders = getHWCapableEncoders("avc")
+
+        val encoders = getEncoders("avc", true)
         for (encoder in encoders) {
             try {
                 val codecCap = encoder.getCapabilitiesForType("video/avc")
@@ -271,16 +350,10 @@ internal class TranscoderContext private constructor(
                 videoEncoder!!.configure(outputVideoFormat,null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
                 break;
             } catch (err:java.lang.Exception) {
-              logger.w(LOG_TAG, "Couldn't evaluate encoder ${encoder.name}. Skipping it", err)
+                logger.w(LOG_TAG, "Couldn't evaluate video encoder ${encoder.name}. Skipping it", err)
             }
         }
         videoEncoder!!.start()
-        if (transcodeAudio) {
-            audioEncoder =
-                MediaCodec.createEncoderByType(outputAudioFormat!!.getString(MediaFormat.KEY_MIME)!!)
-            audioEncoder!!.configure(outputAudioFormat, null, null, 0)
-            audioEncoder!!.start()
-        }
     }
 
     private fun releaseCodecs() {
@@ -296,9 +369,15 @@ internal class TranscoderContext private constructor(
     private fun configureMuxer() {
         outputVideoTrackIndex = muxer!!.addTrack(videoEncoder!!.outputFormat)
         muxer!!.setOrientationHint(inputVideoFormat!!.getInteger(MediaFormat.KEY_ROTATION))
-        if (inputAudioFormat != null) {
-            outputAudioTrackIndex = muxer!!.addTrack(outputAudioFormat!!)
+        if (transcodeAudio) {
+            outputAudioTrackIndex = muxer!!.addTrack(audioEncoder!!.outputFormat)
+        } else {
+            // Audio copy if present
+            if (inputAudioFormat != null ){
+                outputAudioTrackIndex = muxer!!.addTrack(inputAudioFormat!!)
+            }
         }
+
         muxer!!.start()
     }
 
@@ -324,7 +403,6 @@ internal class TranscoderContext private constructor(
         val metrics = UploadMetrics.create()
         var maxStandardInputRes = ""
         try {
-            extractor.selectTrack(videoTrackIndex)
             while (!eofReached) {
                 if (extractor.sampleTrackIndex == audioTrackIndex) {
                     muxAudioFrame()
@@ -378,26 +456,33 @@ internal class TranscoderContext private constructor(
     }
 
     private fun muxAudioFrame() {
-        val audioFrame = getNextAudioFrame()
-        // This is an audio frame, for now just copy, in the future, transcode maybe
-        if (outputAudioTrackIndex == -1) {
-            // Muxer not initialized yet, store these and mux later
-//            Log.i(
-//                "Muxer", "Not ready, save audio frame for later muxing, pts: "
-//                        + audioFrame!!.info.presentationTimeUs
-//            )
-            audioFrames.add(audioFrame!!)
-        } else {
-            // if we have some accumulated audio samples write them first
-            for (audioFrame in audioFrames) {
-//                Log.i(
-//                    "Muxer", "Muxing accumulated audio frame, pts: "
-//                            + audioFrame.info.presentationTimeUs
-//                )
-                muxAudioFrame(audioFrame)
+        if (transcodeAudio) {
+            if (!eofReached) {
+                // This will advance the extractor
+                feedAudioDecoder()
             }
-            audioFrames.clear()
-            muxAudioFrame(audioFrame!!)
+            val decodedFrames = getDecodedAudioFrame()
+            for (decoded in decodedFrames ) {
+                feedAudioEncoder(decoded)
+                decoded.release()
+            }
+            // iterate encoded audio frames and mux them
+            val encodedAudioFrames = getEncodedAudioFrames()
+            for(frame:AVFrame in encodedAudioFrames) {
+                if (outputAudioTrackIndex == -1) {
+                    // Muxer not initialized yet, store these and mux later
+                    audioFrames.add(frame)
+                } else {
+                    // if we have some accumulated audio samples write them first
+                    for (queuedFrame in audioFrames) {
+                        muxAudioFrame(queuedFrame)
+                    }
+                    audioFrames.clear()
+                    muxAudioFrame(frame)
+                }
+            }
+        } else {
+            copyAudioFrame();
         }
     }
 
@@ -415,7 +500,6 @@ internal class TranscoderContext private constructor(
     }
 
     private fun getVideoFrames() : ArrayList<AVFrame> {
-        // TODO if EOF is reached maybe call flush on decoder and encoder some frames may still be in there
         if (!eofReached) {
             // This will advance the extractor
             feedVideoDecoder()
@@ -426,22 +510,6 @@ internal class TranscoderContext private constructor(
             decoded.release()
         }
         return getEncodedVideoFrames()
-    }
-
-    private fun getNextAudioFrame(): AVFrame? {
-        val extractorBuffer:ByteBuffer = ByteBuffer.allocate(1024)
-        val extractedFrame = AVFrame(-1, extractorBuffer, BufferInfo(), isRaw = false)
-        val sampleSize = extractor.readSampleData(extractorBuffer, 0);
-        if (sampleSize == -1) {
-            eofReached = true;
-            // TODO fuls encoders / decoders
-            return null;
-        } else {
-            extractedFrame.info.size = sampleSize
-            extractedFrame.info.presentationTimeUs = extractor.sampleTime
-            extractor.advance()
-        }
-        return extractedFrame;
     }
 
     private fun feedVideoDecoder() {
@@ -456,7 +524,6 @@ internal class TranscoderContext private constructor(
             } else {
                 videoDecoder!!.queueInputBuffer(inIndex, 0, sampleSize, extractor.sampleTime, 0)
                 extractor.advance()
-                numberOfInputFrames++
             }
         }
     }
@@ -468,7 +535,6 @@ internal class TranscoderContext private constructor(
         var outIndex = videoDecoder!!.dequeueOutputBuffer(info, dequeueTimeout);
         while(outIndex > 0) {
             outputBuffer = videoDecoder!!.getOutputBuffer(outIndex);
-            numberOfDecodedFrames++;
             result.add(AVFrame(
                 outIndex, outputBuffer!!, info, decodedFrameWidth, decodedFrameHeight,
                 videoDecoder!!, true
@@ -480,44 +546,13 @@ internal class TranscoderContext private constructor(
             MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                 // This give us real image height, to avoid corruptions in video
                 videoDecoderOutputFormat = videoDecoder!!.outputFormat;
-                configureEncoders()
+                configureVideoEncoder()
             }
             MediaCodec.INFO_TRY_AGAIN_LATER -> {
                 // Timedout also not good
             }
         }
         return result
-    }
-
-    private fun findAnnexBPosition(buff:ByteBuffer, startSearchAt:Int, buffSize:Int): Int {
-        // We are assuming integer is 4 bytes on every device, we also assume anexB is 4 bytes long
-        // instead of 3 which is also possible sometimes
-        for(i in startSearchAt..buffSize - 4) {
-            if (buff.getInt(i) == 1) {
-                return i;
-            }
-        }
-        return -1
-    }
-
-    private fun convertAnnexBtoAvcc(buff:ByteBuffer, buffSize:Int) {
-        val positions = ArrayList<Int>()
-        var annexBPos = findAnnexBPosition(buff, 0, buffSize)
-        while (annexBPos != -1) {
-            positions.add(annexBPos)
-            annexBPos = findAnnexBPosition(buff, annexBPos + 4, buffSize)
-        }
-        for (i in 0..positions.size -1) {
-            var naluLength = 0
-            if (i == positions.size -1) {
-                // This is the last position
-                naluLength =  buffSize - positions.get(i) - 4
-            } else {
-                naluLength = positions.get(i + 1) - positions.get(i) -4;
-            }
-            buff.position(positions.get(i))
-            buff.putInt(naluLength)
-        }
     }
 
     private fun feedVideoEncoder(rawInput:AVFrame) {
@@ -559,54 +594,184 @@ internal class TranscoderContext private constructor(
         return result;
     }
 
-    private fun encodeVideoFrame(rawInput:AVFrame): AVFrame? {
-        val result:AVFrame? = null;
-        val inIndex: Int = videoEncoder!!.dequeueInputBuffer(dequeueTimeout)
-        if (inIndex >= 0) {
-            // Scale input to match output
-            rawInput.yuvBuffer!!.scale(scaledSizeYuv!!, FilterMode.BILINEAR)
-            val buffer: ByteBuffer = videoEncoder!!.getInputBuffer(inIndex)!!;
-            buffer.clear()
-            scaledSizeYuv!!.write(buffer)
-            videoEncoder!!.queueInputBuffer(inIndex, 0,
-                buffer.capacity(), rawInput.info.presentationTimeUs, 0)
-        }
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    ///////////// Audio ////////////////////////////////////////////////////////////////////////
 
-        var info = BufferInfo()
-        var outIndex = videoEncoder!!.dequeueOutputBuffer(info, dequeueTimeout)
-        var outputBuffer:ByteBuffer?
-        val encodedBuffers:ArrayList<AVFrame> = ArrayList<AVFrame>()
-        var totalBufferSize:Int = 0
-        while (outIndex >= 0) {
-            outputBuffer = videoEncoder!!.getOutputBuffer(outIndex)
-            totalBufferSize += info.size
-            encodedBuffers.add(AVFrame(outIndex, outputBuffer!!, info, 0, 0,
-                videoEncoder, true, false))
-            numberOfEncodedFrames++
-            info = BufferInfo()
-            outIndex = videoEncoder!!.dequeueOutputBuffer(info, dequeueTimeout)
-        }
-        if (encodedBuffers.size > 0) {
-            val outputBuffer = ByteBuffer.allocate(totalBufferSize)
-            var offset = 0
-            val info = BufferInfo()
-            for (frame in encodedBuffers) {
-                // TODO maybe convert annexB to avcc, pay attention, sps and pps are in single buffer
-//                frame.buff.position(4)
-                frame.buff.get(outputBuffer.array(), offset, frame.info.size)
-                offset += frame.info.size
-                info.flags = info.flags or frame.info.flags
-                info.presentationTimeUs = frame.info.presentationTimeUs
-                frame.release()
+    private fun copyAudioFrame() {
+        val audioFrame = getNextAudioFrame()
+        if (outputAudioTrackIndex == -1) {
+            // Muxer not initialized yet, store these and mux later
+            audioFrames.add(audioFrame!!)
+        } else {
+            // if we have some accumulated audio samples write them first
+            for (audioFrame in audioFrames) {
+                muxAudioFrame(audioFrame)
             }
+            audioFrames.clear()
+            muxAudioFrame(audioFrame!!)
+        }
+    }
 
-            info.offset = 0
-            info.size = totalBufferSize
-            return AVFrame(outIndex, outputBuffer, info, targetedWidth,
-                targetedHeight, videoEncoder!!, false, false)
+    private fun getNextAudioFrame(): AVFrame? {
+        val extractorBuffer:ByteBuffer = ByteBuffer.allocate(1024)
+        val extractedFrame = AVFrame(-1, extractorBuffer, BufferInfo(), isRaw = false)
+        val sampleSize = extractor.readSampleData(extractorBuffer, 0);
+        if (sampleSize == -1) {
+            eofReached = true;
+            return null;
+        } else {
+            extractedFrame.info.size = sampleSize
+            extractedFrame.info.presentationTimeUs = extractor.sampleTime
+            extractor.advance()
+        }
+        return extractedFrame;
+    }
+
+    private fun feedAudioDecoder() {
+        val inIndex: Int = audioDecoder!!.dequeueInputBuffer(dequeueTimeout)
+        if (inIndex >= 0) {
+            val buffer: ByteBuffer = audioDecoder!!.getInputBuffer(inIndex)!!;
+            val sampleSize = extractor.readSampleData(buffer, 0)
+            if (sampleSize < 0) {
+                // We have reached the end of video
+                eofReached = true;
+            } else {
+                audioDecoder!!.queueInputBuffer(inIndex, 0, sampleSize, extractor.sampleTime, 0)
+                extractor.advance()
+            }
+        }
+    }
+
+    private fun getDecodedAudioFrame():ArrayList<AVFrame> {
+        var info = BufferInfo()
+        var outputBuffer:ByteBuffer? = null
+        val result = ArrayList<AVFrame>()
+        var outIndex = audioDecoder!!.dequeueOutputBuffer(info, dequeueTimeout);
+        while(outIndex > 0) {
+            outputBuffer = audioDecoder!!.getOutputBuffer(outIndex);
+            result.add(AVFrame(
+                outIndex, outputBuffer!!, info, 0, 0,
+                audioDecoder!!, true
+            ))
+            numberOfDecodedSamples++
+            outIndex = audioDecoder!!.dequeueOutputBuffer(info, dequeueTimeout);
+        }
+        when (outIndex) {
+            MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                // Not sure what to do here
+                audioDecoderOutputFormat = audioDecoder!!.outputFormat;
+//                configureEncoders()
+            }
+            MediaCodec.INFO_TRY_AGAIN_LATER -> {
+                // Timedout also not good
+            }
+        }
+        return result
+    }
+
+    private fun feedAudioEncoder(rawInput:AVFrame) {
+        rawInput.buff.rewind()
+        // Resampling not working as expected, we need a better solution
+//        var tmp:ByteBuffer = ByteBuffer.allocate(rawInput.info.size)
+//        tmp.put(rawInput.buff)
+//        rawInput.buff.rewind()
+//        tmp.rewind()
+//        rawAudioOutputStream!!.write(tmp.array(), 0, tmp.remaining())
+//        tmp.rewind()
+//        val resampled = resample.resample(tmp.array(), rawInput.info.size, true, inputSamplerate, OUTPUT_SAMPLERATE)
+////            val output_len = resample.resampleEx(rawInput.buff, buffer, rawInput.buff.remaining())
+//        if (resampled == null) {
+//            logger.i(LOG_TAG, "It is a problem :-D")
+//        }
+//        resampledAudioOutputStream!!.write(resampled, 0, resampled!!.size)
+//        var bytesQueued = 0;
+
+//        while (bytesQueued < resampled!!.size) {
+            val inIndex: Int = audioEncoder!!.dequeueInputBuffer(dequeueTimeout)
+            if (inIndex >= 0) {
+                // resample input to match output
+                val buffer: ByteBuffer = audioEncoder!!.getInputBuffer(inIndex)!!
+                buffer.rewind()
+//                val remaining = resampled!!.size - bytesQueued
+//                var toWrite =  buffer.capacity()
+//                if (remaining < buffer.capacity()) {
+//                    toWrite = remaining
+//                }
+                buffer.put(rawInput.buff)
+                buffer.rewind()
+                audioEncoder!!.queueInputBuffer(
+                    inIndex, 0,
+                    buffer.remaining(), rawInput.info.presentationTimeUs, 0
+                )
+//                bytesQueued+=toWrite
+            } else {
+                logger.e(LOG_TAG, "We lost audio frame :-D")
+                numberOfLostAudioFrames++;
+            }
+//        }
+    }
+
+    private fun getEncodedAudioFrames():ArrayList<AVFrame> {
+        val result = ArrayList<AVFrame>()
+        if (audioEncoder == null) {
+            return result;
+        }
+        var info = BufferInfo()
+        var outIndex = audioEncoder!!.dequeueOutputBuffer(info, dequeueTimeout)
+        var outputBuffer:ByteBuffer?
+        while (outIndex >= 0) {
+            if (!muxerConfigured) {
+                // TODO maybe note that audio is ready to be configured in a muxer
+            }
+            outputBuffer = audioEncoder!!.getOutputBuffer(outIndex)
+            val buff = ByteBuffer.allocate(info.size)
+            outputBuffer!!.get(buff.array(), 0, info.size)
+            result.add(AVFrame(outIndex, buff, info, 0, 0,
+                audioEncoder, true, false))
+            numberOfEncodedSamples++
+            audioEncoder!!.releaseOutputBuffer(outIndex, false)
+            info = BufferInfo()
+            outIndex = audioEncoder!!.dequeueOutputBuffer(info, dequeueTimeout)
         }
         return result;
     }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+    ///////////////////////////// Helpers //////////////////////////////////////////////////////////
+
+    private fun findAnnexBPosition(buff:ByteBuffer, startSearchAt:Int, buffSize:Int): Int {
+        // We are assuming integer is 4 bytes on every device, we also assume anexB is 4 bytes long
+        // instead of 3 which is also possible sometimes
+        for(i in startSearchAt..buffSize - 4) {
+            if (buff.getInt(i) == 1) {
+                return i;
+            }
+        }
+        return -1
+    }
+    private fun convertAnnexBtoAvcc(buff:ByteBuffer, buffSize:Int) {
+        val positions = ArrayList<Int>()
+        var annexBPos = findAnnexBPosition(buff, 0, buffSize)
+        while (annexBPos != -1) {
+            positions.add(annexBPos)
+            annexBPos = findAnnexBPosition(buff, annexBPos + 4, buffSize)
+        }
+        for (i in 0..positions.size -1) {
+            var naluLength = 0
+            if (i == positions.size -1) {
+                // This is the last position
+                naluLength =  buffSize - positions.get(i) - 4
+            } else {
+                naluLength = positions.get(i + 1) - positions.get(i) -4;
+            }
+            buff.position(positions.get(i))
+            buff.putInt(naluLength)
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+
 
     class AVFrame constructor(val index:Int, val buff:ByteBuffer, val info:BufferInfo,
                               val width:Int = 0, val heigth:Int = 0,
