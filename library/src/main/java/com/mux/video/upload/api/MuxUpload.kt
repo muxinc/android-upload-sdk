@@ -250,6 +250,7 @@ class MuxUpload private constructor(
               is UploadStatus.Uploading -> { progressListener?.onEvent(status.uploadProgress) }
               is UploadStatus.UploadPaused -> { progressListener?.onEvent(status.uploadProgress) }
               is UploadStatus.UploadSuccess -> {
+                _successful = true
                 progressListener?.onEvent(status.uploadProgress)
                 resultListener?.onEvent(Result.success(status.uploadProgress))
               }
