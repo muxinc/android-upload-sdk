@@ -2,8 +2,21 @@ package com.mux.video.vod.demo.upload
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.material.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.Button
+import androidx.compose.material.Icon
+import androidx.compose.material.LocalContentAlpha
+import androidx.compose.material.MaterialTheme
+import androidx.compose.material.Text
+import androidx.compose.material.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
@@ -59,45 +72,49 @@ private fun AppBarInner(
   startContent: (@Composable () -> Unit)? = null,
   centerContent: (@Composable () -> Unit)? = null,
 ) {
-  TopAppBar(
-    elevation = 0.dp,
+  Box(
     modifier = modifier
   ) {
-    AtFullAlpha {
-      Box(
-        modifier = Modifier.fillMaxSize(),
-      ) {
+    TopAppBar(
+      elevation = 0.dp,
+      modifier = Modifier
+    ) {
+      AtFullAlpha {
         Box(
-          Modifier
-            .fillMaxWidth()
-            .height(1.dp)
-            .background(Gray80)
-            .align(Alignment.BottomCenter)
-        )
+          modifier = Modifier.fillMaxSize(),
+        ) {
 
-        if (centerContent != null) {
-          Box(modifier = Modifier.align(Alignment.Center)) {
-            centerContent()
+          if (centerContent != null) {
+            Box(modifier = Modifier.align(Alignment.Center)) {
+              centerContent()
+            }
+          } else {
+            Icon(
+              painter = painterResource(id = R.drawable.mux_logo),
+              contentDescription = "Mux Logo",
+              modifier = modifier.align(Alignment.Center),
+            )
           }
-        } else {
-          Icon(
-            painter = painterResource(id = R.drawable.mux_logo),
-            contentDescription = "Mux Logo",
-            modifier = modifier.align(Alignment.Center),
-          )
-        }
 
-        if (startContent != null) {
-          Box(
-            modifier = Modifier
-              .align(Alignment.CenterStart)
-              .padding(16.dp)
-          ) {
-            startContent()
+          if (startContent != null) {
+            Box(
+              modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(16.dp)
+            ) {
+              startContent()
+            }
           }
         }
       }
     }
+    Box(
+      Modifier
+        .fillMaxWidth()
+        .height(1.dp)
+        .background(Gray80)
+        .align(Alignment.BottomCenter)
+    )
   }
 }
 
