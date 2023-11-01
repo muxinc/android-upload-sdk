@@ -65,7 +65,6 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
         videoState.value!!.uploadUri!!,
         videoState.value!!.chosenFile!!
       )
-        .chunkSize(1024 * 1024)
         .build()
         // Force restart when creating brand new uploads (because we're making new Direct uploads)
         .start(forceRestart = true)

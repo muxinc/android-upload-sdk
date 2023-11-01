@@ -264,8 +264,6 @@ class MuxUpload private constructor(
 
               is UploadStatus.UploadFailed -> {
                 progressListener?.onEvent(status.uploadProgress) // Make sure we're most up-to-date
-                Log.e("err", "upload failed", error)
-                Log.e("err", "uploadJob ${uploadInfo.uploadJob?.isCancelled}")
                 val jobWasCanceled = (uploadInfo.uploadJob?.isCancelled)
                   ?: (error is CancellationException)
                 if (!jobWasCanceled) {
