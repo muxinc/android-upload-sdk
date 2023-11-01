@@ -56,8 +56,8 @@ object ImaginaryBackend {
   // note: You shouldn't do basic auth with hard-coded keys in a real app
   private fun basicCredential(): String = Credentials.basic(ACCESS_TOKEN_ID, ACCESS_TOKEN_SECRET)
 
-  private const val ACCESS_TOKEN_ID = "7f929b61-bb61-440e-b5eb-d3c802436119"
-  private const val ACCESS_TOKEN_SECRET = "66abYl4vrv6iKwrc5G62e6gFwXq0FDiUCB/zD2pIC/RclHoNayf1syzqUxRivZaIJu2vi2hTC5d"
+  private const val ACCESS_TOKEN_ID = "YOUR TOKEN ID HERE"
+  private const val ACCESS_TOKEN_SECRET = "YOUR TOKEN SECRET HERE"
 }
 
 private interface ImaginaryWebapp {
