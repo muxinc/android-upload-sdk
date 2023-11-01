@@ -247,13 +247,20 @@ class MuxUpload private constructor(
 
             // Notify the old listeners
             when (status) {
-              is UploadStatus.Uploading -> { progressListener?.onEvent(status.uploadProgress) }
-              is UploadStatus.UploadPaused -> { progressListener?.onEvent(status.uploadProgress) }
+              is UploadStatus.Uploading -> {
+                progressListener?.onEvent(status.uploadProgress)
+              }
+
+              is UploadStatus.UploadPaused -> {
+                progressListener?.onEvent(status.uploadProgress)
+              }
+
               is UploadStatus.UploadSuccess -> {
                 _successful = true
                 progressListener?.onEvent(status.uploadProgress)
                 resultListener?.onEvent(Result.success(status.uploadProgress))
               }
+
               is UploadStatus.UploadFailed -> {
                 progressListener?.onEvent(status.uploadProgress) // Make sure we're most up-to-date
                 if (status.exception !is CancellationException) {
@@ -261,7 +268,8 @@ class MuxUpload private constructor(
                   resultListener?.onEvent(Result.failure(status.exception))
                 }
               }
-              else -> { } // no relevant info
+
+              else -> {} // no relevant info
             }
           }
         }
@@ -336,6 +344,7 @@ class MuxUpload private constructor(
       uploadJob = null,
       statusFlow = null,
     )
+
     /**
      * Allow Mux to manage and remember the state of this upload
      */
@@ -351,7 +360,7 @@ class MuxUpload private constructor(
      */
     @Suppress("unused")
     fun standardizationRequested(enabled: Boolean): Builder {
-      uploadInfo.update(standardizationRequested = enabled)
+      uploadInfo = uploadInfo.update(standardizationRequested = enabled)
       return this
     }
 
@@ -363,7 +372,7 @@ class MuxUpload private constructor(
      */
     @Suppress("unused")
     fun chunkSize(sizeBytes: Int): Builder {
-      uploadInfo.update(chunkSize = sizeBytes)
+      uploadInfo = uploadInfo.update(chunkSize = sizeBytes)
       return this
     }
 
@@ -376,7 +385,7 @@ class MuxUpload private constructor(
      */
     @Suppress("unused")
     fun optOutOfEventTracking(optOut: Boolean): Builder {
-      uploadInfo.update(optOut = optOut)
+      uploadInfo = uploadInfo.update(optOut = optOut)
       return this
     }
 
@@ -404,7 +413,7 @@ class MuxUpload private constructor(
      * [MuxUploadManager]
      */
     @JvmSynthetic
-    internal fun create(uploadInfo: UploadInfo, initialStatus: UploadStatus = UploadStatus.Ready)
-      = MuxUpload(uploadInfo = uploadInfo, initialStatus = initialStatus)
+    internal fun create(uploadInfo: UploadInfo, initialStatus: UploadStatus = UploadStatus.Ready) =
+      MuxUpload(uploadInfo = uploadInfo, initialStatus = initialStatus)
   }
 }
