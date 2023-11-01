@@ -76,7 +76,8 @@ internal class ChunkWorker private constructor(
       }
     }
 
-    return tryUpload(0).getOrThrow().also { writeUploadState(uploadInfo, it) }
+    return tryUpload(0).getOrThrow()
+      .also { writeUploadState(uploadInfo, it) }
   }
 
   @Throws
