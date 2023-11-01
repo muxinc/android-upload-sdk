@@ -1,6 +1,7 @@
 package com.mux.video.upload.api
 
 import android.net.Uri
+import android.util.Log
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload.Builder
@@ -66,7 +67,7 @@ class MuxUpload private constructor(
   /**
    * If the upload has failed, gets the error associated with the failure
    */
-  val error get() = _error ?: uploadInfo.statusFlow?.value?.getError()
+  val error get() = _error
   private var _error: Exception? = null
 
   /**
@@ -263,7 +264,11 @@ class MuxUpload private constructor(
 
               is UploadStatus.UploadFailed -> {
                 progressListener?.onEvent(status.uploadProgress) // Make sure we're most up-to-date
-                if (status.exception !is CancellationException) {
+                Log.e("err", "upload failed", error)
+                Log.e("err", "uploadJob ${uploadInfo.uploadJob?.isCancelled}")
+                val jobWasCanceled = (uploadInfo.uploadJob?.isCancelled)
+                  ?: (error is CancellationException)
+                if (!jobWasCanceled) {
                   _error = status.exception
                   resultListener?.onEvent(Result.failure(status.exception))
                 }
@@ -397,7 +402,7 @@ class MuxUpload private constructor(
      */
     @Suppress("unused")
     fun retriesPerChunk(retries: Int): Builder {
-      uploadInfo.update(retriesPerChunk = retries)
+      uploadInfo = uploadInfo.update(retriesPerChunk = retries)
       return this
     }
 

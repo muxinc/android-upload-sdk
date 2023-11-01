@@ -3,6 +3,7 @@ package com.mux.video.vod.demo.upload.screen
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Bitmap
+import android.util.Log
 import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -189,6 +190,7 @@ private fun ListItemContent(upload: MuxUpload) {
     if (upload.isSuccessful) {
       DoneOverlay()
     } else if (upload.error != null) {
+      Log.w("err", "screen: Upload error", upload.error)
       ErrorOverlay(modifier = Modifier.fillMaxSize())
     } else if (upload.isRunning) {
       ProgressOverlay(
