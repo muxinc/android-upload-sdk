@@ -1,12 +1,11 @@
 package com.mux.video.upload.api
 
 import android.net.Uri
-import android.util.Log
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload.Builder
 import com.mux.video.upload.internal.UploadInfo
-import com.mux.video.upload.internal.update
+import com.mux.video.upload.internal.createUpdated
 import kotlinx.coroutines.*
 import java.io.File
 
@@ -166,7 +165,7 @@ class MuxUpload private constructor(
     } else {
       observerJob?.cancel("user requested pause")
       uploadInfo.uploadJob?.cancel()
-      /*uploadInfo =*/ uploadInfo.update(
+      /*uploadInfo =*/ uploadInfo.createUpdated(
         uploadJob = null,
         statusFlow = null,
       )
@@ -363,7 +362,7 @@ class MuxUpload private constructor(
      */
     @Suppress("unused")
     fun standardizationRequested(enabled: Boolean): Builder {
-      uploadInfo = uploadInfo.update(standardizationRequested = enabled)
+      uploadInfo = uploadInfo.createUpdated(standardizationRequested = enabled)
       return this
     }
 
@@ -375,7 +374,7 @@ class MuxUpload private constructor(
      */
     @Suppress("unused")
     fun chunkSize(sizeBytes: Int): Builder {
-      uploadInfo = uploadInfo.update(chunkSize = sizeBytes)
+      uploadInfo = uploadInfo.createUpdated(chunkSize = sizeBytes)
       return this
     }
 
@@ -388,7 +387,7 @@ class MuxUpload private constructor(
      */
     @Suppress("unused")
     fun optOutOfEventTracking(optOut: Boolean): Builder {
-      uploadInfo = uploadInfo.update(optOut = optOut)
+      uploadInfo = uploadInfo.createUpdated(optOut = optOut)
       return this
     }
 
@@ -400,7 +399,7 @@ class MuxUpload private constructor(
      */
     @Suppress("unused")
     fun retriesPerChunk(retries: Int): Builder {
-      uploadInfo = uploadInfo.update(retriesPerChunk = retries)
+      uploadInfo = uploadInfo.createUpdated(retriesPerChunk = retries)
       return this
     }
 

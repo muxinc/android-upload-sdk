@@ -2,7 +2,6 @@ package com.mux.video.upload.internal
 
 import android.os.Build
 import android.util.Log
-import com.mux.video.upload.BuildConfig
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
@@ -208,7 +207,7 @@ internal class UploadJobFactory private constructor(
       }
     } // val uploadJob = ...
 
-    return uploadInfo.update(
+    return uploadInfo.createUpdated(
       statusFlow = statusFlow.asStateFlow(),
       uploadJob = uploadJob,
     )
