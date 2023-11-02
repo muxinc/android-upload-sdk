@@ -104,7 +104,7 @@ object MuxUploadManager {
     // Paused jobs stay in the manager and remain persisted
     uploadsByFilename[upload.inputFile.absolutePath]?.let {
       cancelJobInner(it)
-      val pausedUpload = upload.update(
+      val pausedUpload = upload.createUpdated(
         uploadJob = null,
         statusFlow = null,
       )

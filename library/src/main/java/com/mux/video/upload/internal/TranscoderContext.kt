@@ -1,12 +1,10 @@
 package com.mux.video.upload.internal
 
-import android.R.id.input
 import android.content.Context
 import android.media.*
 import android.media.MediaCodec.BufferInfo
 import android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar
 import android.os.Build
-import android.util.Log
 import androidx.annotation.RequiresApi
 import com.mux.video.upload.MuxUploadSdk
 import io.github.crow_misia.libyuv.FilterMode
@@ -14,7 +12,6 @@ import io.github.crow_misia.libyuv.Nv12Buffer
 import org.json.JSONArray
 import java.io.File
 import java.io.OutputStream
-import java.nio.BufferOverflowException
 import java.nio.ByteBuffer
 import java.util.*
 import kotlin.experimental.and
@@ -147,7 +144,7 @@ internal class TranscoderContext private constructor(
         destFile.createNewFile()
 
         muxer = MediaMuxer(destFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        uploadInfo = uploadInfo.update(standardizedFile = destFile)
+        uploadInfo = uploadInfo.createUpdated(standardizedFile = destFile)
 
         try {
             configureDecoders()

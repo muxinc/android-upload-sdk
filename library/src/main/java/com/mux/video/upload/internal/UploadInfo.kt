@@ -11,7 +11,7 @@ import java.io.File
  * This object is the SDK's internal representation of an upload that is in-progress. The public
  * object is [MuxUpload], which is backed by an instance of this object.
  *
- * This object is immutable. To create an updated version use [update]. The Upload Manager can
+ * This object is immutable. To create an updated version use [createUpdated]. The Upload Manager can
  * update the internal state of its jobs based on the content of this object
  *
  * To create a new upload job, use [UploadJobFactory.create]. The UploadInfo returned will have a
@@ -36,7 +36,7 @@ internal data class UploadInfo(
  * copied from the original object.
  */
 @JvmSynthetic
-internal fun UploadInfo.update(
+internal fun UploadInfo.createUpdated(
   standardizationRequested: Boolean = this.standardizationRequested,
   remoteUri: Uri = this.remoteUri,
   file: File = this.inputFile,
