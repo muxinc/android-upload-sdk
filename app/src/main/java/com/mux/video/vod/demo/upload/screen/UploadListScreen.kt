@@ -3,6 +3,7 @@ package com.mux.video.vod.demo.upload.screen
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Bitmap
+import android.util.Log
 import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -23,15 +24,24 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.Button
+import androidx.compose.material.ButtonColors
+import androidx.compose.material.ButtonDefaults
 import androidx.compose.material.FloatingActionButton
 import androidx.compose.material.Icon
 import androidx.compose.material.LinearProgressIndicator
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Scaffold
 import androidx.compose.material.Text
+import androidx.compose.material.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PauseCircle
+import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -62,6 +72,7 @@ import com.mux.video.vod.demo.upload.model.extractThumbnail
 import com.mux.video.vod.demo.upload.ui.theme.Gray70
 import com.mux.video.vod.demo.upload.ui.theme.Gray90
 import com.mux.video.vod.demo.upload.ui.theme.MuxUploadSDKForAndroidTheme
+import com.mux.video.vod.demo.upload.ui.theme.Pink40
 import com.mux.video.vod.demo.upload.ui.theme.TranslucentScrim
 import com.mux.video.vod.demo.upload.ui.theme.TranslucentWhite
 import com.mux.video.vod.demo.upload.viewmodel.UploadListViewModel
@@ -130,7 +141,7 @@ private fun BodyContent(
       )
     )
   ) {
-    if (items == null || items.isEmpty()) {
+    if (items.isNullOrEmpty()) {
       CreateUploadCta(modifier = Modifier.padding(vertical = 64.dp)) { uploadClick() }
     } else {
       UploadList(items)
@@ -186,6 +197,15 @@ private fun ListItemContent(upload: MuxUpload) {
         modifier = Modifier
           .align(Alignment.BottomStart)
           .fillMaxWidth()
+      )
+      PauseButton(
+        onPause = { upload.pause() },
+        modifier = Modifier.align(Alignment.Center)
+      )
+    } else {
+      PlayButton(
+        onPlay = { upload.start(forceRestart = false) },
+        modifier = Modifier.align(Alignment.Center)
       )
     }
   } // outer Box
@@ -315,6 +335,67 @@ private fun ScreenAppBar(closeThisScreen: () -> Unit) {
 
 @Composable
 private fun screenViewModel(): UploadListViewModel = viewModel()
+
+@Composable
+private fun PauseButton(
+  onPause: () -> Unit,
+  modifier: Modifier = Modifier) {
+  TextButton(
+    onClick = onPause,
+    colors = ButtonDefaults.buttonColors(
+      backgroundColor = Color.Transparent,
+      contentColor = Pink40
+    ),
+    modifier = modifier
+  ) {
+      Icon(
+        Icons.Filled.PauseCircle,
+        contentDescription = "Start playing",
+        modifier = Modifier.size(48.dp)
+      )
+  }
+}
+
+@Composable
+private fun PlayButton(
+  onPlay: () -> Unit,
+  modifier: Modifier = Modifier) {
+  TextButton(
+    onClick = onPlay,
+    colors = ButtonDefaults.buttonColors(
+      backgroundColor = Color.Transparent,
+      contentColor = Pink40
+    ),
+    modifier = modifier
+  ) {
+    Icon(
+      Icons.Filled.PlayCircle,
+      contentDescription = "Start playing",
+      modifier = Modifier.size(48.dp)
+    )
+  }
+
+}
+
+@Preview(showBackground = true)
+@Composable
+fun PauseButton() {
+  Box(
+    modifier = Modifier.padding(12.dp)
+  ) {
+    PauseButton(onPause = { })
+  }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun PlayButton() {
+  Box(
+    modifier = Modifier.padding(12.dp)
+  ) {
+    PlayButton(onPlay = { })
+  }
+}
 
 @Preview(showBackground = true)
 @Composable

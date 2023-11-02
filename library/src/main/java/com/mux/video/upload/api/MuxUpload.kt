@@ -1,6 +1,7 @@
 package com.mux.video.upload.api
 
 import android.net.Uri
+import android.util.Log
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload.Builder
@@ -66,7 +67,7 @@ class MuxUpload private constructor(
   /**
    * If the upload has failed, gets the error associated with the failure
    */
-  val error get() = _error ?: uploadInfo.statusFlow?.value?.getError()
+  val error get() = _error
   private var _error: Exception? = null
 
   /**
@@ -247,20 +248,31 @@ class MuxUpload private constructor(
 
             // Notify the old listeners
             when (status) {
-              is UploadStatus.Uploading -> { progressListener?.onEvent(status.uploadProgress) }
-              is UploadStatus.UploadPaused -> { progressListener?.onEvent(status.uploadProgress) }
+              is UploadStatus.Uploading -> {
+                progressListener?.onEvent(status.uploadProgress)
+              }
+
+              is UploadStatus.UploadPaused -> {
+                progressListener?.onEvent(status.uploadProgress)
+              }
+
               is UploadStatus.UploadSuccess -> {
+                _successful = true
                 progressListener?.onEvent(status.uploadProgress)
                 resultListener?.onEvent(Result.success(status.uploadProgress))
               }
+
               is UploadStatus.UploadFailed -> {
                 progressListener?.onEvent(status.uploadProgress) // Make sure we're most up-to-date
-                if (status.exception !is CancellationException) {
+                val jobWasCanceled = (uploadInfo.uploadJob?.isCancelled)
+                  ?: (error is CancellationException)
+                if (!jobWasCanceled) {
                   _error = status.exception
                   resultListener?.onEvent(Result.failure(status.exception))
                 }
               }
-              else -> { } // no relevant info
+
+              else -> {} // no relevant info
             }
           }
         }
@@ -335,6 +347,7 @@ class MuxUpload private constructor(
       uploadJob = null,
       statusFlow = null,
     )
+
     /**
      * Allow Mux to manage and remember the state of this upload
      */
@@ -350,7 +363,7 @@ class MuxUpload private constructor(
      */
     @Suppress("unused")
     fun standardizationRequested(enabled: Boolean): Builder {
-      uploadInfo.update(standardizationRequested = enabled)
+      uploadInfo = uploadInfo.update(standardizationRequested = enabled)
       return this
     }
 
@@ -362,7 +375,7 @@ class MuxUpload private constructor(
      */
     @Suppress("unused")
     fun chunkSize(sizeBytes: Int): Builder {
-      uploadInfo.update(chunkSize = sizeBytes)
+      uploadInfo = uploadInfo.update(chunkSize = sizeBytes)
       return this
     }
 
@@ -375,7 +388,7 @@ class MuxUpload private constructor(
      */
     @Suppress("unused")
     fun optOutOfEventTracking(optOut: Boolean): Builder {
-      uploadInfo.update(optOut = optOut)
+      uploadInfo = uploadInfo.update(optOut = optOut)
       return this
     }
 
@@ -387,7 +400,7 @@ class MuxUpload private constructor(
      */
     @Suppress("unused")
     fun retriesPerChunk(retries: Int): Builder {
-      uploadInfo.update(retriesPerChunk = retries)
+      uploadInfo = uploadInfo.update(retriesPerChunk = retries)
       return this
     }
 
@@ -403,7 +416,7 @@ class MuxUpload private constructor(
      * [MuxUploadManager]
      */
     @JvmSynthetic
-    internal fun create(uploadInfo: UploadInfo, initialStatus: UploadStatus = UploadStatus.Ready)
-      = MuxUpload(uploadInfo = uploadInfo, initialStatus = initialStatus)
+    internal fun create(uploadInfo: UploadInfo, initialStatus: UploadStatus = UploadStatus.Ready) =
+      MuxUpload(uploadInfo = uploadInfo, initialStatus = initialStatus)
   }
 }
