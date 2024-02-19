@@ -68,7 +68,7 @@ dependencies {
   implementation "androidx.compose.material:material-icons-extended:$compose_ui_version"
   implementation "com.google.accompanist:accompanist-systemuicontroller:0.34.0"
 
-  implementation 'androidx.compose.material:material:1.5.4'
+  implementation 'androidx.compose.material:material:1.6.1'
 
   implementation "com.squareup.okhttp3:logging-interceptor:4.12.0"
   implementation "com.squareup.okhttp3:okhttp:4.12.0"
