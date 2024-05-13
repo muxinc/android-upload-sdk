@@ -306,7 +306,7 @@ class MuxUpload private constructor(
    * @param videoFile a File that represents the video file you want to upload
    */
   @Suppress("MemberVisibilityCanBePrivate")
-  class Builder constructor(val uploadUri: Uri, val videoFile: File) {
+  class Builder(val uploadUri: Uri, val videoFile: File) {
 
     /**
      * Create a new Builder with the specified input file and upload URL
@@ -315,8 +315,7 @@ class MuxUpload private constructor(
      * @param videoFile a File that represents the video file you want to upload
      */
     @Suppress("unused")
-    constructor(uploadUri: String, videoFile: File)
-            : this(Uri.parse(uploadUri), videoFile)
+    constructor(uploadUri: String, videoFile: File): this(Uri.parse(uploadUri), videoFile)
 
     private var manageTask: Boolean = true
     private var uploadInfo: UploadInfo = UploadInfo(
