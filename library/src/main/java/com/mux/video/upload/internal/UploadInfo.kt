@@ -16,7 +16,7 @@ enum class MaximumResolution(val width: Int, val height: Int) {
   /// The standardized input will be scaled down
   /// to 1280x720 (720p) from a larger size. Inputs
   /// with smaller dimensions won't be scaled up.
-  Preset1280x720(1280, 1080),  // 720p
+  Preset1280x720(1280, 720),  // 720p
   /// The standardized input will be scaled down
   /// to 1920x1080 (1080p) from a larger size. Inputs
   /// with smaller dimensions won't be scaled up.
