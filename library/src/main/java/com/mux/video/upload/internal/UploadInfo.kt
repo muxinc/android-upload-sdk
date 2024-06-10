@@ -9,10 +9,11 @@ import java.io.File
 
 @Suppress("unused")
 enum class MaximumResolution(val width: Int, val height: Int) {
-  /** By default the standardized input will be
+  /**
+   * By default the standardized input will be
    * scaled down to 1920x1080 (1080p) from a larger
    * size. Inputs with smaller dimensions won't be
-   *  scaled up.
+   * scaled up.
    */
   Default(1920, 1080),
 
@@ -23,13 +24,15 @@ enum class MaximumResolution(val width: Int, val height: Int) {
    */
   Preset1280x720(1280, 720),  // 720p
 
-  /* The standardized input will be scaled down
+  /**
+   * The standardized input will be scaled down
    * to 1920x1080 (1080p) from a larger size. Inputs
-    with smaller dimensions won't be scaled up.
+   * with smaller dimensions won't be scaled up.
    */
   Preset1920x1080(1920, 1080), // 1080p
 
-  /** The standardized input will be scaled down
+  /**
+   *  The standardized input will be scaled down
    *  to 3840x2160 (2160p/4K) from a larger size.
    *  Inputs with smaller dimensions won't be scaled
    *  up.
