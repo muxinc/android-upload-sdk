@@ -64,6 +64,11 @@ class MuxUpload private constructor(
   val isRunning get() = uploadInfo.isRunning()
 
   /**
+   * True when the upload is paused by [pause], false otherwise
+   */
+  val isPaused get() = currentStatus is UploadStatus.UploadPaused
+
+  /**
    * If the upload has failed, gets the error associated with the failure
    */
   val error get() = _error ?: uploadInfo.statusFlow?.value?.getError()
@@ -72,7 +77,7 @@ class MuxUpload private constructor(
   /**
    * True if the upload was successful, false otherwise
    */
-  val isSuccessful get() = _successful
+  val isSuccessful get() = uploadInfo.statusFlow?.value?.isSuccessful() ?: _successful
   private var _successful: Boolean = false
 
   private var resultListener: UploadEventListener<Result<Progress>>? = null
@@ -250,6 +255,7 @@ class MuxUpload private constructor(
               is UploadStatus.Uploading -> { progressListener?.onEvent(status.uploadProgress) }
               is UploadStatus.UploadPaused -> { progressListener?.onEvent(status.uploadProgress) }
               is UploadStatus.UploadSuccess -> {
+                _successful = true
                 progressListener?.onEvent(status.uploadProgress)
                 resultListener?.onEvent(Result.success(status.uploadProgress))
               }
