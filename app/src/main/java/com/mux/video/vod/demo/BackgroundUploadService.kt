@@ -60,9 +60,9 @@ class BackgroundUploadService : Service() {
     uploadListListener?.let { MuxUploadManager.removeUploadsUpdatedListener(it) }
   }
 
-  private fun notifyWithCurrentUploads() = notify(this.uploadsInProgress)
+  private fun notifyWithCurrentUploads() = notify(this.uploadsByFile.values)
 
-  private fun notify(uploads: List<MuxUpload>) {
+  private fun notify(uploads: Collection<MuxUpload>) {
     // todo - Manage foreground-iness: startForeground when there are running uploads, else don't
     // todo - Two notification styles: 1 video and many videos
     // todo - notification can't be swiped while in-progress (but provide cancel btns)
@@ -74,6 +74,7 @@ class BackgroundUploadService : Service() {
     val uploadsPaused = uploads.filter { it.isPaused }
     val uploadsFailed = uploads.filter { it.error != null }
 
+    // todo- notify for each of the above
   }
 
   private fun uploadListUpdated(uploads: List<MuxUpload>) {
@@ -85,8 +86,16 @@ class BackgroundUploadService : Service() {
     }
   }
 
+  private fun createPauseNotification(
+    uploadsPaused: Collection<MuxUpload>,
+    notificationId: Int
+  ): Notification {
+    val builder = NotificationCompat.Builder(this, CHANNEL_UPLOAD_PROGRESS)
+    return builder.build()
+  }
+
   private fun createCompletionNotification(
-    uploads: List<MuxUpload>,
+    uploadsComplete: Collection<MuxUpload>,
     notificationId: Int
   ): Notification {
     val builder = NotificationCompat.Builder(this, CHANNEL_UPLOAD_PROGRESS)
@@ -94,7 +103,7 @@ class BackgroundUploadService : Service() {
   }
 
   private fun createProgressNotification(
-    uploadsInProgress: List<MuxUpload>,
+    uploadsInProgress: Collection<MuxUpload>,
     notificationId: Int
   ): Notification {
     val builder = NotificationCompat.Builder(this, CHANNEL_UPLOAD_PROGRESS)
@@ -102,8 +111,13 @@ class BackgroundUploadService : Service() {
     if (uploadsInProgress.isEmpty()) {
       // If all uploads are finished then we can cancel the foreground notification
     } else if (uploadsInProgress.size == 1 && this.uploadsByFile.size == 1) {
-      // A single upload in progress
+      // A single upload in progress, with a single upload requested
+      //  it's just one so we can make it a little fancy and show a thumbnail
+    } else {
+      // Multiple uploads requested simultaneously so we batch them into one
     }
+
+    // todo - cancel button
 
     return builder.build()
   }
