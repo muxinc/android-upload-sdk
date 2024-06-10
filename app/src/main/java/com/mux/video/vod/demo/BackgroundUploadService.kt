@@ -53,8 +53,11 @@ class BackgroundUploadService : Service() {
     uploadListListener?.let { MuxUploadManager.removeUploadsUpdatedListener(it) }
   }
 
+  private fun notifyWithCurrentUploads() = notify(this.uploads)
+
   private fun notify(uploads: List<MuxUpload>) {
-    // todo - Notification Channels
+    // todo - Create Notification Channels
+    // todo -
     // todo - Manage foreground-iness: startForeground when there are running uploads, else don't
     // todo - Two notification styles: 1 video and many videos
     // todo - notification can't be swiped while in-progress (but provide cancel btns)
@@ -63,8 +66,9 @@ class BackgroundUploadService : Service() {
   }
 
   private fun updateUploadList(uploads: List<MuxUpload>) {
+    this.uploads.forEach { it.clearListeners() }
     this.uploads = uploads.toList()
-    notify(uploads)
+    this.uploads.forEach { it.setStatusListener(UploadStatusListener()) }
   }
 
   private fun createCompletionNotification(
@@ -87,6 +91,13 @@ class BackgroundUploadService : Service() {
     override fun onEvent(event: List<MuxUpload>) {
       val service = this@BackgroundUploadService
       service.updateUploadList(event)
+    }
+  }
+
+  private inner class UploadStatusListener: UploadEventListener<UploadStatus> {
+    override fun onEvent(event: UploadStatus) {
+      val service = this@BackgroundUploadService
+      service.notifyWithCurrentUploads()
     }
   }
 
