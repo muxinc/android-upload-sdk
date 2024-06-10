@@ -77,9 +77,8 @@ class BackgroundUploadService : Service() {
     // todo- notify for each of the above
   }
 
-  private fun uploadListUpdated(uploads: List<MuxUpload>) {
+  private fun updateCurrentUploads(uploads: List<MuxUpload>) {
     this.uploadsByFile.values.forEach { it.clearListeners() }
-
     uploads.forEach {
       this.uploadsByFile[it.videoFile.path] = it
       it.setStatusListener(UploadStatusListener())
@@ -91,6 +90,14 @@ class BackgroundUploadService : Service() {
     notificationId: Int
   ): Notification {
     val builder = NotificationCompat.Builder(this, CHANNEL_UPLOAD_PROGRESS)
+    if (uploadsPaused.isEmpty()) {
+      // If all uploads are finished then we can cancel the notification
+    } else if (uploadsPaused.size == 1 && this.uploadsByFile.size == 1) {
+      // A single upload in progress, with a single upload requested
+      // todo - it's just one so we can make it a little fancy and show a thumbnail
+    } else {
+      // Multiple uploads requested simultaneously so we batch them into one
+    }
     return builder.build()
   }
 
@@ -99,6 +106,16 @@ class BackgroundUploadService : Service() {
     notificationId: Int
   ): Notification {
     val builder = NotificationCompat.Builder(this, CHANNEL_UPLOAD_PROGRESS)
+
+    if (uploadsComplete.isEmpty()) {
+      // If all uploads are finished then we can cancel the notification
+    } else if (uploadsComplete.size == 1 && this.uploadsByFile.size == 1) {
+      // A single upload in progress, with a single upload requested
+      //  it's just one so we can make it a little fancy and show a thumbnail
+    } else {
+      // Multiple uploads requested simultaneously so we batch them into one
+    }
+
     return builder.build()
   }
 
@@ -112,7 +129,7 @@ class BackgroundUploadService : Service() {
       // If all uploads are finished then we can cancel the foreground notification
     } else if (uploadsInProgress.size == 1 && this.uploadsByFile.size == 1) {
       // A single upload in progress, with a single upload requested
-      //  it's just one so we can make it a little fancy and show a thumbnail
+      // todo - it's just one so we can make it a little fancy and show a thumbnail
     } else {
       // Multiple uploads requested simultaneously so we batch them into one
     }
@@ -125,7 +142,7 @@ class BackgroundUploadService : Service() {
   private inner class UploadListListener: UploadEventListener<List<MuxUpload>> {
     override fun onEvent(event: List<MuxUpload>) {
       val service = this@BackgroundUploadService
-      service.uploadListUpdated(event)
+      service.updateCurrentUploads(event)
       service.notifyWithCurrentUploads()
     }
   }
