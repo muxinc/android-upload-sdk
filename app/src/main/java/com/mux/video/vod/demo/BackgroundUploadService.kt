@@ -5,26 +5,19 @@ import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
 import com.mux.video.upload.api.MuxUpload
-import com.mux.video.upload.api.MuxUploadManager
-import java.io.File
 
-class UploadService : Service() {
+class BackgroundUploadService : Service() {
 
   companion object {
-    const val ACTION_START_UPLOAD = "start upload"
+    const val ACTION_START = "start"
   }
-
-  // todo - should we notify for every single one? I say aggregate them (n videos uploading)
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     val action = intent?.action
-    if (action == ACTION_START_UPLOAD) {
+    if (action == ACTION_START) {
     } else {
       throw RuntimeException("Unknown action")
     }
-
-    // todo - find upload by file from intent
-    // todo - start if necessary?
     // todo - listen for updates
     // todo - foreground service
     // todo - stop listening on destroy
@@ -35,11 +28,15 @@ class UploadService : Service() {
     return MyBinder()
   }
 
+  private fun notify(uploads: List<MuxUpload>) {
+
+  }
+
   private fun observeUpload(upload: MuxUpload) {
 
   }
 
   inner class MyBinder : Binder() {
-    fun getService(): UploadService = this@UploadService
+    fun getService(): BackgroundUploadService = this@BackgroundUploadService
   }
 }
