@@ -1,9 +1,14 @@
 package com.mux.video.vod.demo
 
+import android.annotation.SuppressLint
+import android.annotation.TargetApi
+import android.app.Notification
 import android.app.Service
 import android.content.Intent
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
+import androidx.core.app.NotificationCompat
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
 import com.mux.video.upload.api.UploadEventListener
@@ -13,7 +18,11 @@ class BackgroundUploadService : Service() {
 
   companion object {
     const val ACTION_START = "start"
-    const val NOTIFICATION_ID = 2001
+    const val NOTIFICATION_PROGRESS = 200001
+    const val NOTIFICATION_COMPLETE = 200002
+    const val NOTIFICATION_RETRY = 200003
+
+    const val CHANNEL_UPLOAD_PROGRESS = "upload_progress"
   }
 
   private var uploads = listOf<MuxUpload>()
@@ -45,6 +54,7 @@ class BackgroundUploadService : Service() {
   }
 
   private fun notify(uploads: List<MuxUpload>) {
+    // todo - Notification Channels
     // todo - Manage foreground-iness: startForeground when there are running uploads, else don't
     // todo - Two notification styles: 1 video and many videos
     // todo - notification can't be swiped while in-progress (but provide cancel btns)
@@ -55,6 +65,22 @@ class BackgroundUploadService : Service() {
   private fun updateUploadList(uploads: List<MuxUpload>) {
     this.uploads = uploads.toList()
     notify(uploads)
+  }
+
+  private fun createCompletionNotification(
+    uploads: List<MuxUpload>,
+    notificationId: Int
+  ): Notification {
+    val builder = NotificationCompat.Builder(this, CHANNEL_UPLOAD_PROGRESS)
+    return builder.build()
+  }
+
+  private fun createProgressNotification(
+    uploads: List<MuxUpload>,
+    notificationId: Int
+  ): Notification {
+    val builder = NotificationCompat.Builder(this, CHANNEL_UPLOAD_PROGRESS)
+    return builder.build()
   }
 
   private inner class UploadListListener: UploadEventListener<List<MuxUpload>> {
