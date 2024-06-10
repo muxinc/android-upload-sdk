@@ -78,7 +78,7 @@ internal class UploadJobFactory private constructor(
       val startTime = System.currentTimeMillis()
       try {
         // See if the file need to be converted to a standard input.
-        if (uploadInfo.standardizationRequested
+        if (uploadInfo.isStandardizationRequested()
           && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
         ) {
           statusFlow.value = UploadStatus.Preparing

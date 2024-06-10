@@ -169,7 +169,7 @@ internal class UploadMetrics private constructor() {
     body.put("version", "1")
     val data = getEventInfo(startTimeMillis, "upload_start_time", endTimeMillis,
       "upload_end_time", inputFileDurationMs, uploadInfo)
-    data.put("input_standardization_requested", uploadInfo.standardizationRequested
+    data.put("input_standardization_requested", uploadInfo.isStandardizationRequested()
             && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
     body.put("data", data)
     sendPost(body)
@@ -190,7 +190,7 @@ internal class UploadMetrics private constructor() {
     body.put("version", "1")
     val data = getEventInfo(startTimeMillis, "upload_start_time", endTimeMillis,
       "upload_end_time", inputFileDurationMs, uploadInfo)
-    data.put("input_standardization_requested", uploadInfo.standardizationRequested
+    data.put("input_standardization_requested", uploadInfo.isStandardizationRequested()
             && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
     data.put("error_description", errorDescription)
     body.put("data", data)

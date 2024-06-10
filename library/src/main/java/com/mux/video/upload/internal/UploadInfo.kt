@@ -7,6 +7,46 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 
+@Suppress("unused")
+enum class MaximumResolution(val width: Int, val height: Int) {
+  /**
+   * By default the standardized input will be
+   * scaled down to 1920x1080 (1080p) from a larger
+   * size. Inputs with smaller dimensions won't be
+   * scaled up.
+   */
+  Default(1920, 1080),
+
+  /**
+   * The standardized input will be scaled down
+   * to 1280x720 (720p) from a larger size. Inputs
+   * with smaller dimensions won't be scaled up.
+   */
+  Preset1280x720(1280, 720),  // 720p
+
+  /**
+   * The standardized input will be scaled down
+   * to 1920x1080 (1080p) from a larger size. Inputs
+   * with smaller dimensions won't be scaled up.
+   */
+  Preset1920x1080(1920, 1080), // 1080p
+
+  /**
+   *  The standardized input will be scaled down
+   *  to 3840x2160 (2160p/4K) from a larger size.
+   *  Inputs with smaller dimensions won't be scaled
+   *  up.
+   */
+  Preset3840x2160(3840, 2160) // 2160p
+}
+
+data class InputStandardization(
+  @JvmSynthetic internal val standardizationRequested: Boolean = true,
+  @JvmSynthetic internal val maximumResolution: MaximumResolution = MaximumResolution.Default,
+) {
+
+}
+
 /**
  * This object is the SDK's internal representation of an upload that is in-progress. The public
  * object is [MuxUpload], which is backed by an instance of this object.
@@ -18,7 +58,7 @@ import java.io.File
  * Job and Flows populated
  */
 internal data class UploadInfo(
-  @JvmSynthetic internal val standardizationRequested: Boolean = true,
+  @JvmSynthetic internal val inputStandardization: InputStandardization = InputStandardization(),
   @JvmSynthetic internal val remoteUri: Uri,
   @JvmSynthetic internal val inputFile: File,
   @JvmSynthetic internal val standardizedFile: File? = null,
@@ -29,6 +69,7 @@ internal data class UploadInfo(
   @JvmSynthetic internal val statusFlow: StateFlow<UploadStatus>?,
 ) {
   fun isRunning(): Boolean = uploadJob?.isActive ?: false
+  fun isStandardizationRequested(): Boolean = inputStandardization.standardizationRequested
 }
 
 /**
@@ -37,7 +78,7 @@ internal data class UploadInfo(
  */
 @JvmSynthetic
 internal fun UploadInfo.update(
-  standardizationRequested: Boolean = this.standardizationRequested,
+  inputStandardization: InputStandardization = InputStandardization(),
   remoteUri: Uri = this.remoteUri,
   file: File = this.inputFile,
   standardizedFile: File? = this.standardizedFile,
@@ -47,7 +88,7 @@ internal fun UploadInfo.update(
   uploadJob: Deferred<Result<UploadStatus>>? = this.uploadJob,
   statusFlow: StateFlow<UploadStatus>? = this.statusFlow,
 ) = UploadInfo(
-  standardizationRequested,
+  inputStandardization,
   remoteUri,
   file,
   standardizedFile,
