@@ -1,12 +1,16 @@
 package com.mux.video.vod.demo
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.ServiceCompat
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
 import com.mux.video.upload.api.UploadEventListener
@@ -25,19 +29,15 @@ class BackgroundUploadService : Service() {
 
     const val ACTION_START = "start"
     const val NOTIFICATION_PROGRESS = 200001
-    const val NOTIFICATION_COMPLETE = 200002
-    const val NOTIFICATION_RETRY = 200003
-
     const val CHANNEL_UPLOAD_PROGRESS = "upload_progress"
   }
 
   private var uploadListListener: UploadListListener? = null
 
-  // todo - Create Notification Channels
-
   // uploads tracked by this Service, regardless of state. cleared when the service is destroyed
   private val uploadsByFile = mutableMapOf<String, MuxUpload>()
 
+  // todo - Create Notification Channels
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     val action = intent?.action
     if (action == ACTION_START) {
@@ -65,6 +65,7 @@ class BackgroundUploadService : Service() {
 
   private fun notifyWithCurrentUploads() = notify(this.uploadsByFile.values)
 
+  @SuppressLint("InlinedApi") // inline use of FOREGROUND_SERVICE
   private fun notify(uploads: Collection<MuxUpload>) {
     // todo - Manage foreground-iness: startForeground when there are running uploads, else don't
     // todo - Two notification styles: 1 video and many videos
@@ -72,17 +73,61 @@ class BackgroundUploadService : Service() {
     // todo - cancel notification if no uploads are running
     // todo - show new notification for completion (clear count of completed uploads when both notifs are gone)
 
+    // todo - hey wait we don't want to do notifications except by foreground svc
+
     val uploadsInProgress = uploads.filter { it.isRunning }
     val uploadsCompleted = uploads.filter { it.isSuccessful }
-    val uploadsPaused = uploads.filter { it.isPaused }
+//    val uploadsPaused = uploads.filter { it.isPaused }
     val uploadsFailed = uploads.filter { it.error != null }
 
     Log.d(TAG, "notify: uploadsInProgress: ${uploadsInProgress.size}")
     Log.d(TAG, "notify: uploadsCompleted: ${uploadsCompleted.size}")
-    Log.d(TAG, "notify: uploadsPaused: ${uploadsPaused.size}")
+//    Log.d(TAG, "notify: uploadsPaused: ${uploadsPaused.size}")
     Log.d(TAG, "notify: uploadsFailed: ${uploadsFailed.size}")
 
-    // todo- notify for each of the above
+    val builder = NotificationCompat.Builder(this, CHANNEL_UPLOAD_PROGRESS)
+    builder.setContentTitle(getString(R.string.app_name))
+    builder.setAutoCancel(false)
+    builder.setOngoing(true)
+
+    if (uploadsInProgress.size == 1 && this.uploadsByFile.size == 1) {
+      // A single upload in progress, with a single upload requested
+      val upload = uploadsInProgress.first()
+      val kbUploaded = (upload.currentProgress.bytesUploaded / 1024).toInt()
+      val kbTotal = (upload.currentProgress.totalBytes / 1024).toInt()
+
+      builder.setProgress(kbUploaded, kbTotal, false)
+      builder.setContentText(
+        resources.getQuantityString(
+          R.plurals.notif_txt_uploading, 1, kbUploaded, kbTotal
+        )
+      )
+    } else {
+      // Multiple uploads requested simultaneously so we batch them into one
+      val totalKbUploaded = uploadsInProgress.sumOf { it.currentProgress.bytesUploaded / 1024 }
+      val totalKb = uploadsInProgress.sumOf { it.currentProgress.totalBytes / 1024 }
+      builder.setProgress(totalKbUploaded.toInt(), totalKb.toInt(), false)
+      builder.setContentText(
+        resources.getQuantityString(
+          R.plurals.notif_txt_uploading, uploadsInProgress.size, totalKbUploaded, totalKb
+        )
+      )
+
+    }
+   
+    if (uploadsInProgress.isEmpty()) {
+      // Update our FG notification with new content
+      // service only needs to be foregrounded
+      ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
+      // todo - consider stopping the service explicitly & clearing the state
+    } else {
+      ServiceCompat.startForeground(
+        this,
+        NOTIFICATION_PROGRESS,
+        builder.build(),
+        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+      )
+    }
   }
 
   private fun updateCurrentUploads(uploads: List<MuxUpload>) {
@@ -93,61 +138,7 @@ class BackgroundUploadService : Service() {
     }
   }
 
-  private fun createPauseNotification(
-    uploadsPaused: Collection<MuxUpload>,
-    notificationId: Int
-  ): Notification {
-    val builder = NotificationCompat.Builder(this, CHANNEL_UPLOAD_PROGRESS)
-    if (uploadsPaused.isEmpty()) {
-      // If all uploads are finished then we can cancel the notification
-    } else if (uploadsPaused.size == 1 && this.uploadsByFile.size == 1) {
-      // A single upload in progress, with a single upload requested
-      // todo - it's just one so we can make it a little fancy and show a thumbnail
-    } else {
-      // Multiple uploads requested simultaneously so we batch them into one
-    }
-    return builder.build()
-  }
-
-  private fun createCompletionNotification(
-    uploadsComplete: Collection<MuxUpload>,
-    notificationId: Int
-  ): Notification {
-    val builder = NotificationCompat.Builder(this, CHANNEL_UPLOAD_PROGRESS)
-
-    if (uploadsComplete.isEmpty()) {
-      // If all uploads are finished then we can cancel the notification
-    } else if (uploadsComplete.size == 1 && this.uploadsByFile.size == 1) {
-      // A single upload in progress, with a single upload requested
-      //  it's just one so we can make it a little fancy and show a thumbnail
-    } else {
-      // Multiple uploads requested simultaneously so we batch them into one
-    }
-
-    return builder.build()
-  }
-
-  private fun createProgressNotification(
-    uploadsInProgress: Collection<MuxUpload>,
-    notificationId: Int
-  ): Notification {
-    val builder = NotificationCompat.Builder(this, CHANNEL_UPLOAD_PROGRESS)
-
-    if (uploadsInProgress.isEmpty()) {
-      // If all uploads are finished then we can cancel the foreground notification
-    } else if (uploadsInProgress.size == 1 && this.uploadsByFile.size == 1) {
-      // A single upload in progress, with a single upload requested
-      // todo - it's just one so we can make it a little fancy and show a thumbnail
-    } else {
-      // Multiple uploads requested simultaneously so we batch them into one
-    }
-
-    // todo - cancel button
-
-    return builder.build()
-  }
-
-  private inner class UploadListListener: UploadEventListener<List<MuxUpload>> {
+  private inner class UploadListListener : UploadEventListener<List<MuxUpload>> {
     override fun onEvent(event: List<MuxUpload>) {
       val service = this@BackgroundUploadService
       service.updateCurrentUploads(event)
@@ -155,7 +146,7 @@ class BackgroundUploadService : Service() {
     }
   }
 
-  private inner class UploadStatusListener: UploadEventListener<UploadStatus> {
+  private inner class UploadStatusListener : UploadEventListener<UploadStatus> {
     override fun onEvent(event: UploadStatus) {
       val service = this@BackgroundUploadService
       service.notifyWithCurrentUploads()

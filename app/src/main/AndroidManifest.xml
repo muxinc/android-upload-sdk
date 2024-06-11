@@ -2,7 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- todo: Demonstrate Selected Photos Access -->
+    <!--
+    todo: New/Optional Stuff from U and V
+     * Selected Photos Access
+     * Media Processing FG Service type (w/mandatory timeout)
+     -->
     
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />

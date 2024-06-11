@@ -9,14 +9,14 @@
 
     <plurals name="notif_txt_uploading">
         <item quantity="one">Uploading video</item>
-        <item quantity="other">Uploading video %1$s of %2$s</item>
+        <item quantity="other">Uploading video %1$d of %2$d</item>
     </plurals>
     <plurals name="notif_txt_failed">
-        <item quantity="one">Failed to upload video</item>
-        <item quantity="other">Failed to upload %1$s videos</item>
+        <item quantity="one">Failed to upload video. Tap to retry</item>
+        <item quantity="other">%1$d uploads failed. Tap to retry</item>
     </plurals>
     <plurals name="notif_txt_success">
         <item quantity="one">Upload succeeded</item>
-        <item quantity="other">Uploaded %1$s videos</item>
+        <item quantity="other">Successfully uploaded %1$d videos</item>
     </plurals>
 </resources>
