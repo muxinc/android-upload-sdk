@@ -105,7 +105,7 @@ class BackgroundUploadService : Service() {
         builder.setProgress(kbUploaded, kbTotal, false)
         builder.setContentText(
           resources.getQuantityString(
-            R.plurals.notif_txt_uploading, 1, kbUploaded, kbTotal
+            R.plurals.notif_txt_uploading, 1, 1, 1
           )
         )
       } else {
@@ -115,14 +115,29 @@ class BackgroundUploadService : Service() {
         builder.setProgress(totalKbUploaded.toInt(), totalKb.toInt(), false)
         builder.setContentText(
           resources.getQuantityString(
-            R.plurals.notif_txt_uploading, uploadsInProgress.size, totalKbUploaded, totalKb
+            R.plurals.notif_txt_uploading,
+            uploadsInProgress.size,
+            uploadsInProgress.size + 1,
+            uploads.size + 1,
           )
         )
       }
     } else if (uploadsFailed.isNotEmpty()) {
-
+      builder.setContentText(
+        resources.getQuantityString(
+          R.plurals.notif_txt_failed,
+          uploadsFailed.size,
+          uploadsFailed.size
+        )
+      )
     } else if (uploadsCompleted.isNotEmpty()) {
-
+      builder.setContentText(
+        resources.getQuantityString(
+          R.plurals.notif_txt_failed,
+          uploadsFailed.size,
+          uploadsFailed.size
+        )
+      )
     }
 
     // always startForeground even if we're about to detach (to update the notification)
