@@ -5,6 +5,7 @@ import android.app.Service
 import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
@@ -20,6 +21,8 @@ import com.mux.video.upload.api.UploadStatus
 class BackgroundUploadService : Service() {
 
   companion object {
+    private const val TAG = "BackgroundUploadService"
+
     const val ACTION_START = "start"
     const val NOTIFICATION_PROGRESS = 200001
     const val NOTIFICATION_COMPLETE = 200002
@@ -73,6 +76,11 @@ class BackgroundUploadService : Service() {
     val uploadsCompleted = uploads.filter { it.isSuccessful }
     val uploadsPaused = uploads.filter { it.isPaused }
     val uploadsFailed = uploads.filter { it.error != null }
+
+    Log.d(TAG, "notify: uploadsInProgress: ${uploadsInProgress.size}")
+    Log.d(TAG, "notify: uploadsCompleted: ${uploadsCompleted.size}")
+    Log.d(TAG, "notify: uploadsPaused: ${uploadsPaused.size}")
+    Log.d(TAG, "notify: uploadsFailed: ${uploadsFailed.size}")
 
     // todo- notify for each of the above
   }
