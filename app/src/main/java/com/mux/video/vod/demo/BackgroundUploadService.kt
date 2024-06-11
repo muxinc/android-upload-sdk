@@ -75,6 +75,11 @@ class BackgroundUploadService : Service() {
 
     // todo - hey wait we don't want to do notifications except by foreground svc
 
+    if (uploads.isEmpty()) {
+      // only notify if there are uploads being tracked (in-progress or finished)
+      return
+    }
+
     val uploadsInProgress = uploads.filter { it.isRunning }
     val uploadsCompleted = uploads.filter { it.isSuccessful }
 //    val uploadsPaused = uploads.filter { it.isPaused }
@@ -90,43 +95,47 @@ class BackgroundUploadService : Service() {
     builder.setAutoCancel(false)
     builder.setOngoing(true)
 
-    if (uploadsInProgress.size == 1 && this.uploadsByFile.size == 1) {
-      // A single upload in progress, with a single upload requested
-      val upload = uploadsInProgress.first()
-      val kbUploaded = (upload.currentProgress.bytesUploaded / 1024).toInt()
-      val kbTotal = (upload.currentProgress.totalBytes / 1024).toInt()
+    if (uploadsInProgress.isNotEmpty()) {
+      if (uploadsInProgress.size == 1 && this.uploadsByFile.size == 1) {
+        // Special case: A single upload in progress, with a single upload requested
+        val upload = uploadsInProgress.first()
+        val kbUploaded = (upload.currentProgress.bytesUploaded / 1024).toInt()
+        val kbTotal = (upload.currentProgress.totalBytes / 1024).toInt()
 
-      builder.setProgress(kbUploaded, kbTotal, false)
-      builder.setContentText(
-        resources.getQuantityString(
-          R.plurals.notif_txt_uploading, 1, kbUploaded, kbTotal
+        builder.setProgress(kbUploaded, kbTotal, false)
+        builder.setContentText(
+          resources.getQuantityString(
+            R.plurals.notif_txt_uploading, 1, kbUploaded, kbTotal
+          )
         )
-      )
-    } else {
-      // Multiple uploads requested simultaneously so we batch them into one
-      val totalKbUploaded = uploadsInProgress.sumOf { it.currentProgress.bytesUploaded / 1024 }
-      val totalKb = uploadsInProgress.sumOf { it.currentProgress.totalBytes / 1024 }
-      builder.setProgress(totalKbUploaded.toInt(), totalKb.toInt(), false)
-      builder.setContentText(
-        resources.getQuantityString(
-          R.plurals.notif_txt_uploading, uploadsInProgress.size, totalKbUploaded, totalKb
+      } else {
+        // Multiple uploads requested simultaneously so we batch them into one
+        val totalKbUploaded = uploadsInProgress.sumOf { it.currentProgress.bytesUploaded / 1024 }
+        val totalKb = uploadsInProgress.sumOf { it.currentProgress.totalBytes / 1024 }
+        builder.setProgress(totalKbUploaded.toInt(), totalKb.toInt(), false)
+        builder.setContentText(
+          resources.getQuantityString(
+            R.plurals.notif_txt_uploading, uploadsInProgress.size, totalKbUploaded, totalKb
+          )
         )
-      )
+      }
+    } else if (uploadsFailed.isNotEmpty()) {
+
+    } else if (uploadsCompleted.isNotEmpty()) {
 
     }
-   
+
+    // always startForeground even if we're about to detach (to update the notification)
+    ServiceCompat.startForeground(
+      this,
+      NOTIFICATION_PROGRESS,
+      builder.build(),
+      ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+    )
+
     if (uploadsInProgress.isEmpty()) {
-      // Update our FG notification with new content
-      // service only needs to be foregrounded
+      // we only need foreground while uploads are actually running
       ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
-      // todo - consider stopping the service explicitly & clearing the state
-    } else {
-      ServiceCompat.startForeground(
-        this,
-        NOTIFICATION_PROGRESS,
-        builder.build(),
-        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-      )
     }
   }
 
