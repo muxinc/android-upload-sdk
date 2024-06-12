@@ -1,7 +1,6 @@
 package com.mux.video.vod.demo
 
 import android.annotation.SuppressLint
-import android.app.Notification
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -9,7 +8,6 @@ import android.os.Binder
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
@@ -22,7 +20,7 @@ import com.mux.video.upload.api.UploadStatus
  * and stop itself when there are no more uploads in progress (ie, all have completed, paused, or
  * failed)
  */
-class BackgroundUploadService : Service() {
+class UploadNotificationService : Service() {
 
   companion object {
     private const val TAG = "BackgroundUploadService"
@@ -40,8 +38,7 @@ class BackgroundUploadService : Service() {
   // todo - Create Notification Channels
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     val action = intent?.action
-    if (action == ACTION_START) {
-    } else {
+    if (action != ACTION_START) {
       throw RuntimeException("Unknown action")
     }
 
@@ -164,7 +161,7 @@ class BackgroundUploadService : Service() {
 
   private inner class UploadListListener : UploadEventListener<List<MuxUpload>> {
     override fun onEvent(event: List<MuxUpload>) {
-      val service = this@BackgroundUploadService
+      val service = this@UploadNotificationService
       service.updateCurrentUploads(event)
       service.notifyWithCurrentUploads()
     }
@@ -172,12 +169,12 @@ class BackgroundUploadService : Service() {
 
   private inner class UploadStatusListener : UploadEventListener<UploadStatus> {
     override fun onEvent(event: UploadStatus) {
-      val service = this@BackgroundUploadService
+      val service = this@UploadNotificationService
       service.notifyWithCurrentUploads()
     }
   }
 
   private inner class MyBinder : Binder() {
-    fun getService(): BackgroundUploadService = this@BackgroundUploadService
+    fun getService(): UploadNotificationService = this@UploadNotificationService
   }
 }

@@ -58,7 +58,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <service android:name=".BackgroundUploadService"
+        <service android:name=".UploadNotificationService"
             android:exported="false"
             android:foregroundServiceType="dataSync"
             >
