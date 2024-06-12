@@ -93,6 +93,7 @@ class UploadNotificationService : Service() {
     builder.setOngoing(true)
 
     if (uploadsInProgress.isNotEmpty()) {
+      Log.i(TAG, "notifying progress")
       if (uploadsInProgress.size == 1 && this.uploadsByFile.size == 1) {
         // Special case: A single upload in progress, with a single upload requested
         val upload = uploadsInProgress.first()
@@ -120,6 +121,7 @@ class UploadNotificationService : Service() {
         )
       }
     } else if (uploadsFailed.isNotEmpty()) {
+      Log.i(TAG, "notifying Fail")
       builder.setContentText(
         resources.getQuantityString(
           R.plurals.notif_txt_failed,
@@ -128,11 +130,12 @@ class UploadNotificationService : Service() {
         )
       )
     } else if (uploadsCompleted.isNotEmpty()) {
+      Log.i(TAG, "notifying Complete")
       builder.setContentText(
         resources.getQuantityString(
-          R.plurals.notif_txt_failed,
-          uploadsFailed.size,
-          uploadsFailed.size
+          R.plurals.notif_txt_success,
+          uploadsCompleted.size,
+          uploadsCompleted.size,
         )
       )
     }
