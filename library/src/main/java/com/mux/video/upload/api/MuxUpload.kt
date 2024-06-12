@@ -1,14 +1,12 @@
 package com.mux.video.upload.api
 
 import android.net.Uri
-import android.util.Log
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload.Builder
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.update
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.distinctUntilChangedBy
 import java.io.File
 
 /**
@@ -35,6 +33,7 @@ import java.io.File
 class MuxUpload private constructor(
   private var uploadInfo: UploadInfo,
   private val autoManage: Boolean = true,
+  initialStatus: UploadStatus = UploadStatus.Ready
 ) {
 
   /**
@@ -57,17 +56,12 @@ class MuxUpload private constructor(
    * To be notified of status updates (including upload progress), use [setStatusListener]
    */
   @Suppress("MemberVisibilityCanBePrivate")
-  val uploadStatus: UploadStatus get() = uploadInfo.statusFlow?.value ?: currentStatus
+  val uploadStatus: UploadStatus
 
   /**
    * True when the upload is running, false if it's paused, failed, or canceled
    */
   val isRunning get() = uploadInfo.isRunning()
-
-  /**
-   * True when the upload is paused by [pause], false otherwise
-   */
-  val isPaused get() = currentStatus is UploadStatus.UploadPaused
 
   /**
    * If the upload has failed, gets the error associated with the failure
@@ -78,25 +72,22 @@ class MuxUpload private constructor(
   /**
    * True if the upload was successful, false otherwise
    */
-  val isSuccessful get() = uploadInfo.statusFlow?.value?.isSuccessful() ?: _successful
+  val isSuccessful get() = _successful
   private var _successful: Boolean = false
 
   private var resultListener: UploadEventListener<Result<Progress>>? = null
   private var progressListener: UploadEventListener<Progress>? = null
   private var statusListener: UploadEventListener<UploadStatus>? = null
   private var observerJob: Job? = null
-  private val currentStatus: UploadStatus get() =
-    uploadInfo.statusFlow?.value ?: lastKnownStatus ?: UploadStatus.Ready
-  private var lastKnownStatus: UploadStatus? = null
+  private var currentStatus: UploadStatus = UploadStatus.Ready
   private val lastKnownProgress: Progress? get() = currentStatus.getProgress()
 
   private val callbackScope: CoroutineScope = MainScope()
   private val logger get() = MuxUploadSdk.logger
 
   init {
-    // Catch state if an upload was already in progress
-    // no need to observe: the Flow will have the most-recent values when queried
-    uploadInfo.statusFlow?.value?.let { status -> this.lastKnownStatus = status }
+    // Catch Events if an upload was already in progress
+    observeUpload(uploadInfo)
   }
 
   /**
@@ -203,16 +194,8 @@ class MuxUpload private constructor(
    */
   @MainThread
   fun setProgressListener(listener: UploadEventListener<Progress>?) {
-    if (listener == null) {
-      observerJob?.cancel("clearing listeners")
-      observerJob = null
-    } else {
-      observeUpload(uploadInfo)
-    }
-
     progressListener = listener
     lastKnownProgress?.let { listener?.onEvent(it) }
-    observeUpload(uploadInfo)
   }
 
   /**
@@ -221,18 +204,11 @@ class MuxUpload private constructor(
    * @see setStatusListener
    */
   @MainThread
-  fun setResultListener(listener: UploadEventListener<Result<Progress>>?) {
-    if (listener == null) {
-      observerJob?.cancel("clearing listeners")
-      observerJob = null
-    } else {
-      observeUpload(uploadInfo)
-    }
-
+  fun setResultListener(listener: UploadEventListener<Result<Progress>>) {
     resultListener = listener
     lastKnownProgress?.let {
       if (it.bytesUploaded >= it.totalBytes) {
-        listener?.onEvent(Result.success(it))
+        listener.onEvent(Result.success(it))
       }
     }
   }
@@ -244,13 +220,6 @@ class MuxUpload private constructor(
    */
   @MainThread
   fun setStatusListener(listener: UploadEventListener<UploadStatus>?) {
-    if (listener == null) {
-      observerJob?.cancel("clearing listeners")
-      observerJob = null
-    } else {
-      observeUpload(uploadInfo)
-    }
-
     statusListener = listener
     listener?.onEvent(currentStatus)
   }
@@ -261,40 +230,39 @@ class MuxUpload private constructor(
   @Suppress("unused")
   @MainThread
   fun clearListeners() {
-    observerJob?.cancel("clearing listeners")
     resultListener = null
     progressListener = null
     statusListener = null
   }
 
-  private fun newObserveProgressJob(upload: UploadInfo): Job? {
+  private fun newObserveProgressJob(upload: UploadInfo): Job {
     // Job that collects and notifies state updates on the main thread (suspending on main is safe)
-    return upload.statusFlow?.let { flow ->
-      callbackScope.launch {
-        flow.collect { status ->
-          // Update the status of our upload
-          lastKnownStatus = status
+    return callbackScope.launch {
+      upload.statusFlow?.let { flow ->
+        launch {
+          flow.collect { status ->
+            // Update the status of our upload
+            currentStatus = status
+            statusListener?.onEvent(status)
 
-          // Notify the old listeners
-          when (status) {
-            is UploadStatus.Uploading -> { progressListener?.onEvent(status.uploadProgress) }
-            is UploadStatus.UploadPaused -> { progressListener?.onEvent(status.uploadProgress) }
-            is UploadStatus.UploadSuccess -> {
-              _successful = true
-              progressListener?.onEvent(status.uploadProgress)
-              resultListener?.onEvent(Result.success(status.uploadProgress))
-            }
-            is UploadStatus.UploadFailed -> {
-              progressListener?.onEvent(status.uploadProgress) // Make sure we're most up-to-date
-              if (status.exception !is CancellationException) {
-                _error = status.exception
-                resultListener?.onEvent(Result.failure(status.exception))
+            // Notify the old listeners
+            when (status) {
+              is UploadStatus.Uploading -> { progressListener?.onEvent(status.uploadProgress) }
+              is UploadStatus.UploadPaused -> { progressListener?.onEvent(status.uploadProgress) }
+              is UploadStatus.UploadSuccess -> {
+                progressListener?.onEvent(status.uploadProgress)
+                resultListener?.onEvent(Result.success(status.uploadProgress))
               }
+              is UploadStatus.UploadFailed -> {
+                progressListener?.onEvent(status.uploadProgress) // Make sure we're most up-to-date
+                if (status.exception !is CancellationException) {
+                  _error = status.exception
+                  resultListener?.onEvent(Result.failure(status.exception))
+                }
+              }
+              else -> { } // no relevant info
             }
-            else -> { } // no relevant info
           }
-
-          statusListener?.onEvent(status)
         }
       }
     }
@@ -303,6 +271,10 @@ class MuxUpload private constructor(
   private fun observeUpload(uploadInfo: UploadInfo) {
     observerJob?.cancel("switching observers")
     observerJob = newObserveProgressJob(uploadInfo)
+  }
+
+  init {
+    uploadStatus = initialStatus
   }
 
   /**
@@ -339,7 +311,7 @@ class MuxUpload private constructor(
    * @param videoFile a File that represents the video file you want to upload
    */
   @Suppress("MemberVisibilityCanBePrivate")
-  class Builder(val uploadUri: Uri, val videoFile: File) {
+  class Builder constructor(val uploadUri: Uri, val videoFile: File) {
 
     /**
      * Create a new Builder with the specified input file and upload URL
@@ -348,7 +320,8 @@ class MuxUpload private constructor(
      * @param videoFile a File that represents the video file you want to upload
      */
     @Suppress("unused")
-    constructor(uploadUri: String, videoFile: File): this(Uri.parse(uploadUri), videoFile)
+    constructor(uploadUri: String, videoFile: File)
+            : this(Uri.parse(uploadUri), videoFile)
 
     private var manageTask: Boolean = true
     private var uploadInfo: UploadInfo = UploadInfo(
@@ -430,6 +403,7 @@ class MuxUpload private constructor(
      * [MuxUploadManager]
      */
     @JvmSynthetic
-    internal fun create(uploadInfo: UploadInfo) = MuxUpload(uploadInfo = uploadInfo)
+    internal fun create(uploadInfo: UploadInfo, initialStatus: UploadStatus = UploadStatus.Ready)
+      = MuxUpload(uploadInfo = uploadInfo, initialStatus = initialStatus)
   }
 }

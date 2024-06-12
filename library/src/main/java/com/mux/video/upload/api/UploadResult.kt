@@ -5,7 +5,6 @@ package com.mux.video.upload.api
  *
  * Kotlin callers can use the [Result] API as normal
  */
-@Suppress("unused")
 class UploadResult {
 
   companion object {

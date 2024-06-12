@@ -24,6 +24,16 @@ internal class UploadMetrics private constructor() {
 
   private val logger get() = MuxUploadSdk.logger
 
+
+  private fun formatMilliseconds(ms:Long):String {
+    return String.format("%02d:%02d:%02d",
+      TimeUnit.MILLISECONDS.toHours(ms),
+      TimeUnit.MILLISECONDS.toMinutes(ms) -
+              TimeUnit.HOURS.toMinutes(TimeUnit.MILLISECONDS.toHours(ms)), // The change is in this line
+      TimeUnit.MILLISECONDS.toSeconds(ms) -
+              TimeUnit.MINUTES.toSeconds(TimeUnit.MILLISECONDS.toMinutes(ms)));
+  }
+
   private suspend fun getEventInfo(startTimeMillis: Long,
                                    startTimeKey: String,
                                    endTimeMillis: Long,
@@ -115,8 +125,8 @@ internal class UploadMetrics private constructor() {
     maximumResolution:String,
     sessionId: String,
     uploadInfo: UploadInfo
-  ) = runCatching {
-    val body = JSONObject()
+  ) {
+    var body = JSONObject()
     body.put("type", "upload_input_standardization_succeeded")
     body.put("session_id", sessionId)
     body.put("version", "1")
@@ -139,8 +149,8 @@ internal class UploadMetrics private constructor() {
     maximumResolution:String,
     sessionId: String,
     uploadInfo: UploadInfo
-  ) = runCatching {
-    val body = JSONObject()
+  ) {
+    var body = JSONObject()
     body.put("type", "upload_input_standardization_failed")
     body.put("session_id", sessionId)
     body.put("version", "1")
@@ -162,8 +172,8 @@ internal class UploadMetrics private constructor() {
     inputFileDurationMs: Long,
     sessionId: String,
     uploadInfo: UploadInfo
-  ) = runCatching {
-    val body = JSONObject()
+  ) {
+    var body = JSONObject()
     body.put("type", "upload_succeeded")
     body.put("session_id", sessionId)
     body.put("version", "1")
@@ -183,8 +193,8 @@ internal class UploadMetrics private constructor() {
     errorDescription:String,
     sessionId: String,
     uploadInfo: UploadInfo
-  ) = runCatching {
-    val body = JSONObject()
+  ) {
+    var body = JSONObject()
     body.put("type", "uploadfailed")
     body.put("session_id", sessionId)
     body.put("version", "1")

@@ -1,7 +1,6 @@
 package com.mux.video.vod.demo.upload.viewmodel
 
 import android.app.Application
-import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -23,8 +22,7 @@ class UploadListViewModel(app: Application) : AndroidViewModel(app) {
 
   private val listUpdateListener: UploadEventListener<List<MuxUpload>> by lazy {
     UploadEventListener { newUploads ->
-      //uploadMap.forEach { entry -> entry.value.clearListeners() }
-      observeUploads(newUploads)
+      newUploads.forEach { uploadMap[it.videoFile] = it }
       updateUiData(uploadMap.values.toList())
     }
   }
@@ -50,13 +48,11 @@ class UploadListViewModel(app: Application) : AndroidViewModel(app) {
   }
 
   private fun observeUploads(recentUploads: List<MuxUpload>) {
-    recentUploads
-      .filter { !this.uploadMap.containsKey(it.videoFile) }
-      .forEach { upload ->
-        upload.setStatusListener {
-          updateUiData(uploadMap.values.toList())
-        }
+    recentUploads.forEach { upload ->
+      upload.setProgressListener {
         uploadMap[upload.videoFile] = upload
+        updateUiData(uploadMap.values.toList())
+      }
     } // recentUploads.forEach
   }
 
