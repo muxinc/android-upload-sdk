@@ -7,6 +7,9 @@
     <string name="title_activity_create_upload">Create New Upload</string>
     <string name="action_create_upload">Upload!</string>
 
+    <string name="notif_channel_name">Upload status notifications</string>
+    <string name="notif_channel_desc">Progress Notifications for uploads moving in the background</string>
+
     <plurals name="notif_txt_uploading">
         <item quantity="one">Uploading video</item>
         <item quantity="other">Uploading video %1$d of %2$d</item>
