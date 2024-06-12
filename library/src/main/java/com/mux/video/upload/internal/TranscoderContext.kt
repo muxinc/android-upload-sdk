@@ -28,12 +28,14 @@ internal class TranscoderContext private constructor(
 ) {
     private val logger get() = MuxUploadSdk.logger
 
-    val MAX_ALLOWED_BITRATE = 8000000
-    val MAX_ALLOWED_FRAMERATE = 120;
-    val MAX_ALLOWED_WIDTH = 1920
-    val MAX_ALLOWED_HEIGTH = 1080
+    val MAX_ALLOWED_BITRATE: Int
+    val MAX_ALLOWED_FRAMERATE = 120
+    val MIN_ALLOWED_FRAMERATE = 5
+    val MAX_ALLOWED_WIDTH: Int
+    val MAX_ALLOWED_HEIGTH: Int
     val OPTIMAL_FRAMERATE = 30
     val I_FRAME_INTERVAL = 5 // in seconds
+    val MAX_ALLOWED_I_FRAME_INTERVAL: Int
     val OUTPUT_SAMPLERATE = 48000
     val OUTPUT_NUMBER_OF_CHANNELS = 2
     val OUTPUT_AUDIO_BITRATE = 96000
@@ -60,6 +62,7 @@ internal class TranscoderContext private constructor(
     private var targetedWidth = -1
     private var targetedHeight = -1
     private var targetedFramerate = -1
+    private var targetedIFrameInterval = -1
     private var targetedBitrate = -1
     private var scaledSizeYuv: Nv12Buffer? = null
     private var resampleCreated = false
@@ -99,6 +102,20 @@ internal class TranscoderContext private constructor(
     private var nonStandardInputReasons:JSONArray = JSONArray()
     private var inputFileDurationMs:Long = 0 // Ms
     private var errorDescription = ""
+
+    init {
+        if (uploadInfo.inputStandardization.maximumResolution == MaximumResolution.Preset3840x2160) {
+            this.MAX_ALLOWED_BITRATE = 20000000
+            this.MAX_ALLOWED_I_FRAME_INTERVAL = 10
+            this.MAX_ALLOWED_WIDTH = 4096
+            this.MAX_ALLOWED_HEIGTH = 4096
+        } else {
+            this.MAX_ALLOWED_BITRATE = 8000000
+            this.MAX_ALLOWED_I_FRAME_INTERVAL = 5
+            this.MAX_ALLOWED_WIDTH = uploadInfo.inputStandardization.maximumResolution.width
+            this.MAX_ALLOWED_HEIGTH = uploadInfo.inputStandardization.maximumResolution.height
+        }
+    }
 
     companion object {
       const val LOG_TAG = "TranscoderContext"
@@ -212,7 +229,7 @@ internal class TranscoderContext private constructor(
                     }
                     inputFramerate = format.getIntegerCompat(MediaFormat.KEY_FRAME_RATE, -1)
                     targetedFramerate = OPTIMAL_FRAMERATE
-                    if (inputFramerate > MAX_ALLOWED_FRAMERATE) {
+                    if (inputFramerate > MAX_ALLOWED_FRAMERATE || inputFramerate < MIN_ALLOWED_FRAMERATE) {
                         logger.v(
                             LOG_TAG,
                             "Should standardize because the input frame rate is too high"
@@ -222,6 +239,13 @@ internal class TranscoderContext private constructor(
                         nonStandardInputReasons.put("video_framerate")
                     } else {
                         targetedFramerate = inputFramerate
+                    }
+                    val iFrameInterval = format.getInteger(MediaFormat.KEY_I_FRAME_INTERVAL)
+                    if (iFrameInterval > MAX_ALLOWED_I_FRAME_INTERVAL) {
+                        shouldStandardize = true
+                        targetedIFrameInterval = I_FRAME_INTERVAL
+                    } else {
+                        targetedIFrameInterval = iFrameInterval
                     }
                     videoTrackIndex = i;
                     inputVideoFormat = format;
@@ -316,7 +340,7 @@ internal class TranscoderContext private constructor(
         )
         outputVideoFormat!!.setInteger("slice-height", targetedHeight + targetedHeight/2);
         outputVideoFormat!!.setInteger("stride", targetedWidth);
-        outputVideoFormat!!.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, I_FRAME_INTERVAL)
+        outputVideoFormat!!.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, targetedIFrameInterval)
         outputVideoFormat!!.setInteger(
             MediaFormat.KEY_BITRATE_MODE,
             MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
