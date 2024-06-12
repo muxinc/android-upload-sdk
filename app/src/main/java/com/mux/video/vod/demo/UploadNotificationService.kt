@@ -117,9 +117,14 @@ class UploadNotificationService : Service() {
         Log.d(TAG, "upload state: ${upload.uploadStatus}")
 
         builder.setProgress(kbTotal, kbUploaded, false)
-        builder.setContentTitle(
+        builder.setContentText(
           resources.getQuantityString(
             R.plurals.notif_txt_uploading, 1, 1, 1
+          )
+        )
+        builder.setContentTitle(
+          resources.getQuantityString(
+            R.plurals.notif_title_uploading, 1, 1
           )
         )
       } else {
@@ -128,17 +133,30 @@ class UploadNotificationService : Service() {
         val totalKb = uploadsInProgress.sumOf { it.currentProgress.totalBytes / 1024 }
 
         builder.setProgress(totalKb.toInt(),totalKbUploaded.toInt(), false)
-        builder.setContentTitle(
+        builder.setContentText(
           resources.getQuantityString(
             R.plurals.notif_txt_uploading,
             uploads.size,
-            uploads.size,
+            uploadsInProgress.size,
+          )
+        )
+        builder.setContentTitle(
+          resources.getQuantityString(
+            R.plurals.notif_title_uploading, uploads.size,
+            uploads.size
           )
         )
       }
     } else if (uploadsFailed.isNotEmpty()) {
       Log.i(TAG, "notifying Fail")
       builder.setContentTitle(
+        resources.getQuantityString(
+          R.plurals.notif_title_failed,
+          uploadsFailed.size,
+          uploadsFailed.size
+        )
+      )
+      builder.setContentText(
         resources.getQuantityString(
           R.plurals.notif_txt_failed,
           uploadsFailed.size,
@@ -147,9 +165,10 @@ class UploadNotificationService : Service() {
       )
     } else if (uploadsCompleted.isNotEmpty()) {
       Log.i(TAG, "notifying Complete")
+      builder.setContentText(getString(R.string.notif_txt_success))
       builder.setContentTitle(
         resources.getQuantityString(
-          R.plurals.notif_txt_success,
+          R.plurals.notif_title_success,
           uploadsCompleted.size,
           uploadsCompleted.size,
         )
