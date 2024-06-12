@@ -1,12 +1,14 @@
 package com.mux.video.upload.api
 
 import android.net.Uri
+import android.util.Log
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload.Builder
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.update
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import java.io.File
 
 /**
@@ -83,7 +85,9 @@ class MuxUpload private constructor(
   private var progressListener: UploadEventListener<Progress>? = null
   private var statusListener: UploadEventListener<UploadStatus>? = null
   private var observerJob: Job? = null
-  private var currentStatus: UploadStatus = UploadStatus.Ready
+  private val currentStatus: UploadStatus get() =
+    uploadInfo.statusFlow?.value ?: lastKnownStatus ?: UploadStatus.Ready
+  private var lastKnownStatus: UploadStatus? = null
   private val lastKnownProgress: Progress? get() = currentStatus.getProgress()
 
   private val callbackScope: CoroutineScope = MainScope()
@@ -208,11 +212,18 @@ class MuxUpload private constructor(
    * @see setStatusListener
    */
   @MainThread
-  fun setResultListener(listener: UploadEventListener<Result<Progress>>) {
+  fun setResultListener(listener: UploadEventListener<Result<Progress>>?) {
+    if (listener == null) {
+      observerJob?.cancel("clearing listeners")
+      observerJob = null
+    } else {
+      observeUpload(uploadInfo)
+    }
+
     resultListener = listener
     lastKnownProgress?.let {
       if (it.bytesUploaded >= it.totalBytes) {
-        listener.onEvent(Result.success(it))
+        listener?.onEvent(Result.success(it))
       }
     }
   }
@@ -226,6 +237,12 @@ class MuxUpload private constructor(
   fun setStatusListener(listener: UploadEventListener<UploadStatus>?) {
     statusListener = listener
     listener?.onEvent(currentStatus)
+    if (listener == null) {
+      observerJob?.cancel("clearing listeners")
+      observerJob = null
+    } else {
+      observeUpload(uploadInfo)
+    }
   }
 
   /**
@@ -234,6 +251,7 @@ class MuxUpload private constructor(
   @Suppress("unused")
   @MainThread
   fun clearListeners() {
+    observerJob?.cancel("clearing listeners")
     resultListener = null
     progressListener = null
     statusListener = null
@@ -244,10 +262,11 @@ class MuxUpload private constructor(
     return callbackScope.launch {
       upload.statusFlow?.let { flow ->
         launch {
-          flow.collect { status ->
+          flow
+            .collect { status ->
             // Update the status of our upload
-            currentStatus = status
-            statusListener?.onEvent(status)
+            lastKnownStatus = status
+            Log.d("Upload", "status $status")
 
             // Notify the old listeners
             when (status) {
@@ -267,6 +286,8 @@ class MuxUpload private constructor(
               }
               else -> { } // no relevant info
             }
+
+            statusListener?.onEvent(status)
           }
         }
       }

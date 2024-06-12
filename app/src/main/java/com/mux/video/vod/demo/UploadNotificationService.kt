@@ -112,6 +112,8 @@ class UploadNotificationService : Service() {
         val kbUploaded = (upload.currentProgress.bytesUploaded / 1024).toInt()
         val kbTotal = (upload.currentProgress.totalBytes / 1024).toInt()
 
+        Log.d(TAG, "upload state: ${upload.uploadStatus}")
+
         builder.setProgress(kbTotal, kbUploaded, false)
         builder.setContentTitle(
           resources.getQuantityString(
@@ -168,11 +170,11 @@ class UploadNotificationService : Service() {
   }
 
   private fun updateCurrentUploads(uploads: List<MuxUpload>) {
-    this.uploadsByFile.values.forEach { it.clearListeners() }
-    uploads.forEach {
-      this.uploadsByFile[it.videoFile.path] = it
-      it.setStatusListener(UploadStatusListener())
-    }
+//    this.uploadsByFile.values.forEach { it.clearListeners() }
+//    uploads.forEach {
+//      this.uploadsByFile[it.videoFile.path] = it
+//      it.setStatusListener(UploadStatusListener())
+//    }
   }
 
   private inner class UploadListListener : UploadEventListener<List<MuxUpload>> {
