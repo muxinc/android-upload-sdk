@@ -12,7 +12,7 @@
 
     <plurals name="notif_txt_uploading">
         <item quantity="one">Uploading video</item>
-        <item quantity="other">Uploading video %1$d of %2$d</item>
+        <item quantity="other">Uploading %1$d videos</item>
     </plurals>
     <plurals name="notif_txt_failed">
         <item quantity="one">Failed to upload video. Tap to retry</item>

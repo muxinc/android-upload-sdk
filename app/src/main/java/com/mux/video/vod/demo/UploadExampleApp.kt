@@ -18,9 +18,7 @@ class UploadExampleApp : Application() {
     }
     MuxUploadSdk.initialize(this)
     if (MuxUploadManager.allUploadJobs().isNotEmpty()) {
-      val startIntent = Intent(this, UploadNotificationService::class.java)
-      startIntent.action = UploadNotificationService.ACTION_START
-      startService(startIntent)
+      UploadNotificationService.start(this)
     }
   }
 

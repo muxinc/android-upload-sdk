@@ -1,13 +1,17 @@
 package com.mux.video.vod.demo
 
 import android.annotation.SuppressLint
+import android.annotation.TargetApi
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
@@ -27,7 +31,29 @@ class UploadNotificationService : Service() {
 
     const val ACTION_START = "start"
     const val NOTIFICATION_PROGRESS = 200001
+    const val NOTIFICATION_FG = 200002
     const val CHANNEL_UPLOAD_PROGRESS = "upload_progress"
+
+    fun start(context: Context) {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        startImplApiO(context)
+      } else {
+        startImplLegacy(context)
+      }
+    }
+
+    @TargetApi(Build.VERSION_CODES.O)
+    private fun startImplApiO(context: Context) {
+      val startIntent = Intent(context, UploadNotificationService::class.java)
+      startIntent.action = UploadNotificationService.ACTION_START
+      context.startForegroundService(startIntent)
+    }
+
+    private fun startImplLegacy(context: Context) {
+      val startIntent = Intent(context, UploadNotificationService::class.java)
+      startIntent.action = UploadNotificationService.ACTION_START
+      context.startService(startIntent)
+    }
   }
 
   private var uploadListListener: UploadListListener? = null
@@ -62,7 +88,7 @@ class UploadNotificationService : Service() {
 
   private fun notifyWithCurrentUploads() = notify(this.uploadsByFile.values)
 
-  @SuppressLint("InlinedApi") // inline use of FOREGROUND_SERVICE
+  @SuppressLint("InlinedApi", "MissingPermission") // inline use of FOREGROUND_SERVICE
   private fun notify(uploads: Collection<MuxUpload>) {
     // todo - Manage foreground-iness: startForeground when there are running uploads, else don't
     // todo - Two notification styles: 1 video and many videos
@@ -88,7 +114,8 @@ class UploadNotificationService : Service() {
     Log.d(TAG, "notify: uploadsFailed: ${uploadsFailed.size}")
 
     val builder = NotificationCompat.Builder(this, CHANNEL_UPLOAD_PROGRESS)
-    builder.setContentTitle(getString(R.string.app_name))
+    builder.setSmallIcon(R.drawable.ic_launcher)
+//    builder.setContentTitle(getString(R.string.app_name))
     builder.setAutoCancel(false)
     builder.setOngoing(true)
 
@@ -100,8 +127,11 @@ class UploadNotificationService : Service() {
         val kbUploaded = (upload.currentProgress.bytesUploaded / 1024).toInt()
         val kbTotal = (upload.currentProgress.totalBytes / 1024).toInt()
 
-        builder.setProgress(kbUploaded, kbTotal, false)
-        builder.setContentText(
+        Log.v(TAG, "upload progress: $kbUploaded of $kbTotal")
+
+        builder.setProgress(kbTotal, kbUploaded, false)
+        builder.setContentTitle(
+//        builder.setContentText(
           resources.getQuantityString(
             R.plurals.notif_txt_uploading, 1, 1, 1
           )
@@ -110,19 +140,21 @@ class UploadNotificationService : Service() {
         // Multiple uploads requested simultaneously so we batch them into one
         val totalKbUploaded = uploadsInProgress.sumOf { it.currentProgress.bytesUploaded / 1024 }
         val totalKb = uploadsInProgress.sumOf { it.currentProgress.totalBytes / 1024 }
-        builder.setProgress(totalKbUploaded.toInt(), totalKb.toInt(), false)
-        builder.setContentText(
+        Log.v(TAG, "upload progress: $totalKbUploaded of $totalKb")
+        builder.setProgress(totalKb.toInt(),totalKbUploaded.toInt(), false)
+        builder.setContentTitle(
+//        builder.setContentText(
           resources.getQuantityString(
             R.plurals.notif_txt_uploading,
-            uploadsInProgress.size,
-            uploadsInProgress.size + 1,
-            uploads.size + 1,
+            uploads.size,
+            uploads.size,
           )
         )
       }
     } else if (uploadsFailed.isNotEmpty()) {
       Log.i(TAG, "notifying Fail")
-      builder.setContentText(
+//      builder.setContentText(
+      builder.setContentTitle(
         resources.getQuantityString(
           R.plurals.notif_txt_failed,
           uploadsFailed.size,
@@ -131,7 +163,8 @@ class UploadNotificationService : Service() {
       )
     } else if (uploadsCompleted.isNotEmpty()) {
       Log.i(TAG, "notifying Complete")
-      builder.setContentText(
+//      builder.setContentText(
+      builder.setContentTitle(
         resources.getQuantityString(
           R.plurals.notif_txt_success,
           uploadsCompleted.size,
@@ -140,10 +173,12 @@ class UploadNotificationService : Service() {
       )
     }
 
+//    NotificationManagerCompat.from(this).notify(NOTIFICATION_PROGRESS, builder.build())
+
     // always startForeground even if we're about to detach (to update the notification)
     ServiceCompat.startForeground(
       this,
-      NOTIFICATION_PROGRESS,
+      NOTIFICATION_FG,
       builder.build(),
       ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
     )

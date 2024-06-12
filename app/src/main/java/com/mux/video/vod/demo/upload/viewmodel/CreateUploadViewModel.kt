@@ -69,9 +69,7 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
         // Force restart when creating brand new uploads (because we're making new Direct uploads)
         .start(forceRestart = true)
 
-      val startIntent = Intent(app, UploadNotificationService::class.java)
-      startIntent.action = UploadNotificationService.ACTION_START
-      app.startService(startIntent)
+      UploadNotificationService.start(app)
     }
   }
 
@@ -79,7 +77,6 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
    * In order to upload a file from the device's media store, the file must be copied into the app's
    * temp directory. (Technically we could stream it from the source, but this prevents the other
    * app from modifying the file if we pause the upload for a long time or whatever)
-   * TODO<em> Is this something that should go in the SDK? This is a common workflow
    */
   @Throws
   private suspend fun copyIntoTempFile(contentUri: Uri): File {
