@@ -275,7 +275,8 @@ class MuxUpload private constructor(
           // Update the status of our upload
           lastKnownStatus = status
 
-          // Notify the old listeners
+          statusListener?.onEvent(status)
+          // Notify the specific listeners
           when (status) {
             is UploadStatus.Uploading -> { progressListener?.onEvent(status.uploadProgress) }
             is UploadStatus.UploadPaused -> { progressListener?.onEvent(status.uploadProgress) }
@@ -293,8 +294,6 @@ class MuxUpload private constructor(
             }
             else -> { } // no relevant info
           }
-
-          statusListener?.onEvent(status)
         }
       }
     }

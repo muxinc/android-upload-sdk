@@ -22,9 +22,9 @@ class UploadListViewModel(app: Application) : AndroidViewModel(app) {
   private val uploadMap = mutableMapOf<File, MuxUpload>()
 
   private val listUpdateListener: UploadEventListener<List<MuxUpload>> by lazy {
-    UploadEventListener { newUploads ->
+    UploadEventListener { uploads ->
       //uploadMap.forEach { entry -> entry.value.clearListeners() }
-      observeUploads(newUploads)
+      observeUploads(uploads)
       updateUiData(uploadMap.values.toList())
     }
   }
