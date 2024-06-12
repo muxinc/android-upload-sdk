@@ -1,6 +1,7 @@
 package com.mux.video.vod.demo.upload.viewmodel
 
 import android.app.Application
+import android.content.Intent
 import android.database.Cursor
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
@@ -13,6 +14,7 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.mux.video.upload.api.MuxUpload
+import com.mux.video.vod.demo.BackgroundUploadService
 import com.mux.video.vod.demo.backend.ImaginaryBackend
 import com.mux.video.vod.demo.upload.model.MediaStoreVideo
 import com.mux.video.vod.demo.upload.model.extractThumbnail
@@ -67,6 +69,10 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
       ).build()
         // Force restart when creating brand new uploads (because we're making new Direct uploads)
         .start(forceRestart = true)
+
+      val startIntent = Intent(app, BackgroundUploadService::class.java)
+      startIntent.action = BackgroundUploadService.ACTION_START
+      app.startService(startIntent)
     }
   }
 
