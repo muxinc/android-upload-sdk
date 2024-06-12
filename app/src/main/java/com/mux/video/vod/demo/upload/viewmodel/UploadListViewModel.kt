@@ -51,11 +51,11 @@ class UploadListViewModel(app: Application) : AndroidViewModel(app) {
 
   private fun observeUploads(recentUploads: List<MuxUpload>) {
     recentUploads
-      .filter { !this.uploadMap.containsKey(it.videoFile) }
+//      .filter { !this.uploadMap.containsKey(it.videoFile) }
       .forEach { upload ->
-        upload.setStatusListener {
-          updateUiData(uploadMap.values.toList())
-        }
+//        upload.setStatusListener {
+//          updateUiData(uploadMap.values.toList())
+//        }
         uploadMap[upload.videoFile] = upload
     } // recentUploads.forEach
   }
