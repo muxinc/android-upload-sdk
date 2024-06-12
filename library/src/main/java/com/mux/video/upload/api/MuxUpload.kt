@@ -33,7 +33,6 @@ import java.io.File
 class MuxUpload private constructor(
   private var uploadInfo: UploadInfo,
   private val autoManage: Boolean = true,
-  initialStatus: UploadStatus = UploadStatus.Ready
 ) {
 
   /**
@@ -56,7 +55,7 @@ class MuxUpload private constructor(
    * To be notified of status updates (including upload progress), use [setStatusListener]
    */
   @Suppress("MemberVisibilityCanBePrivate")
-  val uploadStatus: UploadStatus
+  val uploadStatus: UploadStatus get() = uploadInfo.statusFlow?.value ?: currentStatus
 
   /**
    * True when the upload is running, false if it's paused, failed, or canceled
@@ -279,10 +278,6 @@ class MuxUpload private constructor(
     observerJob = newObserveProgressJob(uploadInfo)
   }
 
-  init {
-    uploadStatus = initialStatus
-  }
-
   /**
    * The current progress of an upload, in terms of time elapsed and data transmitted
    */
@@ -317,7 +312,7 @@ class MuxUpload private constructor(
    * @param videoFile a File that represents the video file you want to upload
    */
   @Suppress("MemberVisibilityCanBePrivate")
-  class Builder constructor(val uploadUri: Uri, val videoFile: File) {
+  class Builder(val uploadUri: Uri, val videoFile: File) {
 
     /**
      * Create a new Builder with the specified input file and upload URL
@@ -326,8 +321,7 @@ class MuxUpload private constructor(
      * @param videoFile a File that represents the video file you want to upload
      */
     @Suppress("unused")
-    constructor(uploadUri: String, videoFile: File)
-            : this(Uri.parse(uploadUri), videoFile)
+    constructor(uploadUri: String, videoFile: File): this(Uri.parse(uploadUri), videoFile)
 
     private var manageTask: Boolean = true
     private var uploadInfo: UploadInfo = UploadInfo(
@@ -409,7 +403,6 @@ class MuxUpload private constructor(
      * [MuxUploadManager]
      */
     @JvmSynthetic
-    internal fun create(uploadInfo: UploadInfo, initialStatus: UploadStatus = UploadStatus.Ready)
-      = MuxUpload(uploadInfo = uploadInfo, initialStatus = initialStatus)
+    internal fun create(uploadInfo: UploadInfo) = MuxUpload(uploadInfo = uploadInfo)
   }
 }
