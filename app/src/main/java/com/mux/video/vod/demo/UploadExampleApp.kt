@@ -4,7 +4,6 @@ import android.annotation.TargetApi
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.Intent
 import android.os.Build
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUploadManager
@@ -18,7 +17,7 @@ class UploadExampleApp : Application() {
     }
     MuxUploadSdk.initialize(this)
     if (MuxUploadManager.allUploadJobs().isNotEmpty()) {
-      UploadNotificationService.start(this)
+      UploadNotificationService.startCompat(this)
     }
   }
 

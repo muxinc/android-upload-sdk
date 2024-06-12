@@ -1,7 +1,6 @@
 package com.mux.video.vod.demo.upload.viewmodel
 
 import android.app.Application
-import android.content.Intent
 import android.database.Cursor
 import android.graphics.Bitmap
 import android.net.Uri
@@ -69,7 +68,7 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
         // Force restart when creating brand new uploads (because we're making new Direct uploads)
         .start(forceRestart = true)
 
-      UploadNotificationService.start(app)
+      UploadNotificationService.startCompat(app)
     }
   }
 
