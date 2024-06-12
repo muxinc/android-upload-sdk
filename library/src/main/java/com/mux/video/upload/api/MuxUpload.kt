@@ -94,8 +94,9 @@ class MuxUpload private constructor(
   private val logger get() = MuxUploadSdk.logger
 
   init {
-    // Catch Events if an upload was already in progress
-    observeUpload(uploadInfo)
+    // Catch state if an upload was already in progress
+    // no need to observe: the Flow will have the most-recent values when queried
+    uploadInfo.statusFlow?.value?.let { status -> this.lastKnownStatus = status }
   }
 
   /**
@@ -202,8 +203,16 @@ class MuxUpload private constructor(
    */
   @MainThread
   fun setProgressListener(listener: UploadEventListener<Progress>?) {
+    if (listener == null) {
+      observerJob?.cancel("clearing listeners")
+      observerJob = null
+    } else {
+      observeUpload(uploadInfo)
+    }
+
     progressListener = listener
     lastKnownProgress?.let { listener?.onEvent(it) }
+    observeUpload(uploadInfo)
   }
 
   /**
@@ -235,14 +244,15 @@ class MuxUpload private constructor(
    */
   @MainThread
   fun setStatusListener(listener: UploadEventListener<UploadStatus>?) {
-    statusListener = listener
-    listener?.onEvent(currentStatus)
     if (listener == null) {
       observerJob?.cancel("clearing listeners")
       observerJob = null
     } else {
       observeUpload(uploadInfo)
     }
+
+    statusListener = listener
+    listener?.onEvent(currentStatus)
   }
 
   /**
@@ -257,38 +267,34 @@ class MuxUpload private constructor(
     statusListener = null
   }
 
-  private fun newObserveProgressJob(upload: UploadInfo): Job {
+  private fun newObserveProgressJob(upload: UploadInfo): Job? {
     // Job that collects and notifies state updates on the main thread (suspending on main is safe)
-    return callbackScope.launch {
-      upload.statusFlow?.let { flow ->
-        launch {
-          flow
-            .collect { status ->
-            // Update the status of our upload
-            lastKnownStatus = status
-            Log.d("Upload", "status $status")
+    return upload.statusFlow?.let { flow ->
+      callbackScope.launch {
+        flow.collect { status ->
+          // Update the status of our upload
+          lastKnownStatus = status
 
-            // Notify the old listeners
-            when (status) {
-              is UploadStatus.Uploading -> { progressListener?.onEvent(status.uploadProgress) }
-              is UploadStatus.UploadPaused -> { progressListener?.onEvent(status.uploadProgress) }
-              is UploadStatus.UploadSuccess -> {
-                _successful = true
-                progressListener?.onEvent(status.uploadProgress)
-                resultListener?.onEvent(Result.success(status.uploadProgress))
-              }
-              is UploadStatus.UploadFailed -> {
-                progressListener?.onEvent(status.uploadProgress) // Make sure we're most up-to-date
-                if (status.exception !is CancellationException) {
-                  _error = status.exception
-                  resultListener?.onEvent(Result.failure(status.exception))
-                }
-              }
-              else -> { } // no relevant info
+          // Notify the old listeners
+          when (status) {
+            is UploadStatus.Uploading -> { progressListener?.onEvent(status.uploadProgress) }
+            is UploadStatus.UploadPaused -> { progressListener?.onEvent(status.uploadProgress) }
+            is UploadStatus.UploadSuccess -> {
+              _successful = true
+              progressListener?.onEvent(status.uploadProgress)
+              resultListener?.onEvent(Result.success(status.uploadProgress))
             }
-
-            statusListener?.onEvent(status)
+            is UploadStatus.UploadFailed -> {
+              progressListener?.onEvent(status.uploadProgress) // Make sure we're most up-to-date
+              if (status.exception !is CancellationException) {
+                _error = status.exception
+                resultListener?.onEvent(Result.failure(status.exception))
+              }
+            }
+            else -> { } // no relevant info
           }
+
+          statusListener?.onEvent(status)
         }
       }
     }

@@ -66,6 +66,8 @@ class UploadNotificationService : Service() {
 
     // can be commanded to start arbitrary number of times
     if (uploadListListener == null) {
+      notify(MuxUploadManager.allUploadJobs())
+
       val lis = UploadListListener()
       this.uploadListListener = lis
       MuxUploadManager.addUploadsUpdatedListener(lis)
@@ -169,12 +171,14 @@ class UploadNotificationService : Service() {
     }
   }
 
-  private fun updateCurrentUploads(uploads: List<MuxUpload>) {
-//    this.uploadsByFile.values.forEach { it.clearListeners() }
-//    uploads.forEach {
-//      this.uploadsByFile[it.videoFile.path] = it
-//      it.setStatusListener(UploadStatusListener())
-//    }
+  private fun updateCurrentUploads(incomingUploads: List<MuxUpload>) {
+    // listen to status of new uploads
+    incomingUploads
+      .filter { !this.uploadsByFile.containsKey(it.videoFile.path) }
+      .forEach {
+        this.uploadsByFile[it.videoFile.path] = it
+        it.setStatusListener(UploadStatusListener())
+      }
   }
 
   private inner class UploadListListener : UploadEventListener<List<MuxUpload>> {
