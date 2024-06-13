@@ -3,6 +3,7 @@ package com.mux.video.vod.demo.upload.viewmodel
 import android.app.Application
 import android.database.Cursor
 import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
@@ -12,7 +13,6 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.mux.video.upload.api.MuxUpload
-import com.mux.video.vod.demo.UploadNotificationService
 import com.mux.video.vod.demo.backend.ImaginaryBackend
 import com.mux.video.vod.demo.upload.model.MediaStoreVideo
 import com.mux.video.vod.demo.upload.model.extractThumbnail
@@ -67,8 +67,6 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
       ).build()
         // Force restart when creating brand new uploads (because we're making new Direct uploads)
         .start(forceRestart = true)
-
-      UploadNotificationService.startCompat(app)
     }
   }
 
@@ -76,6 +74,7 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
    * In order to upload a file from the device's media store, the file must be copied into the app's
    * temp directory. (Technically we could stream it from the source, but this prevents the other
    * app from modifying the file if we pause the upload for a long time or whatever)
+   * TODO<em> Is this something that should go in the SDK? This is a common workflow
    */
   @Throws
   private suspend fun copyIntoTempFile(contentUri: Uri): File {

@@ -28,10 +28,7 @@ internal data class UploadInfo(
   @JvmSynthetic internal val uploadJob: Deferred<Result<UploadStatus>>?,
   @JvmSynthetic internal val statusFlow: StateFlow<UploadStatus>?,
 ) {
-  fun isRunning(): Boolean = /*uploadJob?.isActive*/
-    statusFlow?.value?.let {
-      it is UploadStatus.Uploading || it is UploadStatus.Started || it is UploadStatus.Preparing
-    } ?: false
+  fun isRunning(): Boolean = uploadJob?.isActive ?: false
 }
 
 /**
