@@ -1,9 +1,35 @@
 <resources>
-    <string name="app_name">Mux Video VOD Upload SDK</string>
+    <string name="app_name">Mux Upload Demo</string>
     <string name="title_main_activity">Mux Upload</string>
     <string name="title_plain_activity">Plain-View Mux Upload Example</string>
     <string name="action_settings">Settings</string>
     <string name="pause_button">Pause Button</string>
     <string name="title_activity_create_upload">Create New Upload</string>
     <string name="action_create_upload">Upload!</string>
+
+    <string name="notif_channel_name">Upload status notifications</string>
+    <string name="notif_channel_desc">Progress Notifications for uploads moving in the background</string>
+
+    <string name="notif_txt_success">Successfully uploaded %1$d videos</string>
+    <plurals name="notif_title_uploading">
+        <item quantity="one">Uploading video</item>
+        <item quantity="other">Uploading %1$d videos</item>
+    </plurals>
+    <plurals name="notif_title_failed">
+        <item quantity="one">Upload Failed</item>
+        <item quantity="other">%1$d uploads failed</item>
+    </plurals>
+    <plurals name="notif_title_success">
+        <item quantity="one">Upload succeeded</item>
+        <item quantity="other">Successfully uploaded %1$d videos</item>
+    </plurals>
+    <plurals name="notif_txt_uploading">
+        <item quantity="one">Uploading your video</item>
+        <item quantity="other">Uploading videos.. (%1$d to go)</item>
+    </plurals>
+    <plurals name="notif_txt_failed">
+        <item quantity="one">Upload Failed</item>
+        <item quantity="other">%1$d uploads failed</item>
+    </plurals>
+
 </resources>

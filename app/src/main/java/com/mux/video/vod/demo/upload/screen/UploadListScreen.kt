@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mux.video.upload.api.MuxUpload
+import com.mux.video.upload.api.UploadStatus
 import com.mux.video.vod.demo.R
 import com.mux.video.vod.demo.upload.CreateUploadActivity
 import com.mux.video.vod.demo.upload.CreateUploadCta
@@ -175,10 +176,13 @@ private fun ListItemContent(upload: MuxUpload) {
       }
     }
 
+    val uploadState = remember { mutableStateOf(upload.uploadStatus) }
+    upload.setStatusListener { uploadState.value = it }
+
     ListThumbnail(bitmap = bitmap)
-    if (upload.isSuccessful) {
+    if (uploadState.value.isSuccessful()) {
       DoneOverlay()
-    } else if (upload.error != null) {
+    } else if (uploadState.value.getError() != null) {
       ErrorOverlay(modifier = Modifier.fillMaxSize())
     } else if (upload.isRunning) {
       ProgressOverlay(

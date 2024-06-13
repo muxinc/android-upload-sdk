@@ -35,19 +35,19 @@ sealed class UploadStatus {
   /**
    * This upload hos not been started. It is ready to start by calling [MuxUpload.start]
    */
-  object Ready: UploadStatus()
+  data object Ready: UploadStatus()
 
   /**
    * This upload has been started via [MuxUpload.start] but has not yet started processing anything
    */
-  object Started: UploadStatus()
+  data object Started: UploadStatus()
 
   /**
    * This upload is being prepared. If standardization is required, it is done during this step
    *
    * @see MuxUpload.Builder.standardizationRequested
    */
-  object Preparing: UploadStatus()
+  data object Preparing: UploadStatus()
 
   /**
    * The upload is currently being sent to Mux Video. The progress is available

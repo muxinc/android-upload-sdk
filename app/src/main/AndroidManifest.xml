@@ -2,6 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!--
+    todo: New/Optional Stuff from U and V
+     * Selected Photos Access
+     * Media Processing FG Service type (w/mandatory timeout)
+     -->
+    
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission
@@ -9,7 +15,8 @@
         android:maxSdkVersion="32" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="29" />
+        android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <application
         android:name=".UploadExampleApp"
@@ -51,6 +58,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service android:name=".UploadNotificationService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            >
+        </service>
     </application>
 
 </manifest>
