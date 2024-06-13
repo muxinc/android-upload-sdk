@@ -38,7 +38,7 @@ android {
     compose true
   }
   composeOptions {
-    kotlinCompilerExtensionVersion '1.5.14'
+    kotlinCompilerExtensionVersion '1.5.14
   }
   packagingOptions {
     resources {
@@ -52,7 +52,7 @@ dependencies {
   implementation project(':library')
 
   implementation 'androidx.appcompat:appcompat:1.6.1'
-  implementation 'com.google.android.material:material:1.11.0'
+  implementation 'com.google.android.material:material:1.10.0'
   implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
   implementation 'androidx.activity:activity-ktx:1.8.2'
   implementation "androidx.fragment:fragment-ktx:1.6.2"
@@ -60,7 +60,7 @@ dependencies {
   implementation 'androidx.core:core-ktx:1.12.0'
   implementation 'net.danlew:android.joda:2.12.7'
   implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
-  implementation 'androidx.activity:activity-compose:1.8.2'
+  implementation 'androidx.activity:activity-compose:1.8.0'
   implementation "androidx.compose.ui:ui:$compose_ui_version"
   implementation "androidx.compose.ui:ui-tooling-preview:$compose_ui_version"
   implementation "androidx.compose.runtime:runtime-livedata:$compose_ui_version"
@@ -68,12 +68,11 @@ dependencies {
   implementation "androidx.compose.material:material-icons-extended:$compose_ui_version"
   implementation "com.google.accompanist:accompanist-systemuicontroller:0.34.0"
 
-  implementation 'androidx.compose.material:material:1.6.2'
+  implementation 'androidx.compose.material:material:1.6.1'
 
   implementation "com.squareup.okhttp3:logging-interceptor:4.12.0"
   implementation "com.squareup.okhttp3:okhttp:4.12.0"
   implementation 'com.squareup.retrofit2:retrofit:2.9.0'
-  implementation 'com.google.code.gson:gson:2.10.1'
   implementation 'com.squareup.retrofit2:converter-gson:2.9.0'
   implementation 'com.squareup.retrofit2:converter-scalars:2.9.0'
 
