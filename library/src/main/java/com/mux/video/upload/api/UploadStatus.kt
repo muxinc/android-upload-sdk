@@ -5,6 +5,7 @@ package com.mux.video.upload.api
  * to Mux Video.
  *
  * some text added here TODO remove
+ * TODO remove this too
  */
 sealed class UploadStatus {
 
