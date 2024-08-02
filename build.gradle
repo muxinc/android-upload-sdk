@@ -9,3 +9,5 @@ plugins {
   id 'org.jetbrains.kotlin.android' version '1.9.24' apply false
   id 'com.mux.gradle.android.mux-android-distribution' version '1.1.2' apply false
 }
+
+// a comment
