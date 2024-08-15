@@ -34,7 +34,7 @@ android {
 muxDistribution {
   devVersion versionFromCommitHash('dev-')
   releaseVersion versionFromTag()
-  artifactIds just("upload")
+  artifactIds artifactFromFirstFlavor()
   groupIds just("com.mux.video")
   publicReleaseIf releaseIfCmdFlag("publicRelease")
 
