@@ -155,8 +155,6 @@ private fun BodyContent(
         thumbnail = state.thumbnail,
         modifier = Modifier.padding(start = 20.dp, end = 20.dp)
       )
-      //Spacer(modifier = Modifier.fillMaxHeight())
-      // TODO: Button
       DefaultButton(
         onClick = startUpload,
         modifier = Modifier

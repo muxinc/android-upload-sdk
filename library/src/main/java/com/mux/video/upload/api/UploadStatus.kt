@@ -3,9 +3,6 @@ package com.mux.video.upload.api
 /**
  * The current state of the upload. Uploads are first examined, potentially processed, then uploaded
  * to Mux Video.
- *
- * some text added here TODO remove
- * TODO remove this too
  */
 sealed class UploadStatus {
 
