@@ -29,6 +29,9 @@ android {
   kotlinOptions {
     jvmTarget = '1.8'
   }
+  buildFeatures {
+    buildConfig true
+  }
 }
 
 muxDistribution {
@@ -36,7 +39,7 @@ muxDistribution {
   releaseVersion versionFromTag()
   artifactIds just("upload")
   groupIds just("com.mux.video")
-  publicReleaseIf releaseOnTag()
+  publicReleaseIf releaseIfCmdFlag("publicRelease")
 
   packageJavadocs = true
   packageSources = true
