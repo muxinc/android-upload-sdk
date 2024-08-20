@@ -5,12 +5,12 @@ plugins {
 
 android {
   namespace "com.mux.video.vod.demo"
-  compileSdk 34
+  compileSdk 35
 
   defaultConfig {
     applicationId "com.mux.video.vod.demo"
     minSdk 21
-    targetSdkVersion 34
+    targetSdkVersion 35
     versionCode 1
     versionName "1.0"
 
