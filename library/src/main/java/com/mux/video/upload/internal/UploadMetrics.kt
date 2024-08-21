@@ -217,7 +217,7 @@ internal class UploadMetrics private constructor() {
         appContext.packageManager.getPackageInfo(appContext.packageName, 0)
       }
       appName = packageInfo.packageName
-      appVersion = packageInfo.versionName
+      appVersion = packageInfo.versionName ?: "unknown"
     }
   }
 }
