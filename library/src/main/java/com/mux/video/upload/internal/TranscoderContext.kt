@@ -441,7 +441,7 @@ internal class TranscoderContext private constructor(
             muxer!!.stop()
             fileTranscoded = true
         } catch (err:Exception) {
-            errorDescription += err.localizedMessage
+            err.message?.let { errorDescription += it }
             logger.e(LOG_TAG, "Failed to standardize input file ${uploadInfo.inputFile}", err)
         } finally {
             releaseCodecs()
