@@ -194,7 +194,7 @@ internal class UploadJobFactory private constructor(
         if (!innerUploadInfo.optOut) {
           metrics.reportUploadFailed(
             startTime, System.currentTimeMillis(), 0,
-            e.localizedMessage,
+            e.message ?: "no error description",
             sessionId,
             uploadInfo
           )
