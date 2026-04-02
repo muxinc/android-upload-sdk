@@ -60,6 +60,13 @@ object MuxUploadManager {
   @MainThread
   fun resumeAllCachedJobs(): List<MuxUpload> {
     return readAllCachedUploads()
+       .filter { uploadInfo ->
+         val exists = uploadInfo.inputFile.exists()
+         if (!exists) {
+             forgetUploadState(uploadInfo)
+         }
+         exists
+       }
       .onEach { uploadInfo -> startJob(uploadInfo, restart = false) }
       .map { MuxUpload.create(it) }
   }
