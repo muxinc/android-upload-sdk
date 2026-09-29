@@ -6,11 +6,10 @@ sent to
 an [upload URL created by a backend server](https://docs.mux.com/guides/video/upload-files-directly)
 . **Do not include credentials to create an upload URL from an app.**
 
-## Build compatibility on this branch
+## Build requirements on this branch
 
-The HEVC feature branch requires Android API 23+, Kotlin 2.2, AGP 8.10+, and
-`compileSdk` 36+ for Upload alone. See [build compatibility](docs/build-compatibility.md)
-for the pinned versions, Mux Player/Data requirements, and packaged SDK checks.
+Android API 23+, Kotlin 2.2, AGP 8.10+, and `compileSdk` 36+.
+The tested Mux Player 1.7.0/Data 1.13.2 combination requires `compileSdk` 37+.
 
 ## Usage
 
