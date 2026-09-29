@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 import subprocess
@@ -14,6 +15,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 MATRIX = [
     # name, Kotlin, AGP, compileSdk, minSdk, Mux, alignment, Transformer probe, expected failure
+    ('upload-kotlin21', '2.1.21', '8.13.0', 36, 23, False, False, False, None),
     ('upload-kotlin22', '2.2.10', '8.13.0', 36, 23, False, False, False, None),
     ('upload-kotlin20', '2.0.10', '8.13.0', 36, 23, False, False, False, 'metadata'),
     ('upload-agp810', '2.2.10', '8.10.0', 36, 23, False, False, False, None),
@@ -43,11 +45,13 @@ def artifact(repository):
     aar = pom.with_suffix('.aar')
     with zipfile.ZipFile(aar) as archive:
         metadata = archive.read('META-INF/com/android/build/gradle/aar-metadata.properties').decode()
+        manifest = ET.fromstring(archive.read('AndroidManifest.xml'))
+        min_sdk = manifest.find('uses-sdk').get('{http://schemas.android.com/apk/res/android}minSdkVersion')
     return version, {'version': version, 'aar_sha256': hashlib.sha256(aar.read_bytes()).hexdigest(),
-                     'aar_bytes': aar.stat().st_size, 'aar_metadata': metadata}
+                     'aar_bytes': aar.stat().st_size, 'aar_metadata': metadata, 'manifest_min_sdk': min_sdk}
 
 
-def consumer(directory, repository, version, case):
+def consumer(directory, version, case):
     name, kotlin, agp, sdk, minimum, mux, align, transformer, _ = case
     modern = agp.startswith('9.')
     source = directory / 'app/src/main/java/compat/SmokeActivity.kt'
@@ -147,6 +151,10 @@ def main():
     parser.add_argument('--baseline-repository', type=Path, help='Unchanged SDK for same-app size comparison')
     parser.add_argument('--cases', nargs='+', help='Run only named matrix rows')
     args = parser.parse_args()
+    cases = [c for c in MATRIX if not args.cases or c[0] in args.cases]
+    unknown = set(args.cases or []) - {c[0] for c in MATRIX}
+    if unknown:
+        parser.error('Unknown case name(s): ' + ', '.join(sorted(unknown)))
     if not os.environ.get('ANDROID_HOME'):
         parser.error('Set ANDROID_HOME to the installed Android SDK directory')
     output = args.output.resolve() if args.output else Path(tempfile.mkdtemp(prefix='upload-compat-'))
@@ -161,9 +169,6 @@ def main():
         if status:
             raise SystemExit('SDK packaging failed; see package.log')
     version, packaged = artifact(repository)
-    cases = [c for c in MATRIX if not args.cases or c[0] in args.cases]
-    if args.cases and set(args.cases) - {c[0] for c in cases}:
-        parser.error('Unknown case name')
     if args.baseline_repository:
         cases.append(('baseline', '2.2.10', '8.13.0', 36, 23, False, False, False, None))
     summary = {'java_home': os.environ.get('JAVA_HOME'), 'artifact': packaged, 'cases': []}
@@ -172,8 +177,8 @@ def main():
     for case in cases:
         directory = output / case[0]
         selected_repo = args.baseline_repository.resolve() if case[0] == 'baseline' else repository
-        selected_version, _ = artifact(selected_repo)
-        consumer(directory, selected_repo, selected_version, case)
+        selected_version = summary['baseline_artifact']['version'] if case[0] == 'baseline' else version
+        consumer(directory, selected_version, case)
         case_wrapper = wrapper
         if case[2].startswith('9.'):
             shutil.copy2(ROOT / 'gradlew', directory / 'gradlew')
@@ -181,6 +186,8 @@ def main():
             wrapper_dir.mkdir(parents=True)
             shutil.copy2(ROOT / 'gradle/wrapper/gradle-wrapper.jar', wrapper_dir)
             properties = (ROOT / 'gradle/wrapper/gradle-wrapper.properties').read_text()
+            if 'gradle-8.13-bin' not in properties:
+                raise SystemExit('AGP 9 matrix expects a Gradle 8.13 repository wrapper; update the wrapper mapping')
             (wrapper_dir / 'gradle-wrapper.properties').write_text(
                 properties.replace('gradle-8.13-bin', 'gradle-9.5.1-bin'))
             case_wrapper = str(directory / 'gradlew')
@@ -198,13 +205,13 @@ def main():
                'apk_bytes': apk.stat().st_size if apk.exists() else None}
         log = (directory / 'build.log').read_text()
         failure_markers = {'metadata': 'incompatible version of Kotlin',
-                           'compileSdk': 'compile against version 36',
-                           'minSdk': 'minSdkVersion 21 cannot be smaller than version 23',
-                           'agp': 'requires Android Gradle plugin 8.10.0 or higher',
+                           'compileSdk': r"Dependency 'com\.mux\.video:upload:[^']+' requires libraries and applications that\s+depend on it to compile against version 36",
+                           'minSdk': r'minSdkVersion 21 cannot be smaller than version 23 declared in library \[com\.mux\.video:upload:',
+                           'agp': r"Dependency 'com\.mux\.video:upload:[^']+' requires Android Gradle plugin 8\.10\.0 or higher",
                            'muxCompileSdk': 'compile against version 37'}
         row['as_expected'] = (status == 0 and graph_status == 0
                               and 'An error occurred when parsing kotlin metadata' not in log) if case[8] is None else (
-            status != 0 and failure_markers[case[8]] in log)
+            status != 0 and re.search(failure_markers[case[8]], log) is not None)
         if case[5] or case[7]:
             row['as_expected'] = row['as_expected'] and bool(modules) and all(
                 module.endswith(':1.11.1') for module in modules)

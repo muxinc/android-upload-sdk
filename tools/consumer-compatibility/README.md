@@ -10,7 +10,7 @@ python3 tools/consumer-compatibility/run.py --output /tmp/upload-consumer-result
 
 Use a new/empty output directory. The script packages the SDK into an isolated
 local Maven repository and builds consumer release apps with R8 enabled.
-It covers Kotlin 2.0/2.2, AGP/SDK boundaries, Mux Player/Data resolution, and
+It covers Kotlin 2.0/2.1/2.2, AGP/SDK boundaries, Mux Player/Data resolution, and
 a retained Transformer export path. Apps are never installed or launched.
 AGP 8 rows use Gradle 8.13; AGP 9.2.1 rows use Gradle 9.5.1 and built-in Kotlin.
 
@@ -31,5 +31,3 @@ Create a local publication with:
 ```sh
 ./gradlew :library:publishReleasePublicationToMavenLocal -Dmaven.repo.local=/tmp/upload-package
 ```
-
-These are build checks; device behavior and live ingest require separate tests.

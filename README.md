@@ -6,9 +6,9 @@ sent to
 an [upload URL created by a backend server](https://docs.mux.com/guides/video/upload-files-directly)
 . **Do not include credentials to create an upload URL from an app.**
 
-## Build requirements on this branch
+## Build requirements
 
-Android API 23+, Kotlin 2.2, AGP 8.10+, and `compileSdk` 36+.
+Android API 23+, Kotlin 2.1+ (tested 2.1.21/2.2.10), AGP 8.10+, and `compileSdk` 36+.
 The tested Mux Player 1.7.0/Data 1.13.2 combination requires `compileSdk` 37+.
 
 ## Usage
