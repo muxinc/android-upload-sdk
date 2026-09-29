@@ -9,7 +9,11 @@ android {
   compileSdk 36
 
   defaultConfig {
-    minSdk 21
+    minSdk 23
+    aarMetadata {
+      minCompileSdk = 36
+      minAgpVersion = '8.10.0'
+    }
 
     testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     consumerProguardFiles "consumer-rules.pro"
@@ -71,7 +75,17 @@ muxDistribution {
   }
 }
 
+// Keep the Mux-owned media pipeline on one evaluated Media3 release. Consumer
+// dependency resolution may upgrade it; rerun compatibility and media checks then.
+def media3Version = '1.11.1'
+
 dependencies {
+  implementation "androidx.media3:media3-common:$media3Version"
+  implementation "androidx.media3:media3-container:$media3Version"
+  implementation "androidx.media3:media3-extractor:$media3Version"
+  implementation "androidx.media3:media3-effect:$media3Version"
+  implementation "androidx.media3:media3-transformer:$media3Version"
+
   implementation "com.squareup.okhttp3:logging-interceptor:4.12.0"
   implementation "com.squareup.okhttp3:okhttp:4.12.0"
   implementation "io.github.crow-misia.libyuv:libyuv-android:0.43.2"
