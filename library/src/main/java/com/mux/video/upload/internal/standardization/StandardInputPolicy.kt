@@ -25,8 +25,7 @@ internal data class PolicySelection(
 
 internal data class TierLimits(
   val maximumSourceDimension: Int,
-  val minimumFrameRate: Double,
-  val maximumFrameRate: Double,
+  val frameRateRange: ClosedFloatingPointRange<Double>,
   val maximumAverageBitrate: Long,
   val maximumGopBitrate: Long?,
   val maximumKeyframeIntervals: Map<VideoCodec, Double>,
@@ -44,9 +43,9 @@ internal data class StandardInputPolicyProfile(
 
   companion object {
     val PublishedMux = StandardInputPolicyProfile(
-      upTo1080p = TierLimits(2048, 5.0, 120.0, 8_000_000, 16_000_000,
+      upTo1080p = TierLimits(2048, 5.0..120.0, 8_000_000, 16_000_000,
         mapOf(VideoCodec.H264 to 20.0, VideoCodec.Hevc to 10.0)),
-      highResolution = TierLimits(4096, 5.0, 60.0, 20_000_000, null,
+      highResolution = TierLimits(4096, 5.0..60.0, 20_000_000, null,
         mapOf(VideoCodec.H264 to 10.0, VideoCodec.Hevc to 6.0)),
     )
   }
@@ -82,13 +81,12 @@ internal class StandardInputPolicyEvaluator(
   ): PolicyEvaluation {
     val limits = profile.limits(effectiveTier(facts.displayDimensions, selection))
     val codec = facts.videoCodec.valueOrNull
-    val pixel = facts.pixelFormat.valueOrNull
     val intervalLimit = limits.maximumKeyframeIntervals[codec]
     return PolicyEvaluation(linkedMapOf(
       PolicyRequirement.VideoCodec to check(facts.videoCodec) { it != VideoCodec.Other },
       PolicyRequirement.VideoResolution to dimensions(facts.displayDimensions, selection, limits, role),
       PolicyRequirement.FrameRate to positiveFinite(facts.frameRate) {
-        it in limits.minimumFrameRate..limits.maximumFrameRate
+        it in limits.frameRateRange
       },
       PolicyRequirement.AverageBitrate to positive(facts.averageBitrate) { it <= limits.maximumAverageBitrate },
       PolicyRequirement.MaximumGopBitrate to (limits.maximumGopBitrate?.let { maximum ->
@@ -98,10 +96,7 @@ internal class StandardInputPolicyEvaluator(
         positiveFinite(facts.maximumKeyframeIntervalSeconds) { it <= maximum }
       } ?: PolicyStatus.Unknown),
       PolicyRequirement.GopStructure to check(facts.gopStructure) { it == GopStructure.ClosedWithIdr },
-      PolicyRequirement.PixelFormat to (if (codec == null || pixel == null) PolicyStatus.Unknown else
-        status(pixel.chromaSubsampling == ChromaSubsampling.Yuv420 &&
-          (codec == VideoCodec.H264 && pixel.bitDepth == 8 ||
-            codec == VideoCodec.Hevc && pixel.bitDepth in setOf(8, 10)))),
+      PolicyRequirement.PixelFormat to pixelFormat(facts),
       PolicyRequirement.DynamicRange to dynamicRange(facts),
       PolicyRequirement.Audio to audio(facts.audioTracks),
       PolicyRequirement.EditList to check(facts.editList) { it != EditList.Complex },
@@ -128,6 +123,17 @@ internal class StandardInputPolicyEvaluator(
       if (codec == null || pixel == null) PolicyStatus.Unknown else status(
         codec == VideoCodec.Hevc && pixel == PixelFormat(10, ChromaSubsampling.Yuv420))
     }
+  }
+
+  private fun pixelFormat(facts: MediaFacts): PolicyStatus {
+    val codec = facts.videoCodec.valueOrNull ?: return PolicyStatus.Unknown
+    val format = facts.pixelFormat.valueOrNull ?: return PolicyStatus.Unknown
+    val supportedDepth = when (codec) {
+      VideoCodec.H264 -> format.bitDepth == 8
+      VideoCodec.Hevc -> format.bitDepth == 8 || format.bitDepth == 10
+      VideoCodec.Other -> false
+    }
+    return status(supportedDepth && format.chromaSubsampling == ChromaSubsampling.Yuv420)
   }
 
   private fun audio(fact: MediaFact<List<AudioTrack>>): PolicyStatus {

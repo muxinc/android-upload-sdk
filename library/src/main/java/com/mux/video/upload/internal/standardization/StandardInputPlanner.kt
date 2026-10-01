@@ -2,7 +2,6 @@ package com.mux.video.upload.internal.standardization
 
 import com.mux.video.upload.api.HdrHandling
 import com.mux.video.upload.internal.InputStandardization
-import kotlin.math.floor
 
 /** Proof for this source and conversion path, supplied by the caller, never inferred from a codec list. */
 internal data class PlanningCapabilities(
@@ -33,6 +32,7 @@ internal data class StandardInputConversion(
   val outputCodec: VideoCodec,
   val sourceDynamicRange: DynamicRange,
   val sourceDisplayDimensions: MediaFact<Dimensions>,
+  /** Explicit HDR-to-BT.709 SDR pixel conversion; retagging metadata is insufficient. */
   val toneMapsToSdr: Boolean,
   val selection: PolicySelection,
   val requirementsToRemediate: Set<PolicyRequirement>,
@@ -42,7 +42,6 @@ internal data class StandardInputConversion(
   val outputAudio: OutputAudio,
 ) {
   val outputDynamicRange: DynamicRange get() = DynamicRange.Sdr
-  val requiresBt709ToneMapping: Boolean get() = toneMapsToSdr
 }
 
 internal sealed interface OriginalReason {
@@ -95,7 +94,8 @@ internal class StandardInputPlanner(
       if (!it.fitsWithin(selection.generatedOutputDimensions)) requirements.add(PolicyRequirement.VideoResolution)
     }
     val range = facts.dynamicRange.valueOrNull
-    val toneMap = range in setOf(DynamicRange.Hlg, DynamicRange.Pq) && options.hdrHandling == HdrHandling.ToneMapToSDR
+    val toneMap = (range == DynamicRange.Hlg || range == DynamicRange.Pq) &&
+      options.hdrHandling == HdrHandling.ToneMapToSDR
     when (range) {
       DynamicRange.DolbyVision, DynamicRange.OtherHdr -> return fallback(FallbackReason.UnsupportedHdr(range))
       DynamicRange.Hlg, DynamicRange.Pq -> {
@@ -120,48 +120,48 @@ internal class StandardInputPlanner(
       if (evaluation.outcome == PolicyStatus.Compliant) OriginalReason.StandardInput
       else OriginalReason.NoKnownStandardInputViolation)
 
-    val codec = facts.videoCodec.valueOrNull ?: return fallback(FallbackReason.InsufficientEvidenceForConversion)
-    if (range == null) return fallback(FallbackReason.InsufficientEvidenceForConversion)
-    val dimensions = outputDimensions(facts.displayDimensions, selection.generatedOutputDimensions)
-    // A known one-pixel axis cannot produce 4:2:0 output without upscaling.
-    if (facts.displayDimensions.valueOrNull?.isValid == true && dimensions == MediaFact.Unknown) {
-      return fallback(FallbackReason.InsufficientEvidenceForConversion)
-    }
+    val conversion = buildConversion(facts, selection, requirements.toSet(), toneMap)
+      ?: return fallback(FallbackReason.InsufficientEvidenceForConversion)
+    return if (capabilities.supports(conversion)) StandardInputPlan(StandardInputAction.Convert(conversion), evaluation)
+    else fallback(FallbackReason.UnsupportedConversion(conversion))
+  }
+
+  private fun buildConversion(
+    facts: MediaFacts,
+    selection: PolicySelection,
+    requirements: Set<PolicyRequirement>,
+    toneMap: Boolean,
+  ): StandardInputConversion? {
+    val codec = facts.videoCodec.valueOrNull ?: return null
+    val range = facts.dynamicRange.valueOrNull ?: return null
+    val sourceSize = facts.displayDimensions.valueOrNull
+    val outputSize = sourceSize?.scaledToFit(selection.generatedOutputDimensions)
+    if (sourceSize?.isValid == true && outputSize == null) return null
+    val dimensions = outputSize?.let { MediaFact.Known(it) } ?: MediaFact.Unknown
     val outputCodec = if (codec == VideoCodec.Other) VideoCodec.H264 else codec
     val outputLimits = evaluator.profile.limits(evaluator.effectiveTier(dimensions, selection))
     val frameRate = facts.frameRate.valueOrNull?.takeIf { it.isFinite() && it > 0 }?.let {
-      MediaFact.Known(if (it in outputLimits.minimumFrameRate..outputLimits.maximumFrameRate) it else 30.0)
+      MediaFact.Known(if (it in outputLimits.frameRateRange) it else 30.0)
     } ?: MediaFact.Unknown
     val audio = facts.audioTracks.valueOrNull
-    val conversion = StandardInputConversion(
+    val keepTenBit = !toneMap && outputCodec == VideoCodec.Hevc &&
+      facts.pixelFormat.valueOrNull == PixelFormat(10, ChromaSubsampling.Yuv420)
+    return StandardInputConversion(
       sourceCodec = codec,
       outputCodec = outputCodec,
       sourceDynamicRange = range,
       sourceDisplayDimensions = facts.displayDimensions,
       toneMapsToSdr = toneMap,
       selection = selection,
-      requirementsToRemediate = requirements.toSet(),
+      requirementsToRemediate = requirements,
       outputDimensions = dimensions,
       outputFrameRate = frameRate,
-      outputPixelFormat = if (!toneMap && outputCodec == VideoCodec.Hevc &&
-        facts.pixelFormat.valueOrNull == PixelFormat(10, ChromaSubsampling.Yuv420)) {
-        PixelFormat(10, ChromaSubsampling.Yuv420)
-      } else PixelFormat(8, ChromaSubsampling.Yuv420),
+      outputPixelFormat = PixelFormat(if (keepTenBit) 10 else 8, ChromaSubsampling.Yuv420),
       outputAudio = when {
         audio == null -> OutputAudio.AacFromFirstTrackIfPresent
         audio.isEmpty() -> OutputAudio.None
         else -> OutputAudio.AacFromFirstTrack
       },
     )
-    return if (capabilities.supports(conversion)) StandardInputPlan(StandardInputAction.Convert(conversion), evaluation)
-    else fallback(FallbackReason.UnsupportedConversion(conversion))
-  }
-
-  private fun outputDimensions(source: MediaFact<Dimensions>, bounds: Dimensions): MediaFact<Dimensions> {
-    val size = source.valueOrNull?.takeIf { it.isValid && it.shortSide >= 2 } ?: return MediaFact.Unknown
-    val scale = minOf(1.0, bounds.longSide.toDouble() / size.longSide, bounds.shortSide.toDouble() / size.shortSide)
-    // Match Swift's nearest even alignment, capped at the source axis to prevent odd-size upscaling.
-    fun aligned(axis: Int): Int = minOf(axis / 2 * 2, maxOf(2, (floor(axis * scale / 2 + 0.5) * 2).toInt()))
-    return MediaFact.Known(Dimensions(aligned(size.width), aligned(size.height)))
   }
 }
