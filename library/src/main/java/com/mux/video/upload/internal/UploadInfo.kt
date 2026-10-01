@@ -1,6 +1,7 @@
 package com.mux.video.upload.internal
 
 import android.net.Uri
+import com.mux.video.upload.api.HdrHandling
 import com.mux.video.upload.api.UploadStatus
 import com.mux.video.upload.api.MuxUpload
 import kotlinx.coroutines.Deferred
@@ -32,19 +33,41 @@ enum class MaximumResolution(val width: Int, val height: Int) {
   Preset1920x1080(1920, 1080), // 1080p
 
   /**
-   *  The standardized input will be scaled down
-   *  to 3840x2160 (2160p/4K) from a larger size.
-   *  Inputs with smaller dimensions won't be scaled
-   *  up.
+   * Requested maximum generated dimensions of 3840x2160 (2160p/4K), without upscaling.
+   * The legacy transcoder uses a broader source-size limit for this preset and does not
+   * guarantee output within these dimensions. Exact output limits remain pending in the new
+   * Standard Input pipeline.
    */
-  Preset3840x2160(3840, 2160) // 2160p
+  Preset3840x2160(3840, 2160), // 2160p
+
+  /**
+   * Requested maximum generated dimensions of 2560x1440 (1440p), without upscaling.
+   * The legacy transcoder uses these size limits with its existing media rules. Reliable resizing
+   * and the updated tier policy remain pending in the new Standard Input pipeline.
+   * Configure the matching Direct Upload asset tier separately.
+   */
+  Preset2560x1440(2560, 1440) // 1440p
 }
 
 data class InputStandardization(
-  @JvmSynthetic internal val standardizationRequested: Boolean = true,
-  @JvmSynthetic internal val maximumResolution: MaximumResolution = MaximumResolution.Default,
+  @JvmSynthetic internal val standardizationRequested: Boolean,
+  @JvmSynthetic internal val maximumResolution: MaximumResolution,
+  @JvmSynthetic internal val hdrHandling: HdrHandling,
 ) {
+  // Keep the original constructor and its Kotlin default-argument JVM signature.
+  @JvmOverloads
+  constructor(
+    standardizationRequested: Boolean = true,
+    maximumResolution: MaximumResolution = MaximumResolution.Default,
+  ) : this(standardizationRequested, maximumResolution, HdrHandling.Preserve)
 
+  // The data class's original copy and copy$default are callable from compiled Kotlin clients.
+  fun copy(
+    standardizationRequested: Boolean = this.standardizationRequested,
+    maximumResolution: MaximumResolution = this.maximumResolution,
+  ): InputStandardization = InputStandardization(
+    standardizationRequested, maximumResolution, hdrHandling,
+  )
 }
 
 /**
@@ -81,7 +104,7 @@ internal data class UploadInfo(
  */
 @JvmSynthetic
 internal fun UploadInfo.update(
-  inputStandardization: InputStandardization = InputStandardization(),
+  inputStandardization: InputStandardization = this.inputStandardization,
   remoteUri: Uri = this.remoteUri,
   file: File = this.inputFile,
   standardizedFile: File? = this.standardizedFile,

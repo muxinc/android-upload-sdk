@@ -5,7 +5,6 @@ import android.util.Log
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload.Builder
-import com.mux.video.upload.internal.InputStandardization
 import com.mux.video.upload.internal.MaximumResolution
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.update
@@ -373,11 +372,17 @@ class MuxUpload private constructor(
 
     /**
      * If requested, the Upload SDK will try to standardize the input file in order to optimize it
-     * for use with Mux Video
+     * for use with Mux Video. The retained resolution is passed to the legacy transcoder.
+     * This requests on-device output limits; the legacy transcoder does not guarantee successful
+     * conversion or output within those dimensions. Configure the matching Direct Upload
+     * `new_asset_settings.max_resolution_tier` separately.
      */
     @Suppress("unused")
     fun standardizationRequested(enabled: Boolean, maxResolution: MaximumResolution): Builder {
-      uploadInfo.update(InputStandardization(enabled, maxResolution))
+      uploadInfo = uploadInfo.update(inputStandardization = uploadInfo.inputStandardization.copy(
+        standardizationRequested = enabled,
+        maximumResolution = maxResolution,
+      ))
       return this
     }
 
@@ -387,7 +392,20 @@ class MuxUpload private constructor(
      */
     @Suppress("unused")
     fun standardizationRequested(enabled: Boolean): Builder {
-      uploadInfo.update(InputStandardization(enabled))
+      uploadInfo = uploadInfo.update(inputStandardization = uploadInfo.inputStandardization.copy(
+        standardizationRequested = enabled,
+      ))
+      return this
+    }
+
+    /**
+     * Store the requested HDR behavior. Defaults to [HdrHandling.Preserve]. The legacy transcoder
+     * does not yet apply this option; HDR handling is part of the new Standard Input pipeline.
+     */
+    fun hdrHandling(handling: HdrHandling): Builder {
+      uploadInfo = uploadInfo.update(inputStandardization = uploadInfo.inputStandardization.copy(
+        hdrHandling = handling,
+      ))
       return this
     }
 
