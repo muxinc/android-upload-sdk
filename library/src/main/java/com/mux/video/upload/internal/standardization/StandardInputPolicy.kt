@@ -74,7 +74,7 @@ internal class StandardInputPolicyEvaluator(
     selection: PolicySelection,
     role: MediaRole = MediaRole.SourceInput,
   ): PolicyEvaluation {
-    val evaluations = applicableLimits(facts.displayDimensions, selection).map { evaluate(facts, selection, role, it) }
+    val evaluations = applicableLimits(facts.displayDimensions, selection).map { evaluateForTier(facts, selection, role, it) }
     if (evaluations.size == 1) return evaluations.single()
     // An unknown size cannot choose a tier. A check is proven only when both possible tiers agree.
     return PolicyEvaluation(PolicyRequirement.entries.associateWith { requirement ->
@@ -83,7 +83,7 @@ internal class StandardInputPolicyEvaluator(
     })
   }
 
-  private fun evaluate(
+  private fun evaluateForTier(
     facts: MediaFacts,
     selection: PolicySelection,
     role: MediaRole,
