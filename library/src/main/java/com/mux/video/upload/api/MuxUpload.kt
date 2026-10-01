@@ -372,8 +372,10 @@ class MuxUpload private constructor(
 
     /**
      * If requested, the Upload SDK will try to standardize the input file in order to optimize it
-     * for use with Mux Video. The maximum resolution controls on-device output only; configure
-     * the matching Direct Upload `new_asset_settings.max_resolution_tier` separately.
+     * for use with Mux Video. The retained resolution is passed to the legacy transcoder,
+     * including its existing 2160p path. This requests on-device output limits; it does not
+     * guarantee successful conversion. Configure the matching Direct Upload
+     * `new_asset_settings.max_resolution_tier` separately.
      */
     @Suppress("unused")
     fun standardizationRequested(enabled: Boolean, maxResolution: MaximumResolution): Builder {

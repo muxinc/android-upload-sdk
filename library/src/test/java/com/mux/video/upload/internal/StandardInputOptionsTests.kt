@@ -59,7 +59,15 @@ class StandardInputOptionsTests : AbsRobolectricTest() {
   @Test
   fun featureOptionsDoNotChangeTransportOrAnalyticsSettings() {
     val builder = MuxUpload.Builder("https://example.invalid/upload", File("input"))
-    val original = info(builder.build())
+    // Seed non-default internal settings without relying on the unrelated Builder setters,
+    // whose fixes are outside this feature. Resetting them during a feature update must fail.
+    val original = info(builder.build()).update(
+      chunkSize = 256 * 1024,
+      retriesPerChunk = 7,
+      optOut = true,
+    )
+    MuxUpload.Builder::class.java.getDeclaredField("uploadInfo")
+      .apply { isAccessible = true }.set(builder, original)
     val result = info(builder.standardizationRequested(false, MaximumResolution.Preset2560x1440)
       .hdrHandling(HdrHandling.ToneMapToSDR).build())
     assertEquals(original.chunkSize, result.chunkSize)

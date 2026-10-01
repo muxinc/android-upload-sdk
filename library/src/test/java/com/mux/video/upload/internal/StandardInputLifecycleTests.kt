@@ -18,8 +18,8 @@ import java.io.File
 
 /**
  * Configuration retention through the public lifecycle, using unchanged original bytes.
- * Media conversion and generated-payload resume safety are exercised by their own integration
- * tests when the new pipeline is implemented.
+ * This test does not validate media conversion or generated-payload resume safety.
+ * That integration coverage remains to be implemented in NAT-548 and NAT-549.
  */
 @Config(sdk = [28])
 @OptIn(ExperimentalCoroutinesApi::class)
