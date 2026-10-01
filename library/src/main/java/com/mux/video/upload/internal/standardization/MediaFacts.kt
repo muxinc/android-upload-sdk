@@ -1,5 +1,7 @@
 package com.mux.video.upload.internal.standardization
 
+import kotlin.math.floor
+
 /** Unproven facts remain unknown; absence of metadata is not a compliant value. */
 internal sealed interface MediaFact<out T> {
   data class Known<T>(val value: T) : MediaFact<T>
@@ -34,6 +36,15 @@ internal data class Dimensions(val width: Int, val height: Int) {
 
   fun fitsWithin(bounds: Dimensions): Boolean =
     longSide <= bounds.longSide && shortSide <= bounds.shortSide
+
+  fun scaledToFit(bounds: Dimensions): Dimensions? {
+    // A one-pixel axis cannot produce 4:2:0 output without upscaling.
+    if (!isValid || shortSide < 2) return null
+    val scale = minOf(1.0, bounds.longSide.toDouble() / longSide, bounds.shortSide.toDouble() / shortSide)
+    // Match Swift's nearest even alignment, capped at the source axis to prevent odd-size upscaling.
+    fun aligned(axis: Int): Int = minOf(axis / 2 * 2, maxOf(2, (floor(axis * scale / 2 + 0.5) * 2).toInt()))
+    return Dimensions(aligned(width), aligned(height))
+  }
 }
 
 internal data class TimestampFacts(

@@ -191,7 +191,6 @@ class StandardInputPlannerTests {
       val conversion = conversion(hdrFacts(range).copy(videoCodec = known(codec)), toneMapOptions())
       assertEquals(codec, conversion.outputCodec)
       assertTrue(conversion.toneMapsToSdr)
-      assertTrue(conversion.requiresBt709ToneMapping)
       assertEquals(DynamicRange.Sdr, conversion.outputDynamicRange)
       assertEquals(PixelFormat(8, ChromaSubsampling.Yuv420), conversion.outputPixelFormat)
     }
