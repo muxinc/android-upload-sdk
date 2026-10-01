@@ -1,13 +1,15 @@
 package com.mux.video.upload.api
 
-/** Controls the requested HDR behavior during input standardization. */
+/**
+ * Requested HDR behavior for input standardization.
+ *
+ * Currently retained as configuration for the new Standard Input pipeline. The legacy
+ * transcoder does not yet apply this option.
+ */
 enum class HdrHandling {
-  /** Preserve eligible HDR by default. Preserved HDR does not guarantee HDR playback. */
+  /** Request preservation of eligible HDR. This is the default; HDR playback is not guaranteed. */
   Preserve,
 
-  /**
-   * Explicitly request HDR-to-SDR tone mapping. If the device cannot perform the requested
-   * operation, the SDK falls back to uploading the original file.
-   */
+  /** Request explicit HDR-to-SDR tone mapping when the conversion pipeline supports it. */
   ToneMapToSDR,
 }

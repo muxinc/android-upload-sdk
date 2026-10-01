@@ -57,12 +57,11 @@ class StandardInputOptionsTests : AbsRobolectricTest() {
   }
 
   @Test
-  fun featureOptionsDoNotEnableUnrelatedSetters() {
+  fun featureOptionsDoNotChangeTransportOrAnalyticsSettings() {
     val builder = MuxUpload.Builder("https://example.invalid/upload", File("input"))
     val original = info(builder.build())
     val result = info(builder.standardizationRequested(false, MaximumResolution.Preset2560x1440)
-      .hdrHandling(HdrHandling.ToneMapToSDR).chunkSize(1).retriesPerChunk(99)
-      .optOutOfEventTracking(true).build())
+      .hdrHandling(HdrHandling.ToneMapToSDR).build())
     assertEquals(original.chunkSize, result.chunkSize)
     assertEquals(original.retriesPerChunk, result.retriesPerChunk)
     assertEquals(original.optOut, result.optOut)

@@ -397,8 +397,8 @@ class MuxUpload private constructor(
     }
 
     /**
-     * Select the requested HDR behavior. Defaults to [HdrHandling.Preserve]. Tone mapping is
-     * explicit and depends on device support; unsupported operations fall back to the original.
+     * Store the requested HDR behavior. Defaults to [HdrHandling.Preserve]. The legacy transcoder
+     * does not yet apply this option; HDR handling is part of the new Standard Input pipeline.
      */
     fun hdrHandling(handling: HdrHandling): Builder {
       uploadInfo = uploadInfo.update(inputStandardization = uploadInfo.inputStandardization.copy(

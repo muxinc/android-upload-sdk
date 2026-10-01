@@ -41,8 +41,9 @@ enum class MaximumResolution(val width: Int, val height: Int) {
   Preset3840x2160(3840, 2160), // 2160p
 
   /**
-   * Maximum generated dimensions of 2560x1440 (1440p), without upscaling.
-   * Configure the matching Direct Upload asset resolution tier separately.
+   * Requested maximum generated dimensions of 2560x1440 (1440p), without upscaling.
+   * The new Standard Input pipeline will apply this tier's media policy; the legacy transcoder
+   * does not yet implement that policy. Configure the matching Direct Upload asset tier separately.
    */
   Preset2560x1440(2560, 1440) // 1440p
 }

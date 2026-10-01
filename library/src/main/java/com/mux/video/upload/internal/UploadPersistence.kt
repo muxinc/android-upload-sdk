@@ -125,7 +125,7 @@ private object UploadPersistence {
         for (index in 0 until jsonArray.length()) {
           jsonArray.getJSONObject(index)?.let { elemJson ->
             val entry = elemJson.parsePersistenceEntry()
-            parsedEntries.put(entry.file.absolutePath, elemJson.parsePersistenceEntry())
+            parsedEntries[entry.file.absolutePath] = entry
           }
         }
         return parsedEntries
