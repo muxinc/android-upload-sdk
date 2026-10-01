@@ -33,7 +33,7 @@ internal fun fullCapabilities() = PlanningCapabilities(
   encodableVideoCodecs = setOf(VideoCodec.H264, VideoCodec.Hevc),
   remediableRequirements = PolicyRequirement.entries.toSet(),
   toneMappableDynamicRanges = setOf(DynamicRange.Hlg, DynamicRange.Pq),
-  canProduceAacAudio = true,
+  canPrepareCompliantAacAudio = true,
 )
 
 internal fun <T> known(value: T): MediaFact<T> = MediaFact.Known(value)

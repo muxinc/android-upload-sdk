@@ -66,6 +66,7 @@ internal data class MediaFacts(
   val displayDimensions: MediaFact<Dimensions> = MediaFact.Unknown,
   val rotationDegrees: MediaFact<Int> = MediaFact.Unknown,
   val videoTrackCount: MediaFact<Int> = MediaFact.Unknown,
+  /** Measured nominal rate for policy; it does not imply constant presentation intervals. */
   val frameRate: MediaFact<Double> = MediaFact.Unknown,
   val cadence: MediaFact<Cadence> = MediaFact.Unknown,
   val timestamps: MediaFact<TimestampFacts> = MediaFact.Unknown,

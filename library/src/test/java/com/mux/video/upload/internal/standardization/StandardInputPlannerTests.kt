@@ -113,7 +113,7 @@ class StandardInputPlannerTests {
   }
 
   @Test fun aacPreparationProofCoversCopyAndEncodingForTheSelectedTrack() {
-    val videoOnly = fullCapabilities().copy(canProduceAacAudio = false)
+    val videoOnly = fullCapabilities().copy(canPrepareCompliantAacAudio = false)
     val facts = compliantFacts().copy(frameRate = known(121.0))
     for (audio in listOf(facts.audioTracks, MediaFact.Unknown, known(listOf(AudioTrack())),
       known(listOf(AudioTrack(known(AudioFormat.OtherCodec)))),
@@ -121,7 +121,7 @@ class StandardInputPlannerTests {
       known(listOf(AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.FivePointOne))))))) {
       val source = facts.copy(audioTracks = audio)
       assertTrue(fallback(source, videoOnly) is FallbackReason.UnsupportedConversion)
-      assertTrue(planner.plan(source, capabilities = videoOnly.copy(canProduceAacAudio = true)).action
+      assertTrue(planner.plan(source, capabilities = videoOnly.copy(canPrepareCompliantAacAudio = true)).action
         is StandardInputAction.Convert)
     }
     assertTrue(planner.plan(facts.copy(audioTracks = known(emptyList())), capabilities = videoOnly).action
@@ -221,8 +221,52 @@ class StandardInputPlannerTests {
       compliantFacts(dimensions = Dimensions(3840, 2160)).copy(frameRate = known(120.0)) to MaximumResolution.Preset3840x2160)) {
       assertTrue(fallback(facts, fullCapabilities().copy(remediableRequirements = PolicyRequirement.entries.toSet() -
         PolicyRequirement.FrameRate), options(resolution)) is FallbackReason.UnsupportedConversion)
-      assertEquals(30.0, conversion(facts, options(resolution)).outputFrameRate, 0.0)
+      val conversion = conversion(facts, options(resolution))
+      assertEquals(30.0, conversion.outputFrameRate, 0.0)
+      assertEquals(OutputCadence.ConstantFrameRate, conversion.outputCadence)
     }
+  }
+
+  @Test fun unrelatedConversionPreservesKnownOrUnknownSourceCadence() {
+    for (cadence in listOf(known(Cadence.Constant), known(Cadence.Variable), MediaFact.Unknown)) {
+      val facts = compliantFacts().copy(cadence = cadence, gopStructure = known(GopStructure.Open))
+      val plan = planner.plan(facts, capabilities = fullCapabilities().copy(
+        remediableRequirements = setOf(PolicyRequirement.GopStructure)))
+      assertTrue("GOP conversion must preserve the source timestamps: ${plan.action}", plan.action is StandardInputAction.Convert)
+      val conversion = (plan.action as StandardInputAction.Convert).conversion
+      assertEquals(OutputCadence.PreserveSourceTimestamps, conversion.outputCadence)
+      assertEquals(30.0, conversion.outputFrameRate, 0.0)
+      assertEquals(setOf(PolicyRequirement.GopStructure), conversion.requirementsToRemediate)
+    }
+  }
+
+  @Test fun resamplingVariableOrUnknownCadenceRequiresFrameRateProof() {
+    for (cadence in listOf(known(Cadence.Variable), MediaFact.Unknown)) {
+      val facts = compliantFacts().copy(cadence = cadence, frameRate = known(121.0),
+        gopStructure = known(GopStructure.Open))
+      val gopOnly = fullCapabilities().copy(remediableRequirements = setOf(PolicyRequirement.GopStructure))
+      val reason = fallback(facts, gopOnly) as FallbackReason.UnsupportedConversion
+      assertEquals(setOf(ConversionCapabilityFailure.Remediation(PolicyRequirement.FrameRate)), reason.missingCapabilities)
+      assertEquals(OutputCadence.ConstantFrameRate, reason.conversion.outputCadence)
+      assertEquals(30.0, reason.conversion.outputFrameRate, 0.0)
+      assertTrue(planner.plan(facts, capabilities = gopOnly.copy(
+        remediableRequirements = setOf(PolicyRequirement.GopStructure, PolicyRequirement.FrameRate)))
+        .action is StandardInputAction.Convert)
+    }
+  }
+
+  @Test fun unsupportedAacChannelLayoutNeedsCompliantPreparationProof() {
+    // Other includes layouts such as 7.1. Generic AAC encoding or Audio remediation cannot prove a downmix.
+    val facts = compliantFacts().copy(audioTracks = known(listOf(AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.Other))))))
+    val plan = planner.plan(facts, capabilities = fullCapabilities().copy(canPrepareCompliantAacAudio = false))
+    assertEquals(setOf(PolicyRequirement.Audio), plan.evaluation.nonCompliantRequirements)
+    val reason = (plan.action as StandardInputAction.Fallback).reason as FallbackReason.UnsupportedConversion
+    assertEquals(setOf(ConversionCapabilityFailure.AacAudioPreparation), reason.missingCapabilities)
+    assertTrue(reason.conversion.requirementsToRemediate.isEmpty())
+    assertEquals(OutputAudio.AacFromFirstTrack, reason.conversion.outputAudio)
+    // Accepted 5.1 remains eligible for unchanged upload without any preparation capability.
+    assertEquals(StandardInputAction.UploadOriginal(OriginalReason.StandardInput), planner.plan(facts.copy(
+      audioTracks = known(listOf(AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.FivePointOne))))))).action)
   }
 
   @Test fun otherDecodableSdrCodecConvertsToH264() {
@@ -254,7 +298,7 @@ class StandardInputPlannerTests {
       full.copy(encodableVideoCodecs = emptySet()) to ConversionCapabilityFailure.VideoEncode,
       full.copy(remediableRequirements = emptySet()) to
         ConversionCapabilityFailure.Remediation(PolicyRequirement.GopStructure),
-      full.copy(canProduceAacAudio = false) to ConversionCapabilityFailure.AacAudioPreparation,
+      full.copy(canPrepareCompliantAacAudio = false) to ConversionCapabilityFailure.AacAudioPreparation,
       full.copy(toneMappableDynamicRanges = emptySet()) to ConversionCapabilityFailure.ToneMapping,
     )
     for ((capabilities, missing) in cases) {
@@ -271,7 +315,7 @@ class StandardInputPlannerTests {
     val facts = compliantFacts().copy(audioTracks = known(listOf(AudioTrack(known(AudioFormat.OtherCodec)))))
     val capabilities = fullCapabilities().copy(remediableRequirements = emptySet())
     assertTrue(planner.plan(facts, capabilities = capabilities).action is StandardInputAction.Convert)
-    val reason = fallback(facts, capabilities.copy(canProduceAacAudio = false)) as FallbackReason.UnsupportedConversion
+    val reason = fallback(facts, capabilities.copy(canPrepareCompliantAacAudio = false)) as FallbackReason.UnsupportedConversion
     assertEquals(setOf(ConversionCapabilityFailure.AacAudioPreparation), reason.missingCapabilities)
     assertTrue(reason.conversion.requirementsToRemediate.isEmpty())
   }
@@ -437,6 +481,41 @@ class StandardInputPlannerTests {
     val source = compliantFacts(dimensions = Dimensions(3840, 2160)).copy(frameRate = known(120.0))
     assertEquals(30.0, conversion(source, options(MaximumResolution.Preset3840x2160)).outputFrameRate, 0.0)
     assertEquals(120.0, conversion(source, options(MaximumResolution.Preset1920x1080)).outputFrameRate, 0.0)
+  }
+
+  @Test fun downscaledOutputDoesNotRequireUnneededFrameRateOrKeyframeRemediation() {
+    for (codec in listOf(VideoCodec.H264, VideoCodec.Hevc)) {
+      val source = compliantFacts(codec, Dimensions(4096, 4096)).copy(frameRate = known(90.0),
+        maximumKeyframeIntervalSeconds = known(if (codec == VideoCodec.H264) 15.0 else 8.0))
+      val plan = planner.plan(source, options(MaximumResolution.Preset2560x1440),
+        fullCapabilities().copy(remediableRequirements = setOf(PolicyRequirement.VideoResolution)))
+      assertEquals(setOf(PolicyRequirement.FrameRate, PolicyRequirement.KeyframeInterval),
+        plan.evaluation.nonCompliantRequirements)
+      assertTrue("Only resizing is needed for the output tier: ${plan.action}", plan.action is StandardInputAction.Convert)
+      val conversion = (plan.action as StandardInputAction.Convert).conversion
+      assertEquals(Dimensions(1440, 1440), conversion.outputDimensions)
+      assertEquals(90.0, conversion.outputFrameRate, 0.0)
+      assertEquals(OutputCadence.PreserveSourceTimestamps, conversion.outputCadence)
+      assertEquals(setOf(PolicyRequirement.VideoResolution), conversion.requirementsToRemediate)
+      assertEquals(8_000_000L, conversion.outputPolicyLimits.maximumAverageBitrate)
+      assertEquals(16_000_000L, conversion.outputPolicyLimits.maximumGopBitrate)
+      assertEquals(if (codec == VideoCodec.H264) 20.0 else 10.0,
+        conversion.outputPolicyLimits.maximumKeyframeIntervals.getValue(codec), 0.0)
+    }
+  }
+
+  @Test fun downscaledOutputRequiresStricterBitrateRemediation() {
+    val source = compliantFacts(dimensions = Dimensions(4096, 4096)).copy(
+      averageBitrate = known(15_000_000L), maximumGopBitrate = known(17_000_000L))
+    val plan = planner.plan(source, options(MaximumResolution.Preset2560x1440),
+      fullCapabilities().copy(remediableRequirements = setOf(PolicyRequirement.VideoResolution)))
+    assertEquals(PolicyStatus.Compliant, plan.evaluation.outcome)
+    assertTrue("Generated output needs the lower-tier bitrate proof: ${plan.action}", plan.action is StandardInputAction.Fallback)
+    val reason = (plan.action as StandardInputAction.Fallback).reason as FallbackReason.UnsupportedConversion
+    assertEquals(setOf(ConversionCapabilityFailure.Remediation(PolicyRequirement.AverageBitrate),
+      ConversionCapabilityFailure.Remediation(PolicyRequirement.MaximumGopBitrate)), reason.missingCapabilities)
+    assertEquals(setOf(PolicyRequirement.VideoResolution, PolicyRequirement.AverageBitrate,
+      PolicyRequirement.MaximumGopBitrate), reason.conversion.requirementsToRemediate)
   }
 
   @Test fun plansAreDeterministicAndDoNotMutateInput() {
