@@ -33,18 +33,18 @@ enum class MaximumResolution(val width: Int, val height: Int) {
   Preset1920x1080(1920, 1080), // 1080p
 
   /**
-   *  The standardized input will be scaled down
-   *  to 3840x2160 (2160p/4K) from a larger size.
-   *  Inputs with smaller dimensions won't be scaled
-   *  up.
+   * Requested maximum generated dimensions of 3840x2160 (2160p/4K), without upscaling.
+   * The legacy transcoder uses a broader source-size limit for this preset and does not
+   * guarantee output within these dimensions. Exact output limits remain pending in the new
+   * Standard Input pipeline.
    */
   Preset3840x2160(3840, 2160), // 2160p
 
   /**
    * Requested maximum generated dimensions of 2560x1440 (1440p), without upscaling.
-   * The legacy transcoder uses these size limits with its existing 8 Mbps bitrate and 5-second
-   * keyframe limits. Reliable resizing and the updated tier policy remain pending in the new
-   * Standard Input pipeline. Configure the matching Direct Upload asset tier separately.
+   * The legacy transcoder uses these size limits with its existing media rules. Reliable resizing
+   * and the updated tier policy remain pending in the new Standard Input pipeline.
+   * Configure the matching Direct Upload asset tier separately.
    */
   Preset2560x1440(2560, 1440) // 1440p
 }
