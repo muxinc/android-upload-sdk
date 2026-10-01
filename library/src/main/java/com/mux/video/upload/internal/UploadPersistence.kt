@@ -3,6 +3,7 @@ package com.mux.video.upload.internal
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
+import com.mux.video.upload.api.HdrHandling
 import com.mux.video.upload.api.MuxUpload
 import org.json.JSONArray
 import org.json.JSONObject
@@ -30,6 +31,7 @@ internal fun writeUploadState(uploadInfo: UploadInfo, state: MuxUpload.Progress)
       chunkSize = uploadInfo.chunkSize,
       retriesPerChunk = uploadInfo.retriesPerChunk,
       optOut = uploadInfo.optOut,
+      inputStandardization = uploadInfo.inputStandardization,
     )
   )
 }
@@ -50,6 +52,7 @@ internal fun readAllCachedUploads(): List<UploadInfo> {
     .map { it.value }
     .map {
       UploadInfo(
+        inputStandardization = it.inputStandardization,
         remoteUri = Uri.parse(it.url),
         inputFile =  it.file,
         chunkSize = it.chunkSize,
@@ -149,6 +152,7 @@ private data class UploadEntry(
   val savedAtLocalMs: Long,
   val state: Int,
   val bytesSent: Long,
+  val inputStandardization: InputStandardization,
 ) {
   fun toJson(): JSONObject {
     return JSONObject().apply {
@@ -161,6 +165,11 @@ private data class UploadEntry(
         put("saved_at_local_ms", savedAtLocalMs)
         put("state", state)
         put("bytes_sent", bytesSent)
+        put("input_standardization", JSONObject().apply {
+          put("requested", inputStandardization.standardizationRequested)
+          put("maximum_resolution", inputStandardization.maximumResolution.name)
+          put("hdr_handling", inputStandardization.hdrHandling.name)
+        })
       })
     }
   }
@@ -177,6 +186,17 @@ private fun JSONObject.parsePersistenceEntry(): UploadEntry {
     optOut = data.optBoolean("opt_out"),
     savedAtLocalMs = data.optLong("saved_at_local_ms"),
     state = data.optInt("state"),
-    bytesSent = data.optLong("bytes_sent")
+    bytesSent = data.optLong("bytes_sent"),
+    inputStandardization = data.optJSONObject("input_standardization").let { options ->
+      InputStandardization(
+        standardizationRequested = options?.optBoolean("requested", true) ?: true,
+        maximumResolution = MaximumResolution.entries.find {
+          it.name == options?.optString("maximum_resolution")
+        } ?: MaximumResolution.Default,
+        hdrHandling = HdrHandling.entries.find {
+          it.name == options?.optString("hdr_handling")
+        } ?: HdrHandling.Preserve,
+      )
+    },
   )
 }

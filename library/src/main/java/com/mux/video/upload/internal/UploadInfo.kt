@@ -1,6 +1,7 @@
 package com.mux.video.upload.internal
 
 import android.net.Uri
+import com.mux.video.upload.api.HdrHandling
 import com.mux.video.upload.api.UploadStatus
 import com.mux.video.upload.api.MuxUpload
 import kotlinx.coroutines.Deferred
@@ -37,14 +38,34 @@ enum class MaximumResolution(val width: Int, val height: Int) {
    *  Inputs with smaller dimensions won't be scaled
    *  up.
    */
-  Preset3840x2160(3840, 2160) // 2160p
+  Preset3840x2160(3840, 2160), // 2160p
+
+  /**
+   * Maximum generated dimensions of 2560x1440 (1440p), without upscaling.
+   * Configure the matching Direct Upload asset resolution tier separately.
+   */
+  Preset2560x1440(2560, 1440) // 1440p
 }
 
 data class InputStandardization(
-  @JvmSynthetic internal val standardizationRequested: Boolean = true,
-  @JvmSynthetic internal val maximumResolution: MaximumResolution = MaximumResolution.Default,
+  @JvmSynthetic internal val standardizationRequested: Boolean,
+  @JvmSynthetic internal val maximumResolution: MaximumResolution,
+  @JvmSynthetic internal val hdrHandling: HdrHandling,
 ) {
+  // Keep the original constructor and its Kotlin default-argument JVM signature.
+  @JvmOverloads
+  constructor(
+    standardizationRequested: Boolean = true,
+    maximumResolution: MaximumResolution = MaximumResolution.Default,
+  ) : this(standardizationRequested, maximumResolution, HdrHandling.Preserve)
 
+  // The data class's original copy and copy$default are callable from compiled Kotlin clients.
+  fun copy(
+    standardizationRequested: Boolean = this.standardizationRequested,
+    maximumResolution: MaximumResolution = this.maximumResolution,
+  ): InputStandardization = InputStandardization(
+    standardizationRequested, maximumResolution, hdrHandling,
+  )
 }
 
 /**
@@ -81,7 +102,7 @@ internal data class UploadInfo(
  */
 @JvmSynthetic
 internal fun UploadInfo.update(
-  inputStandardization: InputStandardization = InputStandardization(),
+  inputStandardization: InputStandardization = this.inputStandardization,
   remoteUri: Uri = this.remoteUri,
   file: File = this.inputFile,
   standardizedFile: File? = this.standardizedFile,
