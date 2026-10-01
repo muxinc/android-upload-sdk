@@ -7,15 +7,24 @@ import com.mux.video.upload.internal.InputStandardization
 internal data class PlanningCapabilities(
   val sourceIsDecodable: Boolean = false,
   val encodableVideoCodecs: Set<VideoCodec> = emptySet(),
+  /** A FrameRate entry must prove cadence conversion while preserving the effective source timeline. */
   val remediableRequirements: Set<PolicyRequirement> = emptySet(),
   val toneMappableDynamicRanges: Set<DynamicRange> = emptySet(),
-  // Unchanged HDR upload does not need a local encoder or a server-configuration probe.
+  /** Proven first-track AAC preparation, including decode/encode or compliant AAC copy and muxing. */
+  val canProduceAacAudio: Boolean = false,
+  // These ranges allow unchanged bytes after media eligibility checks. They are not conversion capabilities.
+  // Unlike conversion, pass-through does not need a local encoder or a server-configuration probe.
   val preservableHdrDynamicRanges: Set<DynamicRange> = setOf(DynamicRange.Hlg, DynamicRange.Pq),
 ) {
-  fun supports(conversion: StandardInputConversion): Boolean =
-    sourceIsDecodable && conversion.outputCodec in encodableVideoCodecs &&
-      remediableRequirements.containsAll(conversion.requirementsToRemediate) &&
+  fun supports(conversion: StandardInputConversion): Boolean {
+    // Proven tone mapping already remediates HDR transfer; unrelated violations need their own proof.
+    val requirements = if (conversion.toneMapsToSdr) conversion.requirementsToRemediate - PolicyRequirement.DynamicRange
+      else conversion.requirementsToRemediate
+    return sourceIsDecodable && conversion.outputCodec in encodableVideoCodecs &&
+      remediableRequirements.containsAll(requirements) &&
+      (conversion.outputAudio == OutputAudio.None || canProduceAacAudio) &&
       (!conversion.toneMapsToSdr || conversion.sourceDynamicRange in toneMappableDynamicRanges)
+  }
 }
 
 internal enum class OutputAudio {
@@ -70,6 +79,7 @@ internal sealed interface StandardInputAction {
   data class Fallback(val reason: FallbackReason) : StandardInputAction
 }
 
+/** Evaluation describes published source compliance; the action also enforces the selected output size. */
 internal data class StandardInputPlan(val action: StandardInputAction, val evaluation: PolicyEvaluation)
 
 internal class StandardInputPlanner(
@@ -81,6 +91,7 @@ internal class StandardInputPlanner(
     capabilities: PlanningCapabilities = PlanningCapabilities(),
   ): StandardInputPlan {
     val selection = PolicySelection(options.maximumResolution)
+    // Retain source diagnostics even when preparation is disabled; this does no inspection or device probing.
     val evaluation = evaluator.evaluate(facts, selection)
     fun original(reason: OriginalReason) = StandardInputPlan(StandardInputAction.UploadOriginal(reason), evaluation)
     fun fallback(reason: FallbackReason) = StandardInputPlan(StandardInputAction.Fallback(reason), evaluation)
@@ -109,8 +120,10 @@ internal class StandardInputPlanner(
           if (requirements.isNotEmpty()) return fallback(FallbackReason.NonStandardHdr(range, requirements.toSet()))
           return original(OriginalReason.PreserveHdr(range))
         }
-        if (facts.videoCodec.valueOrNull !in setOf(VideoCodec.H264, VideoCodec.Hevc)) {
-          return fallback(FallbackReason.UnsupportedHdr(range))
+        when (facts.videoCodec.valueOrNull) {
+          null -> return fallback(FallbackReason.InsufficientEvidenceForConversion)
+          VideoCodec.Other -> return fallback(FallbackReason.UnsupportedHdr(range))
+          VideoCodec.H264, VideoCodec.Hevc -> Unit
         }
       }
       null -> if (requirements.isNotEmpty()) return fallback(FallbackReason.InsufficientEvidenceForConversion)
@@ -139,9 +152,10 @@ internal class StandardInputPlanner(
     if (sourceSize?.isValid == true && outputSize == null) return null
     val dimensions = outputSize?.let { MediaFact.Known(it) } ?: MediaFact.Unknown
     val outputCodec = if (codec == VideoCodec.Other) VideoCodec.H264 else codec
-    val outputLimits = evaluator.profile.limits(evaluator.effectiveTier(dimensions, selection))
+    val outputLimits = evaluator.applicableLimits(dimensions, selection)
     val frameRate = facts.frameRate.valueOrNull?.takeIf { it.isFinite() && it > 0 }?.let {
-      MediaFact.Known(if (it in outputLimits.frameRateRange) it else 30.0)
+      val targets = outputLimits.map { limits -> if (it in limits.frameRateRange) it else 30.0 }.distinct()
+      targets.singleOrNull()?.let { target -> MediaFact.Known(target) }
     } ?: MediaFact.Unknown
     val audio = facts.audioTracks.valueOrNull
     val keepTenBit = !toneMap && outputCodec == VideoCodec.Hevc &&

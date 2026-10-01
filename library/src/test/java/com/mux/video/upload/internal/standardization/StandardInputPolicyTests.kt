@@ -175,6 +175,37 @@ class StandardInputPolicyTests {
     }
   }
 
+  @Test fun unknownSizeRequiresAgreementBetweenPossibleTiers() {
+    for (resolution in listOf(MaximumResolution.Preset2560x1440, MaximumResolution.Preset3840x2160)) {
+      for (dimensions in listOf(MediaFact.Unknown, known(Dimensions(0, 1080)))) {
+        val facts = compliantFacts().copy(displayDimensions = dimensions)
+        for ((rate, expected) in listOf(4.999 to PolicyStatus.NonCompliant, 5.0 to PolicyStatus.Compliant,
+          60.0 to PolicyStatus.Compliant, 90.0 to PolicyStatus.Unknown, 120.0 to PolicyStatus.Unknown,
+          120.001 to PolicyStatus.NonCompliant)) {
+          assertEquals(expected, evaluate(facts.copy(frameRate = known(rate)), resolution).checks[PolicyRequirement.FrameRate])
+        }
+        for ((bitrate, expected) in listOf(8_000_000L to PolicyStatus.Compliant, 15_000_000L to PolicyStatus.Unknown,
+          20_000_000L to PolicyStatus.Unknown, 20_000_001L to PolicyStatus.NonCompliant)) {
+          assertEquals(expected, evaluate(facts.copy(averageBitrate = known(bitrate)), resolution).checks[PolicyRequirement.AverageBitrate])
+        }
+        assertEquals(PolicyStatus.Unknown, evaluate(facts.copy(maximumGopBitrate = MediaFact.Unknown), resolution)
+          .checks[PolicyRequirement.MaximumGopBitrate])
+        assertEquals(PolicyStatus.Unknown, evaluate(facts.copy(maximumGopBitrate = known(16_000_001L)), resolution)
+          .checks[PolicyRequirement.MaximumGopBitrate])
+        assertEquals(PolicyStatus.Compliant, evaluate(facts.copy(maximumGopBitrate = known(16_000_000L)), resolution)
+          .checks[PolicyRequirement.MaximumGopBitrate])
+        for ((codec, lowLimit, highLimit) in listOf(Triple(VideoCodec.H264, 20.0, 10.0), Triple(VideoCodec.Hevc, 10.0, 6.0))) {
+          assertEquals(PolicyStatus.Compliant, evaluate(facts.copy(videoCodec = known(codec),
+            maximumKeyframeIntervalSeconds = known(highLimit)), resolution).checks[PolicyRequirement.KeyframeInterval])
+          assertEquals(PolicyStatus.Unknown, evaluate(facts.copy(videoCodec = known(codec),
+            maximumKeyframeIntervalSeconds = known(lowLimit)), resolution).checks[PolicyRequirement.KeyframeInterval])
+          assertEquals(PolicyStatus.NonCompliant, evaluate(facts.copy(videoCodec = known(codec),
+            maximumKeyframeIntervalSeconds = known(lowLimit + 0.001)), resolution).checks[PolicyRequirement.KeyframeInterval])
+        }
+      }
+    }
+  }
+
   private fun evaluate(facts: MediaFacts, resolution: MaximumResolution = MaximumResolution.Default) =
     evaluator.evaluate(facts, selection(resolution))
 }

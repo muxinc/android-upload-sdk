@@ -36,11 +36,6 @@ internal data class StandardInputPolicyProfile(
   val upTo1080p: TierLimits,
   val highResolution: TierLimits,
 ) {
-  fun limits(tier: AcceptanceTier): TierLimits = when (tier) {
-    AcceptanceTier.UpTo1080p -> upTo1080p
-    AcceptanceTier.HighResolution -> highResolution
-  }
-
   companion object {
     val PublishedMux = StandardInputPolicyProfile(
       upTo1080p = TierLimits(2048, 5.0..120.0, 8_000_000, 16_000_000,
@@ -66,12 +61,12 @@ internal data class PolicyEvaluation(val checks: Map<PolicyRequirement, PolicySt
 internal class StandardInputPolicyEvaluator(
   val profile: StandardInputPolicyProfile = StandardInputPolicyProfile.PublishedMux,
 ) {
-  fun effectiveTier(dimensions: MediaFact<Dimensions>, selection: PolicySelection): AcceptanceTier {
-    val size = dimensions.valueOrNull
-    return if (selection.acceptanceTier == AcceptanceTier.HighResolution && size?.isValid == true &&
-      size.longSide <= profile.upTo1080p.maximumSourceDimension) {
-      AcceptanceTier.UpTo1080p
-    } else selection.acceptanceTier
+  fun applicableLimits(dimensions: MediaFact<Dimensions>, selection: PolicySelection): List<TierLimits> {
+    if (selection.acceptanceTier == AcceptanceTier.UpTo1080p) return listOf(profile.upTo1080p)
+    val size = dimensions.valueOrNull?.takeIf { it.isValid }
+      ?: return listOf(profile.upTo1080p, profile.highResolution)
+    return listOf(if (size.longSide <= profile.upTo1080p.maximumSourceDimension) profile.upTo1080p
+      else profile.highResolution)
   }
 
   fun evaluate(
@@ -79,7 +74,21 @@ internal class StandardInputPolicyEvaluator(
     selection: PolicySelection,
     role: MediaRole = MediaRole.SourceInput,
   ): PolicyEvaluation {
-    val limits = profile.limits(effectiveTier(facts.displayDimensions, selection))
+    val evaluations = applicableLimits(facts.displayDimensions, selection).map { evaluate(facts, selection, role, it) }
+    if (evaluations.size == 1) return evaluations.single()
+    // An unknown size cannot choose a tier. A check is proven only when both possible tiers agree.
+    return PolicyEvaluation(PolicyRequirement.entries.associateWith { requirement ->
+      val statuses = evaluations.map { it.checks.getValue(requirement) }.distinct()
+      statuses.singleOrNull() ?: PolicyStatus.Unknown
+    })
+  }
+
+  private fun evaluate(
+    facts: MediaFacts,
+    selection: PolicySelection,
+    role: MediaRole,
+    limits: TierLimits,
+  ): PolicyEvaluation {
     val codec = facts.videoCodec.valueOrNull
     val intervalLimit = limits.maximumKeyframeIntervals[codec]
     return PolicyEvaluation(linkedMapOf(
