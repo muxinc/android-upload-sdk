@@ -93,6 +93,95 @@ class StandardInputPlannerTests {
     assertEquals(OutputAudio.AacFromFirstTrack, conversion(facts.copy(audioTracks = known(listOf(AudioTrack())))).outputAudio)
   }
 
+  @Test fun unknownAudioRequiresIndependentAacPreparationProof() {
+    val videoCapabilities = PlanningCapabilities(
+      sourceIsDecodable = true,
+      encodableVideoCodecs = setOf(VideoCodec.H264),
+      remediableRequirements = setOf(PolicyRequirement.FrameRate),
+    )
+    val facts = compliantFacts().copy(frameRate = known(121.0))
+    for (audio in listOf(MediaFact.Unknown, known(listOf(AudioTrack())),
+      known(listOf(AudioTrack(known(AudioFormat.OtherCodec)), AudioTrack())))) {
+      val action = planner.plan(facts.copy(audioTracks = audio), capabilities = videoCapabilities).action
+      assertTrue("Audio must have its own proven AAC path: $action", action is StandardInputAction.Fallback)
+      assertTrue((action as StandardInputAction.Fallback).reason is FallbackReason.UnsupportedConversion)
+    }
+    assertTrue(planner.plan(facts.copy(audioTracks = known(emptyList())), capabilities = videoCapabilities)
+      .action is StandardInputAction.Convert)
+  }
+
+  @Test fun aacPreparationProofCoversCopyAndEncodingForTheSelectedTrack() {
+    val videoOnly = fullCapabilities().copy(canProduceAacAudio = false)
+    val facts = compliantFacts().copy(frameRate = known(121.0))
+    for (audio in listOf(facts.audioTracks, MediaFact.Unknown, known(listOf(AudioTrack())),
+      known(listOf(AudioTrack(known(AudioFormat.OtherCodec)))),
+      known(listOf(AudioTrack(known(AudioFormat.OtherCodec)), AudioTrack())),
+      known(listOf(AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.FivePointOne))))))) {
+      val source = facts.copy(audioTracks = audio)
+      assertTrue(fallback(source, videoOnly) is FallbackReason.UnsupportedConversion)
+      assertTrue(planner.plan(source, capabilities = videoOnly.copy(canProduceAacAudio = true)).action
+        is StandardInputAction.Convert)
+    }
+    assertTrue(planner.plan(facts.copy(audioTracks = known(emptyList())), capabilities = videoOnly).action
+      is StandardInputAction.Convert)
+    // Lack of a local audio pipeline must never block compliant original bytes.
+    assertEquals(StandardInputAction.UploadOriginal(OriginalReason.StandardInput), planner.plan(compliantFacts()).action)
+  }
+
+  @Test fun toneMappingWithUnknownCodecReportsInsufficientEvidence() {
+    assertEquals(FallbackReason.InsufficientEvidenceForConversion,
+      fallback(hdrFacts().copy(videoCodec = MediaFact.Unknown), options = toneMapOptions()))
+  }
+
+  @Test fun unknownSizeDoesNotChooseTheLooserOrStricterTier() {
+    val facts = compliantFacts().copy(displayDimensions = MediaFact.Unknown, frameRate = known(90.0),
+      averageBitrate = known(15_000_000L), maximumGopBitrate = MediaFact.Unknown)
+    for (resolution in listOf(MaximumResolution.Preset2560x1440, MaximumResolution.Preset3840x2160)) {
+      val plan = planner.plan(facts, options(resolution), fullCapabilities())
+      assertEquals(StandardInputAction.UploadOriginal(OriginalReason.NoKnownStandardInputViolation), plan.action)
+      assertEquals(setOf(PolicyRequirement.VideoResolution, PolicyRequirement.FrameRate,
+        PolicyRequirement.AverageBitrate, PolicyRequirement.MaximumGopBitrate), plan.evaluation.unknownRequirements)
+    }
+  }
+
+  @Test fun unrelatedKnownViolationWithUnknownOutputSizeDoesNotInventFrameRate() {
+    val facts = compliantFacts().copy(displayDimensions = MediaFact.Unknown, frameRate = known(90.0),
+      gopStructure = known(GopStructure.Open))
+    val conversion = conversion(facts, options(MaximumResolution.Preset3840x2160))
+    assertEquals(setOf(PolicyRequirement.GopStructure), conversion.requirementsToRemediate)
+    assertEquals(MediaFact.Unknown, conversion.outputDimensions)
+    assertEquals(MediaFact.Unknown, conversion.outputFrameRate)
+  }
+
+  @Test fun provenToneMappingRemediatesDynamicRangeForEitherCodec() {
+    val capabilities = fullCapabilities().copy(remediableRequirements = emptySet())
+    for (codec in listOf(VideoCodec.H264, VideoCodec.Hevc)) for (range in listOf(DynamicRange.Hlg, DynamicRange.Pq)) {
+      val facts = hdrFacts(range).copy(videoCodec = known(codec),
+        pixelFormat = known(PixelFormat(if (codec == VideoCodec.H264) 8 else 10, ChromaSubsampling.Yuv420)))
+      val action = planner.plan(facts, toneMapOptions(), capabilities).action
+      assertTrue("Proven tone mapping must be enough for $codec $range: $action", action is StandardInputAction.Convert)
+      val conversion = (action as StandardInputAction.Convert).conversion
+      assertEquals(codec, conversion.outputCodec)
+      assertTrue(conversion.toneMapsToSdr)
+    }
+    // Tone mapping does not establish unrelated pixel-format remediation.
+    assertTrue(fallback(hdrFacts().copy(videoCodec = known(VideoCodec.H264)), capabilities, toneMapOptions())
+      is FallbackReason.UnsupportedConversion)
+    assertTrue(fallback(hdrFacts().copy(videoCodec = known(VideoCodec.H264),
+      pixelFormat = known(PixelFormat(8, ChromaSubsampling.Yuv420))),
+      capabilities.copy(toneMappableDynamicRanges = emptySet()), toneMapOptions()) is FallbackReason.UnsupportedConversion)
+  }
+
+  @Test fun thirtyFpsTargetsRequireProvenCadenceRemediation() {
+    for ((facts, resolution) in listOf(
+      compliantFacts().copy(frameRate = known(2.0)) to MaximumResolution.Default,
+      compliantFacts(dimensions = Dimensions(3840, 2160)).copy(frameRate = known(120.0)) to MaximumResolution.Preset3840x2160)) {
+      assertTrue(fallback(facts, fullCapabilities().copy(remediableRequirements = PolicyRequirement.entries.toSet() -
+        PolicyRequirement.FrameRate), options(resolution)) is FallbackReason.UnsupportedConversion)
+      assertEquals(known(30.0), conversion(facts, options(resolution)).outputFrameRate)
+    }
+  }
+
   @Test fun otherDecodableSdrCodecConvertsToH264() {
     val conversion = conversion(compliantFacts(VideoCodec.Other).copy(pixelFormat = known(PixelFormat(10, ChromaSubsampling.Other))))
     assertEquals(VideoCodec.Other, conversion.sourceCodec)

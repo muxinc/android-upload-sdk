@@ -54,7 +54,11 @@ internal data class TimestampFacts(
   val isMonotonic: Boolean,
 )
 
-/** Normalized evidence only. Inspection, hardware probing, files, and Android APIs live elsewhere. */
+/**
+ * Normalized evidence shared with inspection, conversion, and output validation. The policy reads only
+ * its published predicates; profile, encoded geometry/rotation, and timeline/cadence also serve those
+ * later stages. Display dimensions already include orientation. No file or platform APIs belong here.
+ */
 internal data class MediaFacts(
   val videoCodec: MediaFact<VideoCodec> = MediaFact.Unknown,
   val videoProfile: MediaFact<VideoProfile> = MediaFact.Unknown,
