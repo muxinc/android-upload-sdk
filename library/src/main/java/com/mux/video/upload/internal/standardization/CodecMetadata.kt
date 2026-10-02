@@ -25,20 +25,18 @@ internal object CodecMetadataReader {
 
   fun video(codec: VideoCodec?, configurations: List<ByteArray>): CodecMetadata {
     if (configurations.sumOf { it.size.toLong() } > MAX_CONFIGURATION_BYTES) return CodecMetadata()
-    val results = configurations.flatMap(::annexBNalUnits).mapNotNull { nal ->
-      try {
+    return try {
+      val results = configurations.flatMap(::annexBNalUnits).mapNotNull { nal ->
         when {
           codec == VideoCodec.H264 && nal.isNotEmpty() && nal[0].toInt() and 31 == 7 -> avc(nal)
           codec == VideoCodec.Hevc && nal.size >= 2 && (nal[0].toInt() and 126) shr 1 == 33 -> hevc(nal)
           else -> null
         }
-      } catch (_: RuntimeException) {
-        // Truncated/unsupported initialization data never becomes compliant evidence.
-        CodecMetadata()
       }
-    }
-    // Several SPS descriptions may signal changing formats; do not choose an arbitrary one.
-    return results.distinct().singleOrNull() ?: CodecMetadata()
+      // Several SPS descriptions may signal changing formats; do not choose an arbitrary one.
+      results.distinct().singleOrNull() ?: CodecMetadata()
+    } catch (_: LinkageError) { CodecMetadata() }
+      catch (_: RuntimeException) { CodecMetadata() }
   }
 
   private fun avc(nal: ByteArray): CodecMetadata {
@@ -200,7 +198,8 @@ internal object CodecMetadataReader {
         6 -> AudioChannelLayout.FivePointOne
         else -> AudioChannelLayout.Other
       })
-    } catch (_: Exception) { MediaFact.Unknown }
+    } catch (_: LinkageError) { MediaFact.Unknown }
+      catch (_: Exception) { MediaFact.Unknown }
   }
 }
 
