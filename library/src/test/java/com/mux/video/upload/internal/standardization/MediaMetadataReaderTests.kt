@@ -92,7 +92,7 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
   @Test fun normalizesSignedRotationAndSwapsPortraitAxes() {
     val format = video().apply { setInteger(MediaFormat.KEY_ROTATION, -90) }
     val f = facts(format)
-    assertEquals(MediaFact.Known(270), f.rotationDegrees)
+    assertEquals(MediaFact.Known(90), f.rotationDegrees)
     assertEquals(MediaFact.Known(Dimensions(1080, 1920)), f.displayDimensions)
   }
 
@@ -241,5 +241,102 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
     val f = MediaTrackMetadataReader.facts(listOf(MediaTrackMetadataReader.read(0, video()),
       MediaTrackMetadataReader.read(1, MediaFormat())))
     assertEquals(MediaFacts(), f)
+  }
+
+  @Test fun normalizesAndroidQuarterTurnsBeforeReconcilingContainerRotation() {
+    for ((raw, normalized) in listOf(0 to 0, 90 to 270, 180 to 180, 270 to 90)) {
+      val format = video().apply { setInteger(MediaFormat.KEY_ROTATION, raw) }
+      val track = MediaTrackMetadataReader.read(0, format, 23, MediaFact.Known(normalized))
+      assertEquals(MediaFact.Known(raw), track.video!!.reportedPlatformRotationDegrees)
+      assertEquals(MediaFact.Known(normalized), track.video.rotationDegrees)
+      val conflict = MediaTrackMetadataReader.read(0, format, 23, MediaFact.Known((normalized + 180) % 360))
+      assertEquals(MediaFact.Unknown, conflict.video!!.rotationDegrees)
+      assertEquals(MediaFact.Unknown, conflict.video.displayDimensions)
+    }
+  }
+
+  @Test fun absentPlatformRotationCanUseContainerButInvalidRotationCannot() {
+    val format = MediaFormat.createVideoFormat("video/avc", 1920, 1080)
+    assertEquals(MediaFact.Known(270), MediaTrackMetadataReader.read(0, format, 23, MediaFact.Known(270)).video!!.rotationDegrees)
+    format.setInteger(MediaFormat.KEY_ROTATION, 45)
+    assertEquals(MediaFact.Unknown, MediaTrackMetadataReader.read(0, format, 23, MediaFact.Known(270)).video!!.rotationDegrees)
+  }
+
+  @Test fun failedIsoReadRetainsResolutionButDoesNotGuessMultipleAudioOrder() {
+    val tracks = listOf(MediaTrackMetadataReader.read(0, video()),
+      MediaTrackMetadataReader.read(1, audio(2, "1190")), MediaTrackMetadataReader.read(2, audio(1, "1188")))
+    val f = MediaContainerMetadataReader.facts(MediaFact.Known(ContainerKind.IsoBaseMedia), MediaFact.Unknown, tracks)
+    assertEquals(MediaFact.Known(VideoCodec.H264), f.videoCodec)
+    assertEquals(MediaFact.Known(Dimensions(1920, 1080)), f.displayDimensions)
+    assertEquals(MediaFact.Unknown, f.audioTracks)
+    assertEquals(MediaFact.Unknown, f.durationSeconds)
+  }
+
+  @Test fun dolbyEvidenceSurvivesNonIsoMissingIsoUnknownHandlerAndUnknownMime() {
+    val dolby = MediaTrackMetadataReader.read(0, video("video/dolby-vision", null))
+    val base = MediaTrackMetadataReader.read(1, video("video/hevc", hevcHlg))
+    for (container in listOf(ContainerKind.Matroska, ContainerKind.Other, ContainerKind.IsoBaseMedia)) {
+      val f = MediaContainerMetadataReader.facts(MediaFact.Known(container), MediaFact.Unknown, listOf(dolby, base))
+      assertEquals(MediaFact.Known(DynamicRange.DolbyVision), f.dynamicRange)
+      assertEquals(MediaFact.Unknown, f.videoTrackCount)
+      assertEquals(StandardInputAction.Fallback(FallbackReason.UnsupportedHdr(DynamicRange.DolbyVision)), StandardInputPlanner().plan(f).action)
+    }
+    val unknownHandler = MediaFact.Known(listOf(isoTrack("vide", "dvh1", 1, true).copy(handler = null)))
+    assertEquals(MediaFact.Known(DynamicRange.DolbyVision), MediaContainerMetadataReader.facts(
+      MediaFact.Known(ContainerKind.IsoBaseMedia), unknownHandler, listOf(dolby)).dynamicRange)
+    assertEquals(MediaFact.Known(DynamicRange.DolbyVision), MediaTrackMetadataReader.facts(
+      listOf(dolby, MediaTrackMetadataReader.read(1, MediaFormat()))).dynamicRange)
+  }
+
+  @Test fun distinctDolbyTrackIdentitiesStillProveUnsafeMultipleTracks() {
+    val tracks = listOf(MediaTrackMetadataReader.read(0, video("video/dolby-vision", null)).copy(sourceTrackId = MediaFact.Known(1)),
+      MediaTrackMetadataReader.read(1, video("video/hevc", hevcHlg)).copy(sourceTrackId = MediaFact.Known(2)))
+    assertEquals(MediaFact.Known(2), MediaTrackMetadataReader.facts(tracks).videoTrackCount)
+  }
+
+  @Test fun otherCodecUsesProvenAspectWithoutAssumingSquarePixels() {
+    val format = video("video/x-vnd.on2.vp9", null).apply { setInteger("color-transfer", 3) }
+    assertEquals(MediaFact.Unknown, facts(format, 24).displayDimensions)
+    val track = MediaTrackMetadataReader.read(0, format, 24, containerAspect = MediaFact.Known(1.0))
+    val f = MediaTrackMetadataReader.facts(listOf(track)).copy(frameRate = MediaFact.Known(30.0))
+    assertEquals(MediaFact.Known(Dimensions(1920, 1080)), f.displayDimensions)
+    assertTrue(StandardInputPlanner().plan(f, capabilities = fullCapabilities()).action is StandardInputAction.Convert)
+    format.setInteger("sar-width", 2); format.setInteger("sar-height", 1)
+    assertEquals(MediaFact.Unknown, MediaTrackMetadataReader.read(0, format, 24,
+      containerAspect = MediaFact.Known(1.0)).video!!.displayDimensions)
+  }
+
+  @Test fun predictedHevcReferenceSetsRetainMain10HlgEvidence() {
+    val nal = hex("420101022000000300900000030000030078a003c0801107cad965654a4c1af7780b509120904000000300400000078200")
+    val f = facts(video("video/hevc", byteArrayOf(0, 0, 0, 1) + nal))
+    assertEquals(MediaFact.Known(VideoProfile.HevcMain10), f.videoProfile)
+    assertEquals(MediaFact.Known(PixelFormat(10, ChromaSubsampling.Yuv420)), f.pixelFormat)
+    assertEquals(MediaFact.Known(DynamicRange.Hlg), f.dynamicRange)
+    assertTrue(StandardInputPlanner().plan(f).action is StandardInputAction.UploadOriginal)
+  }
+
+  @Test fun supportsMixedAnnexBPrefixesAndKeepsAacExtensionsUnknown() {
+    val mixed = avc + byteArrayOf(0, 0, 1, 0x68, 1)
+    assertEquals(CodecMetadataReader.video(VideoCodec.H264, listOf(avc)), CodecMetadataReader.video(VideoCodec.H264, listOf(mixed)))
+    for (config in listOf("2b9208", "eb9208", "1180", "11f0"))
+      assertEquals(MediaFact.Unknown, CodecMetadataReader.aacLayout(hex(config), 2))
+  }
+
+  @Test fun emptyAndExcessiveTrackCountsHaveDifferentFailures() {
+    assertEquals(MetadataFailure.Malformed, MediaMetadataInspector.trackCountFailure(0))
+    assertEquals(MetadataFailure.LimitExceeded, MediaMetadataInspector.trackCountFailure(65))
+    assertNull(MediaMetadataInspector.trackCountFailure(1))
+    assertNull(MediaMetadataInspector.trackCountFailure(64))
+  }
+
+  @Test fun predictedHevcChainsUseTheDerivedReferenceCountAfterZeroPocIsRemoved() {
+    val csd = hex("00000001420101022000000300900000030000030078a003c0801107cad965654a4c08bdec780b509120904000000300400000078200")
+    assertEquals(MediaFact.Known(DynamicRange.Hlg), facts(video("video/hevc", csd)).dynamicRange)
+    assertEquals(MediaFact.Known(PixelFormat(10, ChromaSubsampling.Yuv420)), facts(video("video/hevc", csd)).pixelFormat)
+  }
+
+  @Test fun predictedHevcSetsCannotGrowPastTheReferenceBound() {
+    val csd = hex("00000001420101022000000300900000030000030078a003c0801107cad965654a4c1847ffffffff047fffef016a12241208000003000800000300f040")
+    assertEquals(CodecMetadata(), CodecMetadataReader.video(VideoCodec.Hevc, listOf(csd)))
   }
 }
