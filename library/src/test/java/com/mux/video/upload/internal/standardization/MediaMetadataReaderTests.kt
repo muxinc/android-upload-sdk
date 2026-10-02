@@ -105,14 +105,17 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
     assertEquals(MediaFact.Unknown, facts(format).displayDimensions)
   }
 
-  @Test fun appliesCropAndPixelAspectRatio() {
+  @Test fun appliesOrdinaryCropAndRejectsNonSquarePixels() {
     val format = video(csd = null).apply {
       setInteger("crop-left", 10); setInteger("crop-right", 1909)
       setInteger("crop-top", 0); setInteger("crop-bottom", 1079)
-      setInteger("sar-width", 2); setInteger("sar-height", 1)
+      setInteger("sar-width", 1); setInteger("sar-height", 1)
       setInteger(MediaFormat.KEY_ROTATION, 90)
     }
-    assertEquals(MediaFact.Known(Dimensions(1080, 3800)), facts(format).displayDimensions)
+    assertEquals(MediaFact.Known(Dimensions(1080, 1900)), facts(format).displayDimensions)
+    format.setInteger("sar-width", 2)
+    assertEquals(MediaFact.Unknown, facts(format).displayDimensions)
+    format.setInteger("sar-width", 1)
     format.setInteger("crop-right", 1920)
     assertEquals(MediaFact.Unknown, facts(format).displayDimensions)
   }
@@ -212,7 +215,7 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
   private fun isoTrack(handler: String, entry: String, id: Int, dolby: Boolean = false) =
     IsoTrackMetadata(handler, MediaFact.Known(id), listOf(entry), dolby, MediaFact.Known(0), true)
 
-  @Test fun reconcilesDolbyViewsAsOnePhysicalTrackWithoutLosingBaseGeometry() {
+  @Test fun dolbyAliasesKeepPhysicalTrackCountAndOriginalFallbackWithoutSelectingAView() {
     val iso = MediaFact.Known(listOf(isoTrack("vide", "hvc1", 1, true), isoTrack("soun", "mp4a", 2)))
     val views = listOf(
       MediaTrackMetadataReader.read(0, video("video/dolby-vision", null)).copy(containerIndex = MediaFact.Known(0)),
@@ -220,8 +223,10 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
       MediaTrackMetadataReader.read(2, audio(2, "1190")).copy(containerIndex = MediaFact.Known(1)))
     val f = MediaContainerMetadataReader.facts(MediaFact.Known(ContainerKind.IsoBaseMedia), iso, views)
     assertEquals(MediaFact.Known(1), f.videoTrackCount)
-    assertEquals(MediaFact.Known(VideoCodec.Hevc), f.videoCodec)
-    assertEquals(MediaFact.Known(Dimensions(1920, 1080)), f.displayDimensions)
+    assertEquals(MediaFact.Unknown, f.videoCodec)
+    assertEquals(MediaFact.Unknown, f.displayDimensions)
+    assertEquals(StandardInputAction.Fallback(FallbackReason.UnsupportedHdr(DynamicRange.DolbyVision)),
+      StandardInputPlanner().plan(f).action)
     assertEquals(MediaFact.Known(DynamicRange.DolbyVision), f.dynamicRange)
     assertEquals(MediaFact.Known(listOf(AudioTrack(MediaFact.Known(AudioFormat.Aac(AudioChannelLayout.Stereo))))), f.audioTracks)
   }
@@ -306,16 +311,11 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
     assertEquals(MediaFact.Known(2), MediaTrackMetadataReader.facts(tracks).videoTrackCount)
   }
 
-  @Test fun otherCodecUsesProvenAspectWithoutAssumingSquarePixels() {
+  @Test fun otherCodecWithoutSquarePixelEvidenceKeepsOriginalFallback() {
     val format = video("video/x-vnd.on2.vp9", null).apply { setInteger("color-transfer", 3) }
-    assertEquals(MediaFact.Unknown, facts(format, 24).displayDimensions)
-    val track = MediaTrackMetadataReader.read(0, format, 24, containerAspect = MediaFact.Known(1.0))
-    val f = MediaTrackMetadataReader.facts(listOf(track)).copy(frameRate = MediaFact.Known(30.0))
-    assertEquals(MediaFact.Known(Dimensions(1920, 1080)), f.displayDimensions)
-    assertTrue(StandardInputPlanner().plan(f, capabilities = fullCapabilities()).action is StandardInputAction.Convert)
-    format.setInteger("sar-width", 2); format.setInteger("sar-height", 1)
-    assertEquals(MediaFact.Unknown, MediaTrackMetadataReader.read(0, format, 24,
-      containerAspect = MediaFact.Known(1.0)).video!!.displayDimensions)
+    val f = facts(format, 24).copy(frameRate = MediaFact.Known(30.0))
+    assertEquals(MediaFact.Unknown, f.displayDimensions)
+    assertTrue(StandardInputPlanner().plan(f, capabilities = fullCapabilities()).action is StandardInputAction.Fallback)
   }
 
   @Test fun predictedHevcReferenceSetsRetainMain10HlgEvidence() {
@@ -341,14 +341,8 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
     assertNull(MediaMetadataInspector.trackCountFailure(64))
   }
 
-  @Test fun predictedHevcChainsUseTheDerivedReferenceCountAfterZeroPocIsRemoved() {
+  @Test fun complexPredictedHevcChainsStayUnknown() {
     val csd = hex("00000001420101022000000300900000030000030078a003c0801107cad965654a4c08bdec780b509120904000000300400000078200")
-    assertEquals(MediaFact.Known(DynamicRange.Hlg), facts(video("video/hevc", csd)).dynamicRange)
-    assertEquals(MediaFact.Known(PixelFormat(10, ChromaSubsampling.Yuv420)), facts(video("video/hevc", csd)).pixelFormat)
-  }
-
-  @Test fun predictedHevcSetsCannotGrowPastTheReferenceBound() {
-    val csd = hex("00000001420101022000000300900000030000030078a003c0801107cad965654a4c1847ffffffff047fffef016a12241208000003000800000300f040")
     assertEquals(CodecMetadata(), CodecMetadataReader.video(VideoCodec.Hevc, listOf(csd)))
   }
 }

@@ -10,12 +10,7 @@ internal object IsoSampleEntries {
   val avc = setOf("avc1", "avc3", "dva1", "dvav")
   val hevc = setOf("hvc1", "hev1", "dvh1", "dvhe")
   val dolby = setOf("dvh1", "dvhe", "dva1", "dvav")
-  val visual = avc + hevc + setOf("mp4v", "s263", "vp08", "vp09", "av01", "apco", "apcs", "apcn", "apch", "ap4h", "ap4x")
-  fun codec(entry: String): VideoCodec? = when (entry) {
-    in avc -> VideoCodec.H264
-    in hevc -> VideoCodec.Hevc
-    else -> null
-  }
+  val visual = avc + hevc
 }
 
 internal data class IsoTrackMetadata(
@@ -25,16 +20,13 @@ internal data class IsoTrackMetadata(
   val hasDolbyVisionConfiguration: Boolean,
   val rotationDegrees: MediaFact<Int>,
   val hasSimpleSampleGeometry: Boolean,
-  val pixelAspectRatio: MediaFact<Double> = MediaFact.Unknown,
-  val sampleDimensions: MediaFact<Dimensions> = MediaFact.Unknown,
-  val timeline: MediaFact<IsoTrackTimeline> = MediaFact.Unknown,
 ) {
   val hasSimpleOrientation: Boolean get() = rotationDegrees != MediaFact.Unknown
   fun matches(kind: TrackKind): Boolean = (handler == "vide" && kind == TrackKind.Video) ||
     (handler == "soun" && kind == TrackKind.Audio)
 }
 
-/** Seeks past media payloads; reads bounded track, geometry and presentation timing metadata. */
+/** Seeks past media payloads; reads track identity, simple orientation and Dolby Vision signaling. */
 internal object IsoContainerMetadataReader {
   private const val MAX_BOXES = 4096
   private const val MAX_TOP_LEVEL_BOXES = 131072
@@ -44,27 +36,22 @@ internal object IsoContainerMetadataReader {
     RandomAccessFile(file, "r").use { input ->
       val reader = Reader(input)
       var movie: IsoMetadataBox? = null
-      var fragmented = false
       for (box in reader.boxes(0, input.length(), topLevel = true)) {
         if (box.type == "moov") { require(movie == null); movie = box }
-        if (box.type == "moof") fragmented = true
       }
       val moov = movie ?: return MediaFact.Unknown
       val children = reader.boxes(moov.payload, moov.end).toList()
-      val movieHeader = children.singleOrNull { it.type == "mvhd" }
       val tracks = children.filter { it.type == "trak" }
       if (tracks.size !in 1..64) return MediaFact.Unknown
-      val metadata = tracks.map { reader.track(it, movieHeader, fragmented) }
+      val metadata = tracks.map { reader.track(it) }
       val ids = metadata.mapNotNull { it.trackId.valueOrNull }
       require(ids.distinct().size == ids.size)
       MediaFact.Known(metadata)
     }
-  } catch (_: LinkageError) { MediaFact.Unknown }
-    catch (_: Exception) { MediaFact.Unknown }
+  } catch (_: Exception) { MediaFact.Unknown }
 
   private class Reader(val input: RandomAccessFile) {
     var boxCount = 0
-    val timelines = IsoTimelineMetadataReader(input)
     val boxHeader = ByteArray(16)
 
     fun boxes(start: Long, end: Long, allowQuickTimeTerminator: Boolean = false,
@@ -94,7 +81,7 @@ internal object IsoContainerMetadataReader {
       }
     }
 
-    fun track(track: IsoMetadataBox, movieHeader: IsoMetadataBox?, fragmented: Boolean): IsoTrackMetadata {
+    fun track(track: IsoMetadataBox): IsoTrackMetadata {
       val children = boxes(track.payload, track.end).toList()
       val tkhd = children.singleOrNull { it.type == "tkhd" }
       val mdia = children.single { it.type == "mdia" }
@@ -127,57 +114,29 @@ internal object IsoContainerMetadataReader {
       val entries = boxes(stsd.payload + 8, stsd.end).toList()
       require(entries.size == count)
       var dolby = false
-      var simpleGeometry = true
-      var aspect: MediaFact<Double> = MediaFact.Unknown
-      var sampleSize: MediaFact<Dimensions> = MediaFact.Unknown
+      var simpleGeometry = entries.size == 1
       if (handler == "vide") {
         for (entry in entries) {
           if (entry.type in IsoSampleEntries.dolby) dolby = true
           if (entry.type in IsoSampleEntries.visual) {
             require(entry.end - entry.payload >= 78)
-            input.seek(entry.payload + 24)
-            val width = input.readUnsignedShort()
-            val height = input.readUnsignedShort()
-            if (width > 0 && height > 0) sampleSize = MediaFact.Known(Dimensions(width, height))
             val extensions = boxes(entry.payload + 78, entry.end, allowQuickTimeTerminator = true).toList()
             if (extensions.any { it.type in setOf("dvcC", "dvvC", "dvwC") }) dolby = true
             if (extensions.any { it.type == "clap" }) simpleGeometry = false
             val aspects = extensions.filter { it.type == "pasp" }
             if (aspects.size > 1) simpleGeometry = false
-            aspect = aspects.singleOrNull()?.let {
-              require(it.end - it.payload == 8L)
-              input.seek(it.payload)
-              val horizontal = input.readInt().toLong() and 0xffffffffL
-              val vertical = input.readInt().toLong() and 0xffffffffL
-              if (horizontal == 0L || vertical == 0L) { simpleGeometry = false; MediaFact.Unknown }
-              else MediaFact.Known(horizontal.toDouble() / vertical)
-            } ?: MediaFact.Unknown
-            // A declared presentation size can establish aspect even for codecs without an SPS reader.
-            if (aspects.isEmpty() && IsoSampleEntries.codec(entry.type) == null) aspect = trackAspect(tkhd, sampleSize)
+            for (aspect in aspects) {
+              require(aspect.end - aspect.payload == 8L)
+              input.seek(aspect.payload)
+              val horizontal = input.readInt()
+              val vertical = input.readInt()
+              // Only square pixels are supported; unusual geometry keeps original-file fallback.
+              if (horizontal == 0 || horizontal != vertical) simpleGeometry = false
+            }
           } else simpleGeometry = false
         }
       }
-      val timeline = if (fragmented || entries.size != 1) MediaFact.Unknown else try {
-        val edits = children.filter { it.type == "edts" }
-        require(edits.size <= 1)
-        val editChildren = edits.singleOrNull()?.let { boxes(it.payload, it.end).toList() }
-        timelines.read(movieHeader, media.singleOrNull { it.type == "mdhd" }, editChildren, tables)
-      } catch (_: Exception) { MediaFact.Unknown }
-      return IsoTrackMetadata(handler, trackId, entries.map { it.type }, dolby, orientation, simpleGeometry,
-        if (entries.size == 1 && simpleGeometry) aspect else MediaFact.Unknown,
-        if (entries.size == 1) sampleSize else MediaFact.Unknown, timeline)
-    }
-
-    private fun trackAspect(tkhd: IsoMetadataBox?, sampleSize: MediaFact<Dimensions>): MediaFact<Double> {
-      val size = sampleSize.valueOrNull ?: return MediaFact.Unknown
-      val header = tkhd ?: return MediaFact.Unknown
-      input.seek(header.payload)
-      val offset = when (input.readUnsignedByte()) { 0 -> 76; 1 -> 88; else -> return MediaFact.Unknown }
-      if (header.end - header.payload < offset + 8) return MediaFact.Unknown
-      input.seek(header.payload + offset)
-      val width = (input.readInt().toLong() and 0xffffffffL) / 65536.0
-      val height = (input.readInt().toLong() and 0xffffffffL) / 65536.0
-      return if (width > 0 && height > 0) positive(width / height * size.height / size.width) else MediaFact.Unknown
+      return IsoTrackMetadata(handler, trackId, entries.map { it.type }, dolby, orientation, simpleGeometry)
     }
 
     private fun orientation(box: IsoMetadataBox): MediaFact<Int> {
