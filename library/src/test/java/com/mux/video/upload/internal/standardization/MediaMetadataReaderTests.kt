@@ -264,13 +264,17 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
   }
 
   @Test fun failedIsoReadRetainsResolutionButDoesNotGuessMultipleAudioOrder() {
-    val tracks = listOf(MediaTrackMetadataReader.read(0, video(rotation = null)),
-      MediaTrackMetadataReader.read(1, audio(2, "1190")), MediaTrackMetadataReader.read(2, audio(1, "1188")))
-    val f = MediaContainerMetadataReader.facts(MediaFact.Known(ContainerKind.IsoBaseMedia), MediaFact.Unknown, tracks)
-    assertEquals(MediaFact.Known(VideoCodec.H264), f.videoCodec)
-    assertEquals(MediaFact.Known(Dimensions(1920, 1080)), f.displayDimensions)
-    assertEquals(MediaFact.Unknown, f.audioTracks)
-    assertEquals(MediaFact.Unknown, f.durationSeconds)
+    for (rotation in listOf(0, null)) {
+      val tracks = listOf(MediaTrackMetadataReader.read(0, video(rotation = rotation), containerRotation = MediaFact.Unknown),
+        MediaTrackMetadataReader.read(1, audio(2, "1190")), MediaTrackMetadataReader.read(2, audio(1, "1188")))
+      val f = MediaContainerMetadataReader.facts(MediaFact.Known(ContainerKind.IsoBaseMedia), MediaFact.Unknown, tracks)
+      assertEquals(MediaFact.Known(VideoCodec.H264), f.videoCodec)
+      assertEquals(MediaFact.Known(Dimensions(1920, 1080)), f.encodedDimensions)
+      assertEquals(if (rotation == null) MediaFact.Unknown else MediaFact.Known(0), f.rotationDegrees)
+      assertEquals(if (rotation == null) MediaFact.Unknown else MediaFact.Known(Dimensions(1920, 1080)), f.displayDimensions)
+      assertEquals(MediaFact.Unknown, f.audioTracks)
+      assertEquals(MediaFact.Unknown, f.durationSeconds)
+    }
   }
 
   @Test fun matroskaWithoutRotationRetainsKnownDisplayDimensions() {

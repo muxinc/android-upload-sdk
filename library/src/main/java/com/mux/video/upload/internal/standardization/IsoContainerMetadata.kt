@@ -59,7 +59,8 @@ internal object IsoContainerMetadataReader {
       require(ids.distinct().size == ids.size)
       MediaFact.Known(metadata)
     }
-  } catch (_: Exception) { MediaFact.Unknown }
+  } catch (_: LinkageError) { MediaFact.Unknown }
+    catch (_: Exception) { MediaFact.Unknown }
 
   private class Reader(val input: RandomAccessFile) {
     var boxCount = 0

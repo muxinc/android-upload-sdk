@@ -1,6 +1,10 @@
 package com.mux.video.upload.internal.standardization
 
 import android.media.MediaFormat
+import androidx.media3.extractor.mp4.BoxParser
+import io.mockk.every
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
 import com.mux.exoplayeradapter.AbsRobolectricTest
 import org.junit.Assert.*
 import org.junit.Test
@@ -82,7 +86,8 @@ class IsoTimelineMetadataTests : AbsRobolectricTest() {
   }
 
   @Test fun supportsVersionOneHeadersAndSignedCompositionOffsets() {
-    val video = track(version = 1, composition = runs("ctts", listOf(1 to 100, 1 to -100, 1 to 0), 1))
+    val video = track(version = 1, composition = runs("ctts", listOf(1 to 100, 1 to -100, 1 to 0), 1),
+      edits = edit(listOf(Triple(3000L, 0L, 65536))))
     val audio = track("soun", 2, version = 1)
     val f = facts(read(video, audio, version = 1))
     assertEquals(MediaFact.Known(3.0), f.durationSeconds)
@@ -93,6 +98,10 @@ class IsoTimelineMetadataTests : AbsRobolectricTest() {
     val t = track(timing = runs("stts", listOf(1 to 1000, 2 to 1000)),
       composition = runs("ctts", listOf(2 to 0, 1 to 0)))
     assertEquals(MediaFact.Known(3.0), facts(read(t)).durationSeconds)
+    val shifted = track(composition = runs("ctts", listOf(3 to 100)))
+    val f = facts(read(shifted, track("soun", 2), duration = 3100))
+    assertEquals(MediaFact.Known(3.1), f.durationSeconds)
+    assertEquals(-0.1, f.audioVideoStartOffsetSeconds.valueOrNull!!, 1e-9)
   }
 
   @Test fun denseVfrAndCompositionTablesHaveIndependentPerTrackBounds() {
@@ -106,11 +115,36 @@ class IsoTimelineMetadataTests : AbsRobolectricTest() {
     assertEquals(MediaFact.Known(0.0), facts(iso).audioVideoStartOffsetSeconds)
   }
 
-  @Test fun versionZeroNegativeCompositionOffsetsMatchMedia3() {
-    val t = track(composition = runs("ctts", listOf(1 to -1000, 2 to 0)))
-    val f = facts(read(t, track("soun", 2)))
-    assertEquals(MediaFact.Known(3.0), f.durationSeconds)
-    assertEquals(MediaFact.Known(1.0), f.audioVideoStartOffsetSeconds)
+  @Test fun uneditedNegativeCompositionStartDoesNotClaimAnEffectiveOffset() {
+    for (offsets in listOf(listOf(1 to -1000, 2 to 0), listOf(3 to -1000))) {
+      val t = track(composition = runs("ctts", offsets))
+      val f = facts(read(t, track("soun", 2)))
+      assertEquals(MediaFact.Unknown, f.durationSeconds)
+      assertEquals(MediaFact.Unknown, f.audioVideoStartOffsetSeconds)
+      assertEquals(MediaFact.Known(Dimensions(1920, 1080)), f.displayDimensions)
+    }
+  }
+
+  @Test fun uneditedReorderingCannotClaimDurationFromTheLastDecodedFrame() {
+    for (lastOffset in listOf(-1000, 0)) {
+      val t = track(composition = runs("ctts", listOf(1 to 0, 1 to 2000, 1 to lastOffset), 1))
+      for (duration in listOf(2000L, 3000L, 4000L)) {
+        val iso = read(t, duration = duration)
+        assertEquals(MediaFact.Unknown, iso.single().timeline)
+        assertEquals(MediaFact.Unknown, facts(iso).durationSeconds)
+      }
+    }
+  }
+
+  @Test fun timelineLinkageFailureRetainsIndependentMetadata() {
+    mockkStatic(BoxParser::class)
+    try {
+      every { BoxParser.parseStbl(any(), any(), any(), any()) } throws NoSuchMethodError("parseStbl")
+      val f = facts(read(track()))
+      assertEquals(MediaFact.Unknown, f.durationSeconds)
+      assertEquals(MediaFact.Known(VideoCodec.Other), f.videoCodec)
+      assertEquals(MediaFact.Known(Dimensions(1920, 1080)), f.displayDimensions)
+    } finally { unmockkStatic(BoxParser::class) }
   }
 
   @Test fun editedTimelineIncludesLateDecodedEarlyPresentationFrames() {

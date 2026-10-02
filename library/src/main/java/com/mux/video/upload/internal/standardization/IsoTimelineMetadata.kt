@@ -35,11 +35,13 @@ internal class IsoTimelineMetadataReader(private val input: RandomAccessFile) {
     val samples = sampleCount(data)
     require(samples in 1..MAX_SAMPLES)
     require(validateRuns(data.getValue("stts"), samples, composition = false) == media.duration)
-    data["ctts"]?.let { validateRuns(it, samples, composition = true) }
     val edits = editChildren?.let {
       require(it.size == 1 && it.single().type == "elst")
       edits(it.single())
     }
+    // Without an edit, Media3's duration uses the last decoded composition offset, not the
+    // maximum presentation end. Only a uniform nonnegative offset establishes that end here.
+    data["ctts"]?.let { validateRuns(it, samples, composition = true, unedited = edits == null) }
     val stbl = Mp4Box.ContainerBox(Mp4Box.TYPE_stbl, 0)
     data.forEach { (type, bytes) ->
       val code = ByteBuffer.wrap(type.toByteArray(Charsets.US_ASCII)).int
@@ -59,10 +61,11 @@ internal class IsoTimelineMetadataReader(private val input: RandomAccessFile) {
     // Edit preroll is needed for decoding but is outside the effective presentation interval.
     val start = if (edits == null) first else maxOf(first, emptyDuration)
     val end = parsed.durationUs.toDouble() / 1_000_000
-    require(start.isFinite() && end > start)
+    require(start.isFinite() && start >= 0 && end > start)
     MediaFact.Known(IsoTrackTimeline(start, end, movie.duration.toDouble() / movie.scale,
       1.0 / movie.scale, edits != null))
-  } catch (_: Exception) { MediaFact.Unknown }
+  } catch (_: LinkageError) { MediaFact.Unknown }
+    catch (_: Exception) { MediaFact.Unknown }
 
   /** A single buffered read per box; Media3 expects the ordinary eight-byte box header. */
   private fun bytes(box: IsoMetadataBox): ByteArray {
@@ -87,19 +90,21 @@ internal class IsoTimelineMetadataReader(private val input: RandomAccessFile) {
   }
 
   /** Reject inconsistent or allocation-driving counts before the reusable parser sees them. */
-  private fun validateRuns(bytes: ByteArray, samples: Int, composition: Boolean): Long {
+  private fun validateRuns(bytes: ByteArray, samples: Int, composition: Boolean, unedited: Boolean = false): Long {
     val data = ByteBuffer.wrap(bytes)
     data.position(8)
     val version = data.int
     require(version == 0 || (composition && version == 0x01000000))
     val rows = data.int
     require(rows in 1..samples && data.remaining().toLong() == rows.toLong() * 8)
+    val firstValue = data.getInt(20)
     var count = 0L
     var duration = 0L
     repeat(rows) {
       val run = data.int
       val value = data.int // Media3 also accepts signed composition offsets in version zero.
       require(run > 0 && (composition || value > 0))
+      if (composition && unedited) require(value >= 0 && value == firstValue)
       count += run
       require(count <= samples)
       if (!composition) duration += run.toLong() * value

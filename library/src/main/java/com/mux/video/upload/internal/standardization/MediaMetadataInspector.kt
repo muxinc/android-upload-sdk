@@ -84,7 +84,9 @@ internal class MediaMetadataInspector {
           size.height == format.int(MediaFormat.KEY_HEIGHT) && orientation.hasSimpleSampleGeometry)
           orientation.pixelAspectRatio else MediaFact.Unknown
         val track = MediaTrackMetadataReader.read(index, format,
-          containerRotation = orientation?.rotationDegrees, containerAspect = aspect)
+          containerRotation = orientation?.rotationDegrees
+            ?: if (container == MediaFact.Known(ContainerKind.IsoBaseMedia)) MediaFact.Unknown else null,
+          containerAspect = aspect)
         val id = track.sourceTrackId.valueOrNull
         val match = if (id != null) containers?.indexOfFirst { it.trackId.valueOrNull == id } else null
         val containerIndex = when {
