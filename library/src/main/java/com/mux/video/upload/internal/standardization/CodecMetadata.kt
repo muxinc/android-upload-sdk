@@ -3,6 +3,7 @@ package com.mux.video.upload.internal.standardization
 import androidx.media3.common.util.ParsableBitArray
 import androidx.media3.container.NalUnitUtil
 import androidx.media3.container.ParsableNalUnitBitArray
+import androidx.media3.extractor.AacUtil
 
 /** Color codes use Media3/Android's normalized constants, not ISO code points. */
 internal data class ColorMetadata(
@@ -131,13 +132,37 @@ internal object CodecMetadataReader {
     }
     val sets = bits.readUnsignedExpGolombCodedInt()
     if (sets !in 0..64) return false
+    var previousPocs = emptyList<Int>()
     for (i in 0 until sets) {
-      // Predicted reference sets need a fuller bounded syntax reader; leave them unknown for now.
-      if (i > 0 && bits.readBit()) return false
-      val negative = bits.readUnsignedExpGolombCodedInt()
-      val positive = bits.readUnsignedExpGolombCodedInt()
-      if (negative !in 0..16 || positive !in 0..16 || negative + positive > 16) return false
-      repeat(negative + positive) { bits.readUnsignedExpGolombCodedInt(); bits.skipBit() }
+      if (i > 0 && bits.readBit()) {
+        val sign = if (bits.readBit()) -1 else 1
+        val delta = bits.readUnsignedExpGolombCodedInt()
+        if (delta !in 0..65535) return false
+        val deltaRps = sign * (delta + 1)
+        // In an SPS the reference is always the preceding set; delta_idx_minus1 is absent.
+        val predicted = (previousPocs + 0).mapNotNull { poc ->
+          val used = bits.readBit() || bits.readBit()
+          (poc + deltaRps).takeIf { used && it != 0 }
+        }
+        if (predicted.size > 16) return false
+        previousPocs = predicted.filter { it < 0 }.sortedDescending() + predicted.filter { it > 0 }.sorted()
+      } else {
+        val negative = bits.readUnsignedExpGolombCodedInt()
+        val positive = bits.readUnsignedExpGolombCodedInt()
+        if (negative !in 0..16 || positive !in 0..16 || negative + positive > 16) return false
+        val pocs = mutableListOf<Int>()
+        for ((count, sign) in listOf(negative to -1, positive to 1)) {
+          var poc = 0
+          repeat(count) {
+            val delta = bits.readUnsignedExpGolombCodedInt()
+            if (delta !in 0..65535) return false
+            poc += sign * (delta + 1)
+            pocs.add(poc)
+            bits.skipBit()
+          }
+        }
+        previousPocs = pocs
+      }
     }
     if (bits.readBit()) {
       val count = bits.readUnsignedExpGolombCodedInt()
@@ -157,44 +182,37 @@ internal object CodecMetadataReader {
 
   /** MediaExtractor supplies AVC/HEVC CSD in Annex B form, with three- or four-byte prefixes. */
   private fun annexBNalUnits(data: ByteArray): List<ByteArray> {
-    val starts = mutableListOf<Pair<Int, Int>>()
-    var i = 0
-    while (i + 2 < data.size) {
-      val prefix = when {
-        data[i] != 0.toByte() || data[i + 1] != 0.toByte() -> 0
-        data[i + 2] == 1.toByte() -> 3
-        i + 3 < data.size && data[i + 2] == 0.toByte() && data[i + 3] == 1.toByte() -> 4
-        else -> 0
-      }
-      if (prefix > 0) { starts.add(i to prefix); i += prefix } else i++
+    val units = mutableListOf<ByteArray>()
+    val flags = BooleanArray(3)
+    var prefix = NalUnitUtil.findNalUnit(data, 0, data.size, flags)
+    while (prefix < data.size) {
+      val payload = prefix + 3
+      NalUnitUtil.clearPrefixFlags(flags)
+      val next = NalUnitUtil.findNalUnit(data, payload, data.size, flags)
+      // A four-byte prefix includes a leading zero outside the three-byte start code.
+      val end = if (next > payload && next < data.size && data[next - 1] == 0.toByte()) next - 1 else next
+      if (payload < end) units.add(data.copyOfRange(payload, end))
+      prefix = next
     }
-    return starts.mapIndexed { index, (start, prefix) ->
-      data.copyOfRange(start + prefix, starts.getOrNull(index + 1)?.first ?: data.size)
-    }
+    return units
   }
 
   /** Channel count alone cannot prove a surround layout. PCE/extension configurations stay unknown. */
   fun aacLayout(configuration: ByteArray?, channelCount: Int?): MediaFact<AudioChannelLayout> {
     if (configuration == null || configuration.size !in 2..MAX_CONFIGURATION_BYTES) return MediaFact.Unknown
     return try {
-      val bits = ParsableBitArray(configuration)
-      val objectType = bits.readBits(5)
+      val objectType = ParsableBitArray(configuration).readBits(5)
       if (objectType !in 1..4) return MediaFact.Unknown
-      val frequencyIndex = bits.readBits(4)
-      if (frequencyIndex == 15) {
-        if (bits.readBits(24) <= 0) return MediaFact.Unknown
-      } else if (frequencyIndex > 12) return MediaFact.Unknown
-      val channels = bits.readBits(4)
-      val expectedCount = when (channels) { 1 -> 1; 2 -> 2; 3 -> 3; 4 -> 4; 5 -> 5; 6 -> 6; 7 -> 8; else -> null }
-        ?: return MediaFact.Unknown
-      if (channelCount != null && channelCount != expectedCount) return MediaFact.Unknown
-      MediaFact.Known(when (channels) {
+      val config = AacUtil.parseAudioSpecificConfig(configuration)
+      if (config.sampleRateHz <= 0 || (channelCount != null && config.channelCount != channelCount))
+        return MediaFact.Unknown
+      MediaFact.Known(when (config.channelCount) {
         1 -> AudioChannelLayout.Mono
         2 -> AudioChannelLayout.Stereo
         6 -> AudioChannelLayout.FivePointOne
         else -> AudioChannelLayout.Other
       })
-    } catch (_: RuntimeException) { MediaFact.Unknown }
+    } catch (_: Exception) { MediaFact.Unknown }
   }
 }
 

@@ -51,11 +51,11 @@ class IsoContainerMetadataTests {
     assertTrue(read(box("moov", track(matrix = matrix))).valueOrNull!![0].hasSimpleOrientation)
   }
 
-  @Test fun cleanApertureAndAnamorphicContainerGeometryStayUnproven() {
+  @Test fun cleanApertureStaysUnknownAndExplicitPixelAspectIsRetained() {
     assertFalse(read(box("moov", track(extension = box("clap", ByteArray(32)))))
       .valueOrNull!![0].hasSimpleSampleGeometry)
-    assertFalse(read(box("moov", track(extension = box("pasp", int(2) + int(1)))))
-      .valueOrNull!![0].hasSimpleSampleGeometry)
+    assertEquals(MediaFact.Known(2.0), read(box("moov", track(extension = box("pasp", int(2) + int(1)))))
+      .valueOrNull!![0].pixelAspectRatio)
     assertTrue(read(box("moov", track(extension = box("pasp", int(1) + int(1)))))
       .valueOrNull!![0].hasSimpleSampleGeometry)
   }
@@ -80,5 +80,37 @@ class IsoContainerMetadataTests {
   @Test fun noTrackOrDuplicateMovieBoxDoesNotInventAbsence() {
     assertEquals(MediaFact.Unknown, read(box("moov", byteArrayOf())))
     assertEquals(MediaFact.Unknown, read(box("moov", track()) + box("moov", track())))
+  }
+
+  @Test fun everyUnitMatrixHasTheSharedNormalizedDegreeValue() {
+    for ((axes, degrees) in listOf(
+      listOf(65536, 0, 0, 65536) to 0,
+      listOf(0, 65536, -65536, 0) to 270,
+      listOf(-65536, 0, 0, -65536) to 180,
+      listOf(0, -65536, 65536, 0) to 90)) {
+      val matrix = intArrayOf(axes[0], axes[1], 0, axes[2], axes[3], 0, 1920 * 65536, 0, 0x40000000)
+      assertEquals(MediaFact.Known(degrees), read(box("moov", track(matrix = matrix))).valueOrNull!![0].rotationDegrees)
+    }
+  }
+
+  @Test fun fragmentHeadersDoNotConsumeMovieMetadataBudget() {
+    val fragment = box("moof", byteArrayOf()) + box("mdat", byteArrayOf())
+    val many = ByteArray(7200 * fragment.size)
+    repeat(7200) { fragment.copyInto(many, it * fragment.size) }
+    val movie = box("moov", track())
+    assertNotEquals(MediaFact.Unknown, read(movie + many))
+    assertNotEquals(MediaFact.Unknown, read(many + movie))
+    assertEquals(MediaFact.Unknown, read(movie + many + movie))
+    assertEquals(MediaFact.Unknown, read(movie + byteArrayOf(1)))
+  }
+
+  @Test fun quickTimeLeadingBoxesAreRecognizedAsIso() {
+    for (type in listOf("skip", "uuid", "pnot")) {
+      val file = File.createTempFile("iso-sniff", ".mov")
+      try {
+        file.writeBytes(box(type, ByteArray(16)) + box("moov", track()))
+        assertEquals(MediaFact.Known(ContainerKind.IsoBaseMedia), MediaMetadataInspector().container(file))
+      } finally { file.delete() }
+    }
   }
 }
