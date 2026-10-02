@@ -250,7 +250,8 @@ internal object MediaTrackMetadataReader {
       if (it % 90 == 0) MediaFact.Known((it % 360 + 360) % 360) else MediaFact.Unknown
     } ?: MediaFact.Unknown
     // Match the shared transform convention while retaining Android's raw angle as an observation.
-    val normalizedPlatform = platformRotation.valueOrNull?.let { MediaFact.Known((360 - it) % 360) } ?: MediaFact.Unknown
+    val normalizedPlatform = platformRotation.valueOrNull?.let { MediaFact.Known((360 - it) % 360) }
+      ?: if (!format.containsKey(MediaFormat.KEY_ROTATION) && containerRotation == null) MediaFact.Known(0) else MediaFact.Unknown
     val rotation = if (format.containsKey(MediaFormat.KEY_ROTATION) && platformRotation == MediaFact.Unknown)
       MediaFact.Unknown else reconcile(containerRotation ?: MediaFact.Unknown, normalizedPlatform)
     val platformColor = if (apiLevel >= 24) ColorMetadata(

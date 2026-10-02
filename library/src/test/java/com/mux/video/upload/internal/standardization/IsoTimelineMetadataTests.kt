@@ -16,8 +16,11 @@ class IsoTimelineMetadataTests : AbsRobolectricTest() {
   private fun header(type: String, scale: Int, duration: Long, version: Int = 0): ByteArray = box(type,
     int(version shl 24) + ByteArray(if (version == 0) 8 else 16) + int(scale) +
       (if (version == 0) int(duration.toInt()) else long(duration)))
-  private fun runs(type: String, rows: List<Pair<Int, Int>>, version: Int = 0) = box(type,
-    int(version shl 24) + int(rows.size) + rows.fold(byteArrayOf()) { bytes, row -> bytes + int(row.first) + int(row.second) })
+  private fun runs(type: String, rows: List<Pair<Int, Int>>, version: Int = 0): ByteArray {
+    val data = ByteBuffer.allocate(8 + rows.size * 8).putInt(version shl 24).putInt(rows.size)
+    rows.forEach { data.putInt(it.first).putInt(it.second) }
+    return box(type, data.array())
+  }
   private fun edit(rows: List<Triple<Long, Long, Int>>, version: Int = 0) = box("edts", box("elst",
     int(version shl 24) + int(rows.size) + rows.fold(byteArrayOf()) { bytes, (duration, time, rate) ->
       bytes + (if (version == 0) int(duration.toInt()) + int(time.toInt()) else long(duration) + long(time)) + int(rate)
@@ -38,8 +41,10 @@ class IsoTimelineMetadataTests : AbsRobolectricTest() {
     }
     val stsd = box("stsd", int(0) + int(1) + box(entry, description + aspect))
     val stsz = box("stsz", int(0) + int(1) + int(samples))
+    val chunks = box("stco", int(0) + int(1) + int(0)) +
+      box("stsc", int(0) + int(1) + int(1) + int(samples) + int(1))
     return box("trak", box("tkhd", tkhd) + edits + box("mdia", header("mdhd", scale, duration, version) +
-      box("hdlr", ByteArray(8) + handler.toByteArray()) + box("minf", box("stbl", stsd + timing + composition + stsz))))
+      box("hdlr", ByteArray(8) + handler.toByteArray()) + box("minf", box("stbl", stsd + timing + composition + stsz + chunks))))
   }
 
   private fun read(vararg tracks: ByteArray, duration: Long = 3000, scale: Int = 1000,
@@ -84,10 +89,45 @@ class IsoTimelineMetadataTests : AbsRobolectricTest() {
     assertEquals(-0.1, f.audioVideoStartOffsetSeconds.valueOrNull!!, 1e-9)
   }
 
-  @Test fun timingRunBoundariesAreMergedWithoutExpandingSamples() {
+  @Test fun media3HandlesDifferentTimingRunBoundaries() {
     val t = track(timing = runs("stts", listOf(1 to 1000, 2 to 1000)),
       composition = runs("ctts", listOf(2 to 0, 1 to 0)))
     assertEquals(MediaFact.Known(3.0), facts(read(t)).durationSeconds)
+  }
+
+  @Test fun denseVfrAndCompositionTablesHaveIndependentPerTrackBounds() {
+    val count = 72000
+    val timing = runs("stts", List(count) { 1 to if (it % 2 == 0) 33 else 34 })
+    val composition = runs("ctts", List(count) { 1 to 0 })
+    val duration = count / 2 * 67L
+    val iso = read(track(timing = timing, composition = composition, samples = count, duration = duration),
+      track("soun", 2, timing = timing, samples = count, duration = duration), duration = duration)
+    assertEquals(MediaFact.Known(duration / 1000.0), facts(iso).durationSeconds)
+    assertEquals(MediaFact.Known(0.0), facts(iso).audioVideoStartOffsetSeconds)
+  }
+
+  @Test fun versionZeroNegativeCompositionOffsetsMatchMedia3() {
+    val t = track(composition = runs("ctts", listOf(1 to -1000, 2 to 0)))
+    val f = facts(read(t, track("soun", 2)))
+    assertEquals(MediaFact.Known(3.0), f.durationSeconds)
+    assertEquals(MediaFact.Known(1.0), f.audioVideoStartOffsetSeconds)
+  }
+
+  @Test fun editedTimelineIncludesLateDecodedEarlyPresentationFrames() {
+    val video = track(samples = 5, duration = 5000, timing = runs("stts", listOf(5 to 1000)),
+      composition = runs("ctts", listOf(1 to 1000, 1 to 3000, 1 to 1000, 1 to -3000, 1 to -2000), 1),
+      edits = edit(listOf(Triple(2000L, 0L, 65536))))
+    val audio = track("soun", 2, samples = 2, duration = 2000, timing = runs("stts", listOf(2 to 1000)))
+    val f = facts(read(video, audio, duration = 2000))
+    assertEquals(MediaFact.Known(2.0), f.durationSeconds)
+    assertEquals(MediaFact.Known(0.0), f.audioVideoStartOffsetSeconds)
+  }
+
+  @Test fun allocationLimitDoesNotDiscardOtherMetadata() {
+    val t = track(samples = 500001, duration = 500001000L, timing = runs("stts", listOf(500001 to 1000)))
+    val f = facts(read(t, duration = 500001000L))
+    assertEquals(MediaFact.Unknown, f.durationSeconds)
+    assertEquals(MediaFact.Known(Dimensions(1920, 1080)), f.displayDimensions)
   }
 
   @Test fun unitRateTrimMapsCompositionOffsetsIntoPresentationTime() {

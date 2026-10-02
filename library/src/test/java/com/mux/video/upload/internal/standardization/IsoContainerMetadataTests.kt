@@ -1,19 +1,30 @@
 package com.mux.video.upload.internal.standardization
 
+import android.media.MediaFormat
+import com.mux.exoplayeradapter.AbsRobolectricTest
+import org.robolectric.annotation.Config
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
 import java.nio.ByteBuffer
 
-class IsoContainerMetadataTests {
+@Config(sdk = [23])
+class IsoContainerMetadataTests : AbsRobolectricTest() {
   private fun int(value: Int) = ByteBuffer.allocate(4).putInt(value).array()
   private fun box(type: String, payload: ByteArray) = int(payload.size + 8) + type.toByteArray() + payload
   private fun track(handler: String = "vide", entry: String = "hvc1", extension: ByteArray = byteArrayOf(),
-    matrix: IntArray = intArrayOf(65536, 0, 0, 0, 65536, 0, 0, 0, 0x40000000)): ByteArray {
+    matrix: IntArray = intArrayOf(65536, 0, 0, 0, 65536, 0, 0, 0, 0x40000000),
+    swappedDisplaySize: Boolean = false): ByteArray {
     val tkhd = ByteArray(84)
     for (i in matrix.indices) int(matrix[i]).copyInto(tkhd, 40 + i * 4)
     val hdlr = ByteArray(8) + handler.toByteArray()
-    val sampleEntry = box(entry, ByteArray(if (handler == "vide") 78 else 28) + extension)
+    val description = ByteArray(if (handler == "vide") 78 else 28)
+    if (handler == "vide") {
+      ByteBuffer.wrap(description).putShort(24, 1920.toShort()).putShort(26, 1080.toShort())
+      int((if (swappedDisplaySize) 1080 else 1920) * 65536).copyInto(tkhd, 76)
+      int((if (swappedDisplaySize) 1920 else 1080) * 65536).copyInto(tkhd, 80)
+    }
+    val sampleEntry = box(entry, description + extension)
     val stsd = box("stsd", ByteArray(4) + int(1) + sampleEntry)
     return box("trak", box("tkhd", tkhd) +
       box("mdia", box("hdlr", hdlr) + box("minf", box("stbl", stsd))))
@@ -58,6 +69,22 @@ class IsoContainerMetadataTests {
       .valueOrNull!![0].pixelAspectRatio)
     assertTrue(read(box("moov", track(extension = box("pasp", int(1) + int(1)))))
       .valueOrNull!![0].hasSimpleSampleGeometry)
+  }
+
+  @Test fun inferredTrackAspectCannotContradictAvcSps() {
+    val iso = read(box("moov", track(entry = "avc1", swappedDisplaySize = true))).valueOrNull!!.single()
+    assertEquals(MediaFact.Unknown, iso.pixelAspectRatio)
+    val sps = "000000016742c028da01e0089f97016a02020280000003008000001e078c1950"
+      .chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    val format = MediaFormat.createVideoFormat("video/avc", 1920, 1080).apply {
+      setByteBuffer("csd-0", ByteBuffer.wrap(sps))
+    }
+    val metadata = MediaTrackMetadataReader.read(0, format, 23, iso.rotationDegrees, iso.pixelAspectRatio)
+    assertEquals(MediaFact.Known(Dimensions(1920, 1080)), metadata.video!!.displayDimensions)
+    val explicit = read(box("moov", track(entry = "avc1", swappedDisplaySize = true,
+      extension = box("pasp", int(2) + int(1))))).valueOrNull!!.single()
+    assertEquals(MediaFact.Unknown, MediaTrackMetadataReader.read(0, format, 23,
+      explicit.rotationDegrees, explicit.pixelAspectRatio).video!!.displayDimensions)
   }
 
   @Test fun malformedSizesAndBoxLimitsStayUnknown() {

@@ -16,9 +16,9 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
   private val hevcHlg = hex("00000001420101022000000300900000030000030078a003c0801107cad965654a4c2f016a12241208000003000800000300f040")
   private val hevcPq = hex("00000001420101022000000300900000030000030078a003c0801107cad965654a4c2f016a12201208000003000800000300f040")
 
-  private fun video(mime: String = "video/avc", csd: ByteArray? = avc): MediaFormat =
+  private fun video(mime: String = "video/avc", csd: ByteArray? = avc, rotation: Int? = 0): MediaFormat =
     MediaFormat.createVideoFormat(mime, 1920, 1080).apply {
-      setInteger(MediaFormat.KEY_ROTATION, 0)
+      rotation?.let { setInteger(MediaFormat.KEY_ROTATION, it) }
       csd?.let { setByteBuffer("csd-0", ByteBuffer.wrap(it)) }
     }
 
@@ -96,10 +96,11 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
     assertEquals(MediaFact.Known(Dimensions(1080, 1920)), f.displayDimensions)
   }
 
-  @Test fun missingOrNonQuarterRotationDoesNotGuessDisplay() {
-    val missing = MediaFormat.createVideoFormat("video/avc", 1920, 1080)
-    assertEquals(MediaFact.Unknown, facts(missing).rotationDegrees)
-    assertEquals(MediaFact.Unknown, facts(missing).displayDimensions)
+  @Test fun absentRotationMeansZeroButNonQuarterRotationStaysUnknown() {
+    val missing = video(rotation = null)
+    assertEquals(MediaFact.Known(0), facts(missing).rotationDegrees)
+    assertEquals(MediaFact.Known(Dimensions(1920, 1080)), facts(missing).displayDimensions)
+    assertEquals(MediaFact.Unknown, MediaTrackMetadataReader.read(0, missing).video!!.reportedPlatformRotationDegrees)
     val format = video().apply { setInteger(MediaFormat.KEY_ROTATION, 45) }
     assertEquals(MediaFact.Unknown, facts(format).displayDimensions)
   }
@@ -263,13 +264,20 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
   }
 
   @Test fun failedIsoReadRetainsResolutionButDoesNotGuessMultipleAudioOrder() {
-    val tracks = listOf(MediaTrackMetadataReader.read(0, video()),
+    val tracks = listOf(MediaTrackMetadataReader.read(0, video(rotation = null)),
       MediaTrackMetadataReader.read(1, audio(2, "1190")), MediaTrackMetadataReader.read(2, audio(1, "1188")))
     val f = MediaContainerMetadataReader.facts(MediaFact.Known(ContainerKind.IsoBaseMedia), MediaFact.Unknown, tracks)
     assertEquals(MediaFact.Known(VideoCodec.H264), f.videoCodec)
     assertEquals(MediaFact.Known(Dimensions(1920, 1080)), f.displayDimensions)
     assertEquals(MediaFact.Unknown, f.audioTracks)
     assertEquals(MediaFact.Unknown, f.durationSeconds)
+  }
+
+  @Test fun matroskaWithoutRotationRetainsKnownDisplayDimensions() {
+    val track = MediaTrackMetadataReader.read(0, video(rotation = null))
+    val f = MediaContainerMetadataReader.facts(MediaFact.Known(ContainerKind.Matroska), MediaFact.Unknown, listOf(track))
+    assertEquals(MediaFact.Known(0), f.rotationDegrees)
+    assertEquals(MediaFact.Known(Dimensions(1920, 1080)), f.displayDimensions)
   }
 
   @Test fun dolbyEvidenceSurvivesNonIsoMissingIsoUnknownHandlerAndUnknownMime() {

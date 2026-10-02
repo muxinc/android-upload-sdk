@@ -64,6 +64,11 @@ internal data class MediaFacts(
   val videoProfile: MediaFact<VideoProfile> = MediaFact.Unknown,
   val encodedDimensions: MediaFact<Dimensions> = MediaFact.Unknown,
   val displayDimensions: MediaFact<Dimensions> = MediaFact.Unknown,
+  /**
+   * Shared Swift transform convention, opposite to Android/Media3 for quarter turns.
+   * tkhd [0, 1, -1, 0] / Android KEY_ROTATION = 90 becomes 270.
+   * Convert a known value back to Android with (360 - degrees) % 360.
+   */
   val rotationDegrees: MediaFact<Int> = MediaFact.Unknown,
   val videoTrackCount: MediaFact<Int> = MediaFact.Unknown,
   /** Measured nominal rate for policy; it does not imply constant presentation intervals. */
