@@ -32,6 +32,13 @@ android {
   kotlinOptions {
     jvmTarget = '1.8'
   }
+  // Target only the instrumentation APK at a current API level.
+  testOptions { targetSdk = 36 }
+
+  // External fixture assets are staged outside product Git by the manual test runner.
+  if (project.hasProperty("mediaFixtureAssets")) {
+    sourceSets.androidTest.assets.srcDir(project.property("mediaFixtureAssets"))
+  }
   buildFeatures {
     buildConfig true
   }
@@ -92,6 +99,9 @@ dependencies {
 
   implementation 'androidx.core:core-ktx:1.13.1'
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
+
+  androidTestImplementation 'androidx.test:runner:1.6.2'
+  androidTestImplementation 'androidx.test.ext:junit:1.2.1'
 
   testImplementation 'junit:junit:4.13.2'
   testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1'
