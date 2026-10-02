@@ -1,6 +1,11 @@
 package com.mux.video.upload.internal.standardization
 
 import android.media.MediaFormat
+import androidx.media3.container.NalUnitUtil
+import androidx.media3.extractor.AacUtil
+import io.mockk.every
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
 import com.mux.exoplayeradapter.AbsRobolectricTest
 import org.junit.Assert.*
 import org.junit.Test
@@ -24,6 +29,24 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
 
   private fun facts(format: MediaFormat, api: Int = 23) =
     MediaTrackMetadataReader.facts(listOf(MediaTrackMetadataReader.read(0, format, api)))
+
+  @Test fun incompatibleMedia3CodecHelpersLeaveFactsUnknown() {
+    mockkStatic(NalUnitUtil::class)
+    mockkStatic(AacUtil::class)
+    try {
+      every { NalUnitUtil.parseSpsNalUnit(any(), any(), any()) } throws NoSuchMethodError()
+      every { NalUnitUtil.parseH265SpsNalUnit(any(), any(), any(), any()) } throws NoSuchMethodError()
+      every { AacUtil.parseAudioSpecificConfig(any<ByteArray>()) } throws NoSuchMethodError()
+      assertEquals(CodecMetadata(), CodecMetadataReader.video(VideoCodec.H264, listOf(avc)))
+      assertEquals(CodecMetadata(), CodecMetadataReader.video(VideoCodec.Hevc, listOf(hevcHlg)))
+      assertEquals(MediaFact.Unknown, CodecMetadataReader.aacLayout(hex("1190"), 2))
+      every { NalUnitUtil.findNalUnit(any(), any(), any(), any()) } throws NoSuchMethodError()
+      assertEquals(CodecMetadata(), CodecMetadataReader.video(VideoCodec.Hevc, listOf(hevcHlg)))
+    } finally {
+      unmockkStatic(NalUnitUtil::class)
+      unmockkStatic(AacUtil::class)
+    }
+  }
 
   @Test fun readsAvcConfigurationAndGeometryOnApi23() {
     val f = facts(video())
