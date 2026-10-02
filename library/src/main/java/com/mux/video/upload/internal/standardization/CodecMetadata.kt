@@ -132,36 +132,24 @@ internal object CodecMetadataReader {
     }
     val sets = bits.readUnsignedExpGolombCodedInt()
     if (sets !in 0..64) return false
-    var previousPocs = emptyList<Int>()
+    var previousCount = 0
     for (i in 0 until sets) {
       if (i > 0 && bits.readBit()) {
-        val sign = if (bits.readBit()) -1 else 1
-        val delta = bits.readUnsignedExpGolombCodedInt()
-        if (delta !in 0..65535) return false
-        val deltaRps = sign * (delta + 1)
-        // In an SPS the reference is always the preceding set; delta_idx_minus1 is absent.
-        val predicted = (previousPocs + 0).mapNotNull { poc ->
-          val used = bits.readBit() || bits.readBit()
-          (poc + deltaRps).takeIf { used && it != 0 }
-        }
-        if (predicted.size > 16) return false
-        previousPocs = predicted.filter { it < 0 }.sortedDescending() + predicted.filter { it > 0 }.sorted()
+        // Media3 derives predicted sets. Only a final predicted set can be checked without
+        // duplicating those calculations; longer predicted chains remain unknown.
+        if (i != sets - 1) return false
+        bits.skipBit()
+        bits.readUnsignedExpGolombCodedInt()
+        repeat(previousCount + 1) { if (!bits.readBit()) bits.skipBit() }
       } else {
         val negative = bits.readUnsignedExpGolombCodedInt()
         val positive = bits.readUnsignedExpGolombCodedInt()
         if (negative !in 0..16 || positive !in 0..16 || negative + positive > 16) return false
-        val pocs = mutableListOf<Int>()
-        for ((count, sign) in listOf(negative to -1, positive to 1)) {
-          var poc = 0
-          repeat(count) {
-            val delta = bits.readUnsignedExpGolombCodedInt()
-            if (delta !in 0..65535) return false
-            poc += sign * (delta + 1)
-            pocs.add(poc)
-            bits.skipBit()
-          }
+        previousCount = negative + positive
+        repeat(previousCount) {
+          bits.readUnsignedExpGolombCodedInt()
+          bits.skipBit()
         }
-        previousPocs = pocs
       }
     }
     if (bits.readBit()) {
