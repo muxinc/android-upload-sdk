@@ -2,6 +2,7 @@ package com.mux.video.upload.internal.standardization
 
 import java.io.File
 import java.io.RandomAccessFile
+import java.nio.ByteBuffer
 
 internal data class IsoMetadataBox(val type: String, val payload: Long, val end: Long)
 
@@ -63,6 +64,7 @@ internal object IsoContainerMetadataReader {
   private class Reader(val input: RandomAccessFile) {
     var boxCount = 0
     val timelines = IsoTimelineMetadataReader(input)
+    val boxHeader = ByteArray(16)
 
     fun boxes(start: Long, end: Long, allowQuickTimeTerminator: Boolean = false,
       topLevel: Boolean = false): Sequence<IsoMetadataBox> = sequence {
@@ -78,11 +80,13 @@ internal object IsoContainerMetadataReader {
         require(end - position >= 8)
         require(if (topLevel) ++topCount <= MAX_TOP_LEVEL_BOXES else ++boxCount <= MAX_BOXES)
         input.seek(position)
-        val size32 = input.readInt().toLong() and 0xffffffffL
-        val type = fourCc()
+        input.readFully(boxHeader, 0, minOf(16L, end - position).toInt())
+        val bytes = ByteBuffer.wrap(boxHeader)
+        val size32 = bytes.int.toLong() and 0xffffffffL
+        val type = String(boxHeader, 4, 4, Charsets.US_ASCII)
         val header = if (size32 == 1L) 16 else 8
         require(end - position >= header)
-        val size = when (size32) { 0L -> end - position; 1L -> input.readLong(); else -> size32 }
+        val size = when (size32) { 0L -> end - position; 1L -> bytes.getLong(8); else -> size32 }
         require(size >= header && size <= end - position)
         yield(IsoMetadataBox(type, position + header, position + size))
         position += size
@@ -148,7 +152,7 @@ internal object IsoContainerMetadataReader {
               else MediaFact.Known(horizontal.toDouble() / vertical)
             } ?: MediaFact.Unknown
             // A declared presentation size can establish aspect even for codecs without an SPS reader.
-            if (aspect == MediaFact.Unknown && aspects.isEmpty()) aspect = trackAspect(tkhd, sampleSize)
+            if (aspects.isEmpty() && IsoSampleEntries.codec(entry.type) == null) aspect = trackAspect(tkhd, sampleSize)
           } else simpleGeometry = false
         }
       }
