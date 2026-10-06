@@ -143,6 +143,15 @@ internal object IsoContainerMetadataReader {
 
     /** Classifies edit structure only; applying it to the presentation timeline is separate work. */
     private fun edits(children: List<IsoMetadataBox>): MediaFact<EditList> {
+      val metadataBoxCount = boxCount
+      return try { classifyEdits(children) } catch (_: Exception) {
+        // A bad edit list must not discard track identity, orientation or Dolby signaling.
+        boxCount = metadataBoxCount
+        MediaFact.Unknown
+      }
+    }
+
+    private fun classifyEdits(children: List<IsoMetadataBox>): MediaFact<EditList> {
       val editBoxes = children.filter { it.type == "edts" }
       if (editBoxes.isEmpty()) return MediaFact.Known(EditList.None)
       if (editBoxes.size != 1) return MediaFact.Unknown
@@ -158,14 +167,16 @@ internal object IsoContainerMetadataReader {
       val entrySize = if (version == 0) 12 else 20
       require(count <= 64 && list.end - list.payload == 8 + count * entrySize)
       if (count == 0L) return MediaFact.Known(EditList.None)
-      var simple = count == 1L
+      var classification = if (count == 1L) EditList.None else EditList.Complex
       repeat(count.toInt()) {
         val duration = if (version == 0) input.readInt().toLong() and 0xffffffffL else input.readLong()
         val mediaTime = if (version == 0) input.readInt().toLong() else input.readLong()
         val rate = input.readInt()
-        if (duration <= 0 || mediaTime < 0 || rate != 0x00010000) simple = false
+        if (duration <= 0) return MediaFact.Unknown
+        if (mediaTime < 0 || rate != 0x00010000) classification = EditList.Complex
+        else if (count == 1L && mediaTime > 0) classification = EditList.Simple
       }
-      return MediaFact.Known(if (simple) EditList.Simple else EditList.Complex)
+      return MediaFact.Known(classification)
     }
 
     private fun orientation(box: IsoMetadataBox): MediaFact<Int> {
