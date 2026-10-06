@@ -4,7 +4,7 @@ import android.media.MediaExtractor
 import android.os.Build
 import androidx.media3.container.NalUnitUtil
 import java.io.File
-import java.nio.ByteBuffer
+import java.util.concurrent.CancellationException
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
@@ -41,18 +41,11 @@ internal data class CompressedVideoSample(
 internal class MediaSampleInspector(private val limits: SampleScanLimits = SampleScanLimits(),
   private val apiLevel: Int = Build.VERSION.SDK_INT) {
   fun inspect(file: File, metadata: MediaMetadataInspection,
-    isCancelled: () -> Boolean = { Thread.currentThread().isInterrupted }): MediaSampleInspection =
-    inspect(file, metadata, null, isCancelled)
-
-  /** Output validation supplies proven video duration; source-only scans retain the observation. */
-  fun inspect(file: File, metadata: MediaMetadataInspection, provenVideoDurationSeconds: MediaFact<Double>?,
-    isCancelled: () -> Boolean): MediaSampleInspection {
-    val started = System.nanoTime()
+    isCancelled: () -> Boolean = { Thread.currentThread().isInterrupted }): MediaSampleInspection {
+    val reader = BoundedSampleReader(limits, apiLevel, isCancelled)
     val samples = ArrayList<CompressedVideoSample>()
-    var bytes = 0L
-    var largestSample = 0
     fun result(status: SampleScanStatus, facts: MediaFacts = metadata.facts) =
-      MediaSampleInspection(facts, status, samples.size, bytes, largestSample, System.nanoTime() - started)
+      MediaSampleInspection(facts, status, reader.sampleCount, reader.bytesRead, reader.largestSampleBytes, reader.elapsedNanos)
     if (isCancelled()) return result(SampleScanStatus.Cancelled)
     val track = metadata.tracks.filter { it.kind == TrackKind.Video }.singleOrNull()
       ?: return result(SampleScanStatus.Unsupported)
@@ -66,56 +59,35 @@ internal class MediaSampleInspector(private val limits: SampleScanLimits = Sampl
     return try {
       extractor.setDataSource(file.absolutePath)
       extractor.selectTrack(track.extractorIndex)
-      val data = ByteArray(limits.maximumSampleBytes)
-      val buffer = ByteBuffer.wrap(data)
       while (extractor.sampleTrackIndex >= 0) {
-        if (isCancelled()) return result(SampleScanStatus.Cancelled)
-        if (samples.size >= limits.maximumSamples || bytes >= limits.maximumReadBytes ||
-          System.nanoTime() - started >= limits.maximumElapsedNanos) return result(SampleScanStatus.LimitExceeded)
-        val flags = extractor.sampleFlags
-        // Partial frames and encrypted bytes cannot establish complete pictures or GOPs.
-        if (flags and MediaExtractor.SAMPLE_FLAG_SYNC.inv() != 0) return result(SampleScanStatus.Unsupported)
-        val expectedSize = if (apiLevel >= 28) extractor.sampleSize else null
-        if (expectedSize != null && (expectedSize <= 0 || expectedSize > data.size ||
-            expectedSize > limits.maximumReadBytes - bytes)) return result(SampleScanStatus.LimitExceeded)
-        buffer.clear()
-        // API 23–27 has no size query. Cap the native buffer's capacity as well as its limit.
-        val remaining = limits.maximumReadBytes - bytes
-        val readBuffer = if (remaining < data.size) ByteBuffer.wrap(data, 0, remaining.toInt()).slice() else buffer
-        val size = try { extractor.readSampleData(readBuffer, 0) } catch (_: IllegalArgumentException) {
-          // Legacy extractors signal an insufficient sample buffer with IllegalArgumentException.
-          return result(if (apiLevel < 28) SampleScanStatus.LimitExceeded else SampleScanStatus.Unreadable)
+        reader.read(extractor) { time, size, flags, data ->
+          val sync = flags and MediaExtractor.SAMPLE_FLAG_SYNC != 0
+          samples.add(CompressedVideoSample(time, size, sync,
+            if (sync) SampleRandomAccessReader.read(codec, data, size) else MediaFact.Unknown))
         }
-        if (size <= 0 || size > data.size || size.toLong() > limits.maximumReadBytes - bytes ||
-          (expectedSize != null && size.toLong() != expectedSize)) return result(SampleScanStatus.LimitExceeded)
-        bytes += size
-        largestSample = maxOf(largestSample, size)
-        val sync = flags and MediaExtractor.SAMPLE_FLAG_SYNC != 0
-        samples.add(CompressedVideoSample(extractor.sampleTime, size, sync,
-          if (sync) SampleRandomAccessReader.read(codec, data, size) else MediaFact.Unknown))
         extractor.advance()
       }
-      if (isCancelled()) return result(SampleScanStatus.Cancelled)
-      if (System.nanoTime() - started >= limits.maximumElapsedNanos) return result(SampleScanStatus.LimitExceeded)
-      // Match the shared video-edit policy. Audio edits remain separate track observations.
-      val edit = when (metadata.container.valueOrNull) {
-        ContainerKind.IsoBaseMedia -> metadata.isoTracks.valueOrNull
-          ?.getOrNull(track.containerIndex.valueOrNull ?: -1)?.editList ?: MediaFact.Unknown
-        // This proves absence of ISO edits only, not an effective Matroska presentation timeline.
-        ContainerKind.Matroska -> MediaFact.Known(EditList.None)
-        else -> MediaFact.Unknown
-      }
-      val facts = VideoSampleFactsReader.read(samples, provenVideoDurationSeconds ?: track.reportedDurationSeconds, metadata.facts).copy(editList = edit)
-      if (isCancelled()) return result(SampleScanStatus.Cancelled)
-      if (System.nanoTime() - started >= limits.maximumElapsedNanos) return result(SampleScanStatus.LimitExceeded)
+      reader.checkBudget()
+      val facts = VideoSampleFactsReader.read(samples, track.reportedDurationSeconds, metadata.facts)
+        .copy(editList = videoEditList(metadata, track))
+      reader.checkBudget()
       result(SampleScanStatus.Complete, facts)
-    } catch (_: Exception) {
-      result(SampleScanStatus.Unreadable)
-    } finally {
-      extractor.release()
-    }
+    } catch (stop: SampleScanStop) { result(stop.status) }
+      catch (_: CancellationException) { result(SampleScanStatus.Cancelled) }
+      catch (_: Exception) { result(if (isCancelled()) SampleScanStatus.Cancelled else SampleScanStatus.Unreadable) }
+      finally { extractor.release() }
   }
+
 }
+
+/** Match the shared video-edit policy; audio edits remain separate track observations. */
+internal fun videoEditList(metadata: MediaMetadataInspection, track: TrackMetadata): MediaFact<EditList> =
+  when (metadata.container.valueOrNull) {
+    ContainerKind.IsoBaseMedia -> metadata.isoTracks.valueOrNull
+      ?.getOrNull(track.containerIndex.valueOrNull ?: -1)?.editList ?: MediaFact.Unknown
+    ContainerKind.Matroska -> MediaFact.Known(EditList.None)
+    else -> MediaFact.Unknown
+  }
 
 /** Only sync samples need relevant NAL inspection. Unrecognized framing or syntax stays unknown. */
 internal object SampleRandomAccessReader {
@@ -186,32 +158,44 @@ internal object SampleRandomAccessReader {
 
 internal object VideoSampleFactsReader {
   fun read(samples: List<CompressedVideoSample>, reportedDuration: MediaFact<Double>,
-    base: MediaFacts = MediaFacts()): MediaFacts {
+    base: MediaFacts = MediaFacts(), timeline: IsoTrackTimeline? = null): MediaFacts {
     if (samples.size < 2 || samples.any { it.byteSize <= 0 }) return base
-    val ordered = LongArray(samples.size) { samples[it].presentationTimeUs }.also { it.sort() }
-    val intervals = LongArray(samples.size - 1) { ordered[it + 1] - ordered[it] }
+    if (timeline != null && timeline.presentationSeconds.size != samples.size) return base
+    val presented = timeline?.effectiveSampleIndices
+    if (presented != null && presented.size < 2) return base
+    fun time(index: Int) = timeline?.presentationSeconds?.get(index) ?: (samples[index].presentationTimeUs / 1e6)
+    val measured = if (timeline == null) samples else presented!!.map { samples[it].copy(presentationTimeUs =
+      (maxOf(timeline?.startSeconds ?: Double.NEGATIVE_INFINITY, time(it)) * 1e6).roundToLong()) }
+    val ordered = LongArray(measured.size) { measured[it].presentationTimeUs }.also { it.sort() }
+    val intervals = LongArray(measured.size - 1) { ordered[it + 1] - ordered[it] }
     if (intervals.any { it <= 0 }) return base
     val span = (ordered.last() - ordered.first()) / 1e6
     if (!span.isFinite() || span <= 0) return base
-    val frameInterval = span / (samples.size - 1)
+    val frameInterval = span / (measured.size - 1)
     val constant = intervals.all { abs(it / 1e6 - frameInterval) <= maxOf(2e-6, frameInterval * 0.001) }
     var facts = base.copy(
       frameRate = MediaFact.Known(1 / frameInterval),
       cadence = MediaFact.Known(if (constant) Cadence.Constant else Cadence.Variable),
       timestamps = MediaFact.Known(TimestampFacts(ordered.first() / 1e6, ordered.last() / 1e6,
-        samples.size.toLong(), (1 until samples.size).all {
-          samples[it - 1].presentationTimeUs < samples[it].presentationTimeUs
+        measured.size.toLong(), (1 until measured.size).all {
+          measured[it - 1].presentationTimeUs < measured[it].presentationTimeUs
         })),
     )
-    // Raw track duration is a bitrate denominator, not proof of effective duration or A/V sync.
-    // Reject inconsistent metadata instead of extrapolating an unobserved final VFR interval.
-    val duration = reportedDuration.valueOrNull?.takeIf {
+    // Only a proven effective window replaces the raw source-duration observation.
+    // Unproven metadata must not extrapolate the final VFR interval.
+    val duration = timeline?.let { it.endSeconds - it.startSeconds } ?: reportedDuration.valueOrNull?.takeIf {
       it.isFinite() && it > span && it - span <= intervals.max() / 1e6 * 2
     }
-    if (duration != null) facts = facts.copy(averageBitrate = bitrate(samples.sumOf { it.byteSize.toLong() }, duration))
+    if (duration != null) facts = facts.copy(averageBitrate = bitrate(measured.sumOf { it.byteSize.toLong() }, duration))
     if (!samples.first().isSync) return facts
     val boundaries = samples.indices.filter { samples[it].isSync }
-    val kinds = boundaries.map { samples[it].randomAccess }
+    val presentedSet = presented?.toHashSet()
+    fun isPresented(index: Int) = presentedSet == null || index in presentedSet
+    val relevant = boundaries.indices.filter { i ->
+      presentedSet == null || (boundaries[i] until (boundaries.getOrNull(i + 1) ?: samples.size)).any { isPresented(it) }
+    }
+    // Keep the original IDR boundary, including decode preroll outside the effective edit.
+    val kinds = relevant.map { samples[boundaries[it]].randomAccess }
     val open = kinds.any { it == MediaFact.Known(GopStructure.Open) }
     val proven = kinds.all { it == MediaFact.Known(GopStructure.ClosedWithIdr) }
     facts = facts.copy(gopStructure = when {
@@ -222,16 +206,17 @@ internal object VideoSampleFactsReader {
     var maxBytes = 0L
     var maxRate = 0L
     var maxInterval = 0.0
-    for (i in boundaries.indices) {
+    for (i in relevant) {
       val start = boundaries[i]
       val end = boundaries.getOrNull(i + 1) ?: samples.size
-      val startTime = samples[start].presentationTimeUs / 1e6
-      val endTime = if (end < samples.size) samples[end].presentationTimeUs / 1e6
-        else duration?.plus(ordered.first() / 1e6) ?: return facts
+      val startTime = maxOf(timeline?.startSeconds ?: Double.NEGATIVE_INFINITY, time(start))
+      val rawEnd = if (end < samples.size) time(end)
+        else timeline?.endSeconds ?: duration?.plus(ordered.first() / 1e6) ?: return facts
+      val endTime = minOf(timeline?.endSeconds ?: Double.POSITIVE_INFINITY, rawEnd)
       val seconds = endTime - startTime
       if (!seconds.isFinite() || seconds <= 0) return facts
       maxInterval = maxOf(maxInterval, seconds)
-      val bytes = samples.subList(start, end).sumOf { it.byteSize.toLong() }
+      val bytes = (start until end).sumOf { if (isPresented(it)) samples[it].byteSize.toLong() else 0L }
       maxBytes = maxOf(maxBytes, bytes)
       maxRate = maxOf(maxRate, bitrate(bytes, seconds).valueOrNull ?: return facts)
     }

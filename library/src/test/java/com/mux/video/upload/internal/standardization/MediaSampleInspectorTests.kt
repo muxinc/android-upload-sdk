@@ -138,7 +138,7 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
 
   private fun scan(limits: SampleScanLimits = SampleScanLimits(), cancel: () -> Boolean = { false },
     reader: ((ByteBuffer) -> Int)? = null, reportedSize: Long = 6, flagsOverride: Int? = null,
-    input: MediaMetadataInspection = metadata(), provenDuration: MediaFact<Double>? = null): MediaSampleInspection {
+    input: MediaMetadataInspection = metadata()): MediaSampleInspection {
     mockkConstructor(MediaExtractor::class)
     var index = 0
     var released = false
@@ -156,7 +156,7 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
     every { anyConstructed<MediaExtractor>().advance() } answers { ++index < 3 }
     every { anyConstructed<MediaExtractor>().release() } answers { released = true }
     return try {
-      MediaSampleInspector(limits).inspect(File("unused"), input, provenDuration, cancel).also {
+      MediaSampleInspector(limits).inspect(File("unused"), input, cancel).also {
         assertTrue(released)
       }
     } finally { unmockkConstructor(MediaExtractor::class) }
@@ -202,7 +202,7 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
     assertEquals(SampleScanStatus.LimitExceeded,
       scan(SampleScanLimits(maximumSampleBytes = 16), reader = { read = true; 6 }, reportedSize = 17).status)
     assertFalse(read)
-    assertEquals(SampleScanStatus.LimitExceeded, scan(reportedSize = 7).status)
+    assertEquals(SampleScanStatus.Unreadable, scan(reportedSize = 7).status)
     assertEquals(SampleScanStatus.Complete, scan().status)
     assertEquals(SampleScanStatus.Unreadable, scan(reader = { throw IllegalArgumentException() }).status)
   }
@@ -239,14 +239,43 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
       assertEquals(MediaFact.Unknown, SampleRandomAccessReader.read(VideoCodec.H264, data, data.size))
     } finally { unmockkStatic(NalUnitUtil::class) }
   }
-  @Test fun provenOutputDurationSuppliesBitrateAndFinalGopDenominator() {
-    val source = scan()
-    assertEquals(MediaFact.Known(48L), source.facts.averageBitrate)
-    val output = scan(provenDuration = MediaFact.Known(2.5))
-    assertEquals(SampleScanStatus.Complete, output.status)
-    assertEquals(MediaFact.Known(58L), output.facts.averageBitrate)
-    assertEquals(MediaFact.Known(58L), output.facts.maximumGopBitrate)
-    assertEquals(MediaFact.Known(2.5), output.facts.maximumKeyframeIntervalSeconds)
+  private fun editedTimeline(times: List<Double>, end: Double, presented: List<Int>): IsoTrackTimeline =
+    IsoTrackTimeline(times.toDoubleArray(), 0.0, end, presented.map { maxOf(0.0, times[it]) }.sorted(),
+      true, 1000, 1.0, presented)
+
+  @Test fun effectiveEditExcludesTrimmedBytesButRetainsThePrerollIdrProof() {
+    val samples = listOf(sample(-1_000_000, true, 1000), sample(0, bytes = 100), sample(1_000_000, bytes = 100))
+    val time = editedTimeline(listOf(-1.0, 0.0, 1.0), 2.0, listOf(1, 2))
+    val facts = VideoSampleFactsReader.read(samples, MediaFact.Unknown, timeline = time)
+    assertEquals(known(800L), facts.averageBitrate)
+    assertEquals(known(800L), facts.maximumGopBitrate)
+    assertEquals(known(200L), facts.maximumGopByteSize)
+    assertEquals(known(2.0), facts.maximumKeyframeIntervalSeconds)
+    assertEquals(idr, facts.gopStructure)
+    assertEquals(known(TimestampFacts(0.0, 1.0, 2, true)), facts.timestamps)
+    val unproven = samples.toMutableList().apply { this[0] = this[0].copy(randomAccess = MediaFact.Unknown) }
+    val rejected = VideoSampleFactsReader.read(unproven, MediaFact.Unknown, timeline = time)
+    assertEquals(MediaFact.Unknown, rejected.gopStructure)
+    assertEquals(MediaFact.Unknown, rejected.maximumGopBitrate)
   }
 
+  @Test fun editedVfrFinalGopEndsAtTheProvenEndpointInsteadOfRawFirstPtsPlusDuration() {
+    val samples = (0..4).map { sample((it - 1) * 1_000_000L, it == 0 || it == 2) }
+    val time = editedTimeline(listOf(-1.0, 0.0, 1.0, 2.0, 3.0), 4.5, listOf(1, 2, 3, 4))
+    val facts = VideoSampleFactsReader.read(samples, MediaFact.Unknown, timeline = time)
+    assertEquals(known(3.5), facts.maximumKeyframeIntervalSeconds)
+    assertEquals(known(711L), facts.averageBitrate)
+    assertEquals(known(800L), facts.maximumGopBitrate)
+  }
+
+  @Test fun samplesWhollyPastTheEditDoNotChangePresentedCadenceOrGops() {
+    val samples = listOf(sample(0, true), sample(1_000_000),
+      sample(2_000_000, true, 10000, known(GopStructure.Open)), sample(4_000_000))
+    val time = editedTimeline(listOf(0.0,1.0,2.0,4.0), 2.0, listOf(0,1))
+    val facts = VideoSampleFactsReader.read(samples, MediaFact.Unknown, timeline = time)
+    assertEquals(known(Cadence.Constant), facts.cadence)
+    assertEquals(idr, facts.gopStructure)
+    assertEquals(known(800L), facts.averageBitrate)
+    assertEquals(known(2.0), facts.maximumKeyframeIntervalSeconds)
+  }
 }

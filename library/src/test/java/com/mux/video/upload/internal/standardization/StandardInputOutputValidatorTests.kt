@@ -11,7 +11,7 @@ class StandardInputOutputValidatorTests {
     options(), fullCapabilities()).action as StandardInputAction.Convert).conversion
   private val output = source.copy(encodedDimensions = known(plan.outputDimensions), rotationDegrees = known(0))
   private fun timeline(duration: Double = 3.0, offset: AudioVideoStartOffset = AudioVideoStartOffset.Seconds(0.0)) =
-    StandardInputTimelineFacts(known(duration), known(offset), known(listOf(0.0, 1.0, 2.0)), known(duration), known(duration))
+    StandardInputTimelineFacts(known(duration), known(offset), known(listOf(0.0, 1.0, 2.0)), known(duration), known(duration), known(90000L))
   private val validator = StandardInputOutputValidator()
   private fun validate(facts: MediaFacts = output, input: MediaFacts = source,
     sourceTime: StandardInputTimelineFacts = timeline(), outputTime: StandardInputTimelineFacts = timeline(),
@@ -124,11 +124,10 @@ class StandardInputOutputValidatorTests {
       file.writeBytes(byteArrayOf(1))
       for (status in SampleScanStatus.entries.filter { it != SampleScanStatus.Complete }) {
         val v = StandardInputOutputValidator(inspectMetadata = { MetadataInspectionResult.Success(metadata) },
-          inspectSamples = { _, _, _, _ -> MediaSampleInspection(output, status, 1, 1, 1, 0) },
-          inspectTimeline = { _, _, _ -> TimelineInspection(timeline(), SampleScanStatus.Complete) })
+          inspectTimeline = { _, _, _ -> TimelineInspection(timeline(), status, output) })
         val result = v.validateGeneratedOutput(file, source, timeline(), plan)
         if (status == SampleScanStatus.Cancelled) assertEquals(StandardInputOutputValidation.Cancelled, result)
-        else assertEquals(OutputRejection.SampleInspection(status), reason(result))
+        else assertEquals(OutputRejection.TimelineInspection(status), reason(result))
       }
       var cancelled = false
       val v = StandardInputOutputValidator(inspectMetadata = { cancelled = true; MetadataInspectionResult.Failure(MetadataFailure.Malformed) })
@@ -140,7 +139,6 @@ class StandardInputOutputValidatorTests {
     val metadata = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), emptyList(), MediaFact.Unknown, output, 0)
     fun validator(timelineRead: () -> TimelineInspection) = StandardInputOutputValidator(
       inspectMetadata = { MetadataInspectionResult.Success(metadata) },
-      inspectSamples = { _, _, _, _ -> MediaSampleInspection(output, SampleScanStatus.Complete, 3, 3, 1, 0) },
       inspectTimeline = { _, _, _ -> timelineRead() })
     try {
       file.writeBytes(byteArrayOf(1))
@@ -149,9 +147,9 @@ class StandardInputOutputValidatorTests {
         if (status == SampleScanStatus.Cancelled) assertEquals(StandardInputOutputValidation.Cancelled, result)
         else assertEquals(OutputRejection.TimelineInspection(status), reason(result))
       }
-      val changed = validator { file.appendBytes(byteArrayOf(2)); TimelineInspection(timeline(), SampleScanStatus.Complete) }
+      val changed = validator { file.appendBytes(byteArrayOf(2)); TimelineInspection(timeline(), SampleScanStatus.Complete, output) }
       assertEquals(OutputRejection.ChangedDuringInspection, reason(changed.validateGeneratedOutput(file, source, timeline(), plan)))
-      val accepted = validator { TimelineInspection(timeline(), SampleScanStatus.Complete) }.validateGeneratedOutput(file, source, timeline(), plan)
+      val accepted = validator { TimelineInspection(timeline(), SampleScanStatus.Complete, output) }.validateGeneratedOutput(file, source, timeline(), plan)
       assertTrue(accepted is StandardInputOutputValidation.Accepted)
     } finally { file.delete() }
   }
@@ -164,4 +162,34 @@ class StandardInputOutputValidatorTests {
     assertTrue(reason(validate(sourceTime = timeline().copy(firstAudioDurationSeconds = MediaFact.Unknown))) is OutputRejection.InsufficientPlanEvidence)
   }
 
+
+  @Test fun timestampPreservationAllowsOnlyProvenOutputTickRounding() {
+    val rate = 24000.0 / 1001
+    val times = List(72) { it * 1001.0 / 24000 }
+    val rounded = times.map { kotlin.math.round(kotlin.math.floor(it * 1e6) * 0.09) / 90000 }
+    val inputTime = timeline().copy(videoPresentationSeconds = known(times))
+    val outputTime = timeline().copy(videoPresentationSeconds = known(rounded))
+    val conversion = plan.copy(outputFrameRate = rate)
+    val facts = output.copy(frameRate = known(rate))
+    assertTrue(validate(facts, sourceTime = inputTime, outputTime = outputTime, conversion = conversion)
+      is StandardInputOutputValidation.Accepted)
+    val drifted = rounded.toMutableList().apply { this[10] += 0.000020 }
+    mismatch(OutputExpectation.Timestamps, validate(facts, sourceTime = inputTime,
+      outputTime = outputTime.copy(videoPresentationSeconds = known(drifted)), conversion = conversion))
+    for (scale in listOf(MediaFact.Unknown, known(0L), known(-1L)))
+      assertTrue(reason(validate(facts, sourceTime = inputTime,
+        outputTime = outputTime.copy(videoTimescale = scale), conversion = conversion)) is OutputRejection.InsufficientPlanEvidence)
+  }
+
+  @Test fun completedTimelineWithoutSampleProofCannotAcceptOutput() {
+    val file = File.createTempFile("validation", ".mp4")
+    try {
+      file.writeBytes(byteArrayOf(1))
+      val metadata = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), emptyList(), MediaFact.Unknown, output, 0)
+      val validator = StandardInputOutputValidator(inspectMetadata = { MetadataInspectionResult.Success(metadata) },
+        inspectTimeline = { _, _, _ -> TimelineInspection(timeline(), SampleScanStatus.Complete) })
+      assertEquals(OutputRejection.TimelineInspection(SampleScanStatus.Unreadable),
+        reason(validator.validateGeneratedOutput(file, source, timeline(), plan)))
+    } finally { file.delete() }
+  }
 }

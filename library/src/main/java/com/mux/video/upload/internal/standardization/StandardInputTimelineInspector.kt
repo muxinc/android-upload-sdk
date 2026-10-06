@@ -4,9 +4,9 @@ import android.media.MediaExtractor
 import android.os.Build
 import java.io.File
 import java.io.RandomAccessFile
-import java.nio.ByteBuffer
 import java.util.concurrent.CancellationException
 import kotlin.math.abs
+import kotlin.math.roundToLong
 
 internal sealed interface AudioVideoStartOffset {
   data object NotApplicable : AudioVideoStartOffset
@@ -20,11 +20,14 @@ internal data class StandardInputTimelineFacts(
   val videoPresentationSeconds: MediaFact<List<Double>> = MediaFact.Unknown,
   val videoDurationSeconds: MediaFact<Double> = MediaFact.Unknown,
   val firstAudioDurationSeconds: MediaFact<Double> = MediaFact.Unknown,
+  val videoTimescale: MediaFact<Long> = MediaFact.Unknown,
 )
 
 internal data class TimelineInspection(
   val timeline: StandardInputTimelineFacts = StandardInputTimelineFacts(),
   val status: SampleScanStatus,
+  /** Facts proven by the same payload scan; never published after a partial read. */
+  val sampleFacts: MediaFacts? = null,
 )
 
 /**
@@ -38,81 +41,73 @@ internal class StandardInputTimelineInspector(
 ) {
   fun inspect(file: File, metadata: MediaMetadataInspection,
     isCancelled: () -> Boolean = { Thread.currentThread().isInterrupted }): TimelineInspection {
-    val started = System.nanoTime()
+    val reader = BoundedSampleReader(limits, apiLevel, isCancelled)
     fun failure(status: SampleScanStatus) = TimelineInspection(status = status)
-    fun checkBudget(samples: Int, bytes: Long) {
-      if (isCancelled()) throw TimelineStop(SampleScanStatus.Cancelled)
-      if (samples > limits.maximumSamples || bytes > limits.maximumReadBytes ||
-        System.nanoTime() - started >= limits.maximumElapsedNanos) throw TimelineStop(SampleScanStatus.LimitExceeded)
-    }
     return try {
-      checkBudget(0, 0)
+      reader.checkBudget()
       if (metadata.container != MediaFact.Known(ContainerKind.IsoBaseMedia) ||
         metadata.facts.videoTrackCount != MediaFact.Known(1) || metadata.facts.audioTracks == MediaFact.Unknown)
         return failure(SampleScanStatus.Unsupported)
-      val tracks = IsoTimelineReader.read(file, limits.maximumSamples) { checkBudget(0, 0) }
+      val tracks = IsoTimelineReader.read(file, limits.maximumSamples) { reader.checkBudget() }
       val media = metadata.tracks.filter { it.kind == TrackKind.Video || it.kind == TrackKind.Audio }
       if (media.size != tracks.size || media.any { it.containerIndex.valueOrNull !in tracks.keys })
         return failure(SampleScanStatus.Unsupported)
-      var bytes = 0L
-      var count = 0
-      val buffer = ByteBuffer.allocate(limits.maximumSampleBytes)
+      val timingByExtractor = media.associate { it.extractorIndex to tracks.getValue(it.containerIndex.valueOrNull!!) }
       for (track in media) {
-        val timing = tracks.getValue(track.containerIndex.valueOrNull!!)
-        if (track.kind == TrackKind.Audio && !timing.hasEdit && track.audio?.let {
+        if (track.kind == TrackKind.Audio && !timingByExtractor.getValue(track.extractorIndex).hasEdit && track.audio?.let {
             (it.encoderDelaySamples.valueOrNull ?: 0) > 0 || (it.encoderPaddingSamples.valueOrNull ?: 0) > 0
           } == true) return failure(SampleScanStatus.Unsupported)
-        val extractor = MediaExtractor()
-        try {
-          extractor.setDataSource(file.absolutePath)
-          extractor.selectTrack(track.extractorIndex)
-          var index = 0
-          while (extractor.sampleTrackIndex >= 0) {
-            checkBudget(count, bytes)
-            if (count >= limits.maximumSamples || bytes >= limits.maximumReadBytes)
-              throw TimelineStop(SampleScanStatus.LimitExceeded)
-            if (extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC.inv() != 0)
-              throw TimelineStop(SampleScanStatus.Unsupported)
-            if (index >= timing.presentationSeconds.size ||
-              abs(extractor.sampleTime / 1e6 - timing.presentationSeconds[index]) > 2e-6)
-              throw TimelineStop(SampleScanStatus.Unsupported)
-            val expectedSize = if (apiLevel >= 28) extractor.sampleSize else null
-            if (expectedSize != null && (expectedSize <= 0 || expectedSize > buffer.capacity() ||
-                expectedSize > limits.maximumReadBytes - bytes)) throw TimelineStop(SampleScanStatus.LimitExceeded)
-            buffer.clear()
-            val remaining = minOf(buffer.capacity().toLong(), limits.maximumReadBytes - bytes).toInt()
-            val readBuffer = buffer.duplicate().apply { limit(remaining) }.slice()
-            val size = try { extractor.readSampleData(readBuffer, 0) } catch (_: IllegalArgumentException) {
-              throw TimelineStop(if (apiLevel < 28) SampleScanStatus.LimitExceeded else SampleScanStatus.Unreadable)
-            }
-            if (size <= 0 || size > remaining || (expectedSize != null && size.toLong() != expectedSize))
-              throw TimelineStop(SampleScanStatus.Unreadable)
-            bytes += size; count++; index++
-            extractor.advance()
-          }
-          if (index != timing.presentationSeconds.size) throw TimelineStop(SampleScanStatus.Unreadable)
-        } finally { extractor.release() }
       }
-      checkBudget(count, bytes)
       val video = media.single { it.kind == TrackKind.Video }
-      val videoTime = tracks.getValue(video.containerIndex.valueOrNull!!)
+      val videoTime = timingByExtractor.getValue(video.extractorIndex)
+      val matchers = timingByExtractor.mapValues { PlatformTimestampMatcher(it.value) }
+      val counts = timingByExtractor.mapValues { 0 }.toMutableMap()
+      val samples = ArrayList<CompressedVideoSample>()
+      val extractor = MediaExtractor()
+      try {
+        extractor.setDataSource(file.absolutePath)
+        media.forEach { extractor.selectTrack(it.extractorIndex) }
+        while (extractor.sampleTrackIndex >= 0) {
+          val trackIndex = extractor.sampleTrackIndex
+          val timing = timingByExtractor[trackIndex] ?: throw SampleScanStop(SampleScanStatus.Unsupported)
+          val index = counts.getValue(trackIndex)
+          reader.read(extractor) { time, size, flags, data ->
+            if (index >= timing.presentationSeconds.size || !matchers.getValue(trackIndex).matches(index, time / 1e6))
+              throw SampleScanStop(SampleScanStatus.Unsupported)
+            if (trackIndex == video.extractorIndex) {
+              val sync = flags and MediaExtractor.SAMPLE_FLAG_SYNC != 0
+              val codec = metadata.facts.videoCodec.valueOrNull
+              samples.add(CompressedVideoSample((timing.presentationSeconds[index] * 1e6).roundToLong(), size, sync,
+                if (sync && codec != null) SampleRandomAccessReader.read(codec, data, size) else MediaFact.Unknown))
+            }
+          }
+          counts[trackIndex] = index + 1
+          extractor.advance()
+        }
+        if (counts.any { (index, count) -> count != timingByExtractor.getValue(index).presentationSeconds.size })
+          throw SampleScanStop(SampleScanStatus.Unreadable)
+      } finally { extractor.release() }
+      reader.checkBudget()
       val firstAudio = media.filter { it.kind == TrackKind.Audio }.minByOrNull { it.containerIndex.valueOrNull!! }
-      val offset = firstAudio?.let {
-        AudioVideoStartOffset.Seconds(tracks.getValue(it.containerIndex.valueOrNull!!).startSeconds - videoTime.startSeconds)
-      } ?: AudioVideoStartOffset.NotApplicable
-      val audioTime = firstAudio?.let { tracks.getValue(it.containerIndex.valueOrNull!!) }
+      val audioTime = firstAudio?.let { timingByExtractor.getValue(it.extractorIndex) }
+      val offset = audioTime?.let { AudioVideoStartOffset.Seconds(it.startSeconds - videoTime.startSeconds) }
+        ?: AudioVideoStartOffset.NotApplicable
+      val facts = VideoSampleFactsReader.read(samples, MediaFact.Unknown, metadata.facts, videoTime)
+        .copy(editList = videoEditList(metadata, video))
+      reader.checkBudget()
       TimelineInspection(StandardInputTimelineFacts(MediaFact.Known(tracks.values.maxOf { it.endSeconds }),
         MediaFact.Known(offset), MediaFact.Known(videoTime.effectivePresentationSeconds),
         MediaFact.Known(videoTime.endSeconds - videoTime.startSeconds),
-        audioTime?.let { MediaFact.Known(it.endSeconds - it.startSeconds) } ?: MediaFact.Unknown), SampleScanStatus.Complete)
-    } catch (stop: TimelineStop) { failure(stop.status) }
+        audioTime?.let { MediaFact.Known(it.endSeconds - it.startSeconds) } ?: MediaFact.Unknown,
+        MediaFact.Known(videoTime.timescale)), SampleScanStatus.Complete, facts)
+    } catch (stop: SampleScanStop) { failure(stop.status) }
       catch (_: CancellationException) { failure(SampleScanStatus.Cancelled) }
       catch (_: LinkageError) { failure(SampleScanStatus.Unsupported) }
       catch (_: Exception) { failure(if (isCancelled()) SampleScanStatus.Cancelled else SampleScanStatus.Unreadable) }
   }
+
 }
 
-internal class TimelineStop(val status: SampleScanStatus) : RuntimeException()
 
 private fun checkedAdd(a: Long, b: Long): Long {
   val result = a + b
@@ -127,7 +122,33 @@ internal data class IsoTrackTimeline(
   val endSeconds: Double,
   val effectivePresentationSeconds: List<Double>,
   val hasEdit: Boolean,
+  val timescale: Long,
+  val mediaStartSeconds: Double,
+  /** Decode-order indices of samples whose presentation intervals overlap the effective edit. */
+  val effectiveSampleIndices: List<Int>,
 )
+
+/** A single table-to-platform timestamp convention must agree for the entire track. */
+internal class PlatformTimestampMatcher(private val timing: IsoTrackTimeline) {
+  private var shifted = true
+  private var raw = true
+  private var clamped = true
+  private var firstSampleShifted = true
+
+  fun matches(index: Int, actual: Double): Boolean {
+    val effective = timing.presentationSeconds[index]
+    val unshifted = effective + timing.mediaStartSeconds
+    val firstRaw = timing.presentationSeconds.first() + timing.mediaStartSeconds
+    val legacyShift = minOf(timing.mediaStartSeconds, maxOf(0.0, firstRaw))
+    fun near(expected: Double) = actual.isFinite() && abs(actual - expected) <= 2e-6
+    shifted = shifted && near(effective)
+    raw = raw && near(unshifted)
+    clamped = clamped && near(maxOf(0.0, effective))
+    // Android Q limits the video shift to the first composition time and clamps early CTS.
+    firstSampleShifted = firstSampleShifted && near(maxOf(0.0, unshifted - legacyShift))
+    return shifted || raw || clamped || firstSampleShifted
+  }
+}
 
 /** Timing-only extension of the existing bounded ISO box walker; never parses sample sizes or NALs. */
 internal object IsoTimelineReader {
@@ -170,7 +191,7 @@ internal object IsoTimelineReader {
           require(version in (if (composition) 0..1 else 0..0))
           require(input.readUnsignedByte() == 0 && input.readUnsignedShort() == 0)
           val entries = uint()
-          if (entries > maximumSamples) throw TimelineStop(SampleScanStatus.LimitExceeded)
+          if (entries > maximumSamples) throw SampleScanStop(SampleScanStatus.LimitExceeded)
           require(entries > 0 && box.end - box.payload == 8 + entries * 8)
           var samples = 0L
           return List(entries.toInt()) {
@@ -180,7 +201,7 @@ internal object IsoTimelineReader {
             // Full extractor reads below must agree before any timeline becomes Known.
             val value = if (composition) input.readInt().toLong() else uint()
             samples += n
-            if (samples > maximumSamples) throw TimelineStop(SampleScanStatus.LimitExceeded)
+            if (samples > maximumSamples) throw SampleScanStop(SampleScanStatus.LimitExceeded)
             require(n > 0 && (composition || value > 0))
             n.toInt() to value
           }
@@ -188,7 +209,7 @@ internal object IsoTimelineReader {
         val durations = runs(tables.single { it.type == "stts" }, false)
         val sampleCount = durations.sumOf { it.first }
         totalSamples += sampleCount
-        if (totalSamples > maximumSamples) throw TimelineStop(SampleScanStatus.LimitExceeded)
+        if (totalSamples > maximumSamples) throw SampleScanStop(SampleScanStatus.LimitExceeded)
         val deltas = LongArray(sampleCount)
         var position = 0
         for ((count, delta) in durations) repeat(count) { deltas[position++] = delta }
@@ -223,7 +244,7 @@ internal object IsoTimelineReader {
           val version = input.readUnsignedByte()
           require(version in 0..1 && input.readUnsignedByte() == 0 && input.readUnsignedShort() == 0)
           val count = uint()
-          if (count > 1) throw TimelineStop(SampleScanStatus.Unsupported)
+          if (count > 1) throw SampleScanStop(SampleScanStatus.Unsupported)
           require(list.end - list.payload == 8 + count * (if (version == 0) 12 else 20))
           if (count == 1L) {
             val duration = if (version == 0) uint() else input.readLong()
@@ -244,10 +265,10 @@ internal object IsoTimelineReader {
             rawEnd + 2.0 / scale + 1.0 / movieScale >= mediaStart + end)
         } else require(rawStart >= 0)
         val platformTimes = DoubleArray(sampleCount) { starts[it].toDouble() / scale - mediaStart }
-        val effectiveTimes = starts.indices.filter { ends[it].toDouble() / scale > mediaStart && platformTimes[it] < end }
-          .map { maxOf(0.0, platformTimes[it]) }.sorted()
+        val effectiveIndices = starts.indices.filter { ends[it].toDouble() / scale > mediaStart && platformTimes[it] < end }
+        val effectiveTimes = effectiveIndices.map { maxOf(start, platformTimes[it]) }.sorted()
         require(effectiveTimes.isNotEmpty())
-        index to IsoTrackTimeline(platformTimes, start, end, effectiveTimes, editDuration != null)
+        index to IsoTrackTimeline(platformTimes, start, end, effectiveTimes, editDuration != null, scale, mediaStart, effectiveIndices)
       }.toMap()
     }
 }
