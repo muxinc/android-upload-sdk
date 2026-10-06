@@ -13,6 +13,7 @@ internal sealed interface AudioVideoStartOffset {
 }
 
 internal data class StandardInputTimelineFacts(
+  /** Effective endpoint of video and first audio, the tracks retained by conversion. */
   val durationSeconds: MediaFact<Double> = MediaFact.Unknown,
   val audioVideoStartOffset: MediaFact<AudioVideoStartOffset> = MediaFact.Unknown,
   /** Effective video PTS in presentation order, excluding encoder priming outside the edit. */
@@ -89,7 +90,8 @@ internal class StandardInputTimelineInspector(
         .copy(editList = metadata.isoTracks.valueOrNull
           ?.getOrNull(video.containerIndex.valueOrNull ?: -1)?.editList ?: MediaFact.Unknown)
       reader.checkBudget()
-      result(SampleScanStatus.Complete, StandardInputTimelineFacts(MediaFact.Known(tracks.values.maxOf { it.endSeconds }),
+      result(SampleScanStatus.Complete, StandardInputTimelineFacts(
+        MediaFact.Known(maxOf(videoTime.endSeconds, audioTime?.endSeconds ?: videoTime.endSeconds)),
         MediaFact.Known(offset), MediaFact.Known(videoTime.effectivePresentationSeconds),
         MediaFact.Known(videoTime.endSeconds - videoTime.startSeconds),
         audioTime?.let { MediaFact.Known(it.endSeconds - it.startSeconds) } ?: MediaFact.Unknown,
