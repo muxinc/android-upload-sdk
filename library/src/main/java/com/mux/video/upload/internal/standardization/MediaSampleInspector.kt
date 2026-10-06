@@ -41,7 +41,12 @@ internal data class CompressedVideoSample(
 internal class MediaSampleInspector(private val limits: SampleScanLimits = SampleScanLimits(),
   private val apiLevel: Int = Build.VERSION.SDK_INT) {
   fun inspect(file: File, metadata: MediaMetadataInspection,
-    isCancelled: () -> Boolean = { Thread.currentThread().isInterrupted }): MediaSampleInspection {
+    isCancelled: () -> Boolean = { Thread.currentThread().isInterrupted }): MediaSampleInspection =
+    inspect(file, metadata, null, isCancelled)
+
+  /** Output validation supplies proven video duration; source-only scans retain the observation. */
+  fun inspect(file: File, metadata: MediaMetadataInspection, provenVideoDurationSeconds: MediaFact<Double>?,
+    isCancelled: () -> Boolean): MediaSampleInspection {
     val started = System.nanoTime()
     val samples = ArrayList<CompressedVideoSample>()
     var bytes = 0L
@@ -100,7 +105,7 @@ internal class MediaSampleInspector(private val limits: SampleScanLimits = Sampl
         ContainerKind.Matroska -> MediaFact.Known(EditList.None)
         else -> MediaFact.Unknown
       }
-      val facts = VideoSampleFactsReader.read(samples, track.reportedDurationSeconds, metadata.facts).copy(editList = edit)
+      val facts = VideoSampleFactsReader.read(samples, provenVideoDurationSeconds ?: track.reportedDurationSeconds, metadata.facts).copy(editList = edit)
       if (isCancelled()) return result(SampleScanStatus.Cancelled)
       if (System.nanoTime() - started >= limits.maximumElapsedNanos) return result(SampleScanStatus.LimitExceeded)
       result(SampleScanStatus.Complete, facts)

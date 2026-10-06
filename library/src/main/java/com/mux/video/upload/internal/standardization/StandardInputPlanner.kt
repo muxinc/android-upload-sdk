@@ -69,6 +69,7 @@ internal data class StandardInputConversion(
   val selection: PolicySelection,
   /** Other policy violations requiring proof; explicit AAC preparation and tone mapping supply their own. */
   val requirementsToRemediate: Set<PolicyRequirement>,
+  /** Display-oriented pixels with rotation baked in; generated output must report rotation zero. */
   val outputDimensions: Dimensions,
   /** Nominal measured rate when preserving timestamps; an exact target when resampling. */
   val outputFrameRate: Double,
