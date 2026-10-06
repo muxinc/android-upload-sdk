@@ -1,6 +1,7 @@
 package com.mux.video.upload.internal.standardization
 
 import android.media.MediaExtractor
+import android.os.Build
 import com.mux.exoplayeradapter.AbsRobolectricTest
 import io.mockk.*
 import org.junit.Assert.*
@@ -35,7 +36,7 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
     return try { IsoTimelineReader.read(file, maximum).getValue(0) } finally { file.delete() }
   }
   private fun invalid(tracks: ByteArray, scale: Int = 1000, maximum: Int = 250000) {
-    try { read(tracks, scale, maximum); fail("Unproven timeline was published") } catch (_: IllegalArgumentException) { } catch (stop: TimelineStop) { assertEquals(SampleScanStatus.LimitExceeded, stop.status) }
+    try { read(tracks, scale, maximum); fail("Unproven timeline was published") } catch (_: IllegalArgumentException) { } catch (stop: SampleScanStop) { assertEquals(SampleScanStatus.LimitExceeded, stop.status) }
   }
   @Test fun provesFinalVfrSampleDurationWithoutUsingReportedHeaderDuration() {
     val time = read(track(deltas = listOf(100, 200, 700)))
@@ -79,7 +80,7 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
     invalid(track(), maximum = 2)
     val file = file(extra = box("moof", byteArrayOf()))
     try {
-      try { IsoTimelineReader.read(file, 250000); fail("Fragment accepted") } catch (_: IllegalArgumentException) { } catch (stop: TimelineStop) { assertEquals(SampleScanStatus.LimitExceeded, stop.status) }
+      try { IsoTimelineReader.read(file, 250000); fail("Fragment accepted") } catch (_: IllegalArgumentException) { } catch (stop: SampleScanStop) { assertEquals(SampleScanStatus.LimitExceeded, stop.status) }
     } finally { file.delete() }
   }
 
@@ -92,25 +93,53 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
   }
   private fun inspect(audio: Boolean = false, audioOffset: Int = 0, sampleLimit: Int = 250000,
     missingTail: Boolean = false, partial: Boolean = false, cancelAfterRead: Boolean = false,
-    legacyBufferFailure: Boolean = false): TimelineInspection {
-    val file = file(track() + if (audio) track(kind = "soun", offsets = List(3) { audioOffset }) else byteArrayOf())
+    legacyBufferFailure: Boolean = false, apiLevel: Int = 23, expectedSize: Long = 6, readSize: Int = 6,
+    videoEdit: Long? = null, audioEdit: Long? = null, platformMode: String = "shifted",
+    mixedConvention: Boolean = false, byteLimit: Long = 1024L * 1024 * 1024): TimelineInspection {
+    val file = file(track(edits = videoEdit?.let { edit(2000, it) } ?: byteArrayOf()) +
+      if (audio) track(kind = "soun", offsets = List(3) { audioOffset },
+        edits = audioEdit?.let { edit(2000, it) } ?: byteArrayOf()) else byteArrayOf())
     mockkConstructor(MediaExtractor::class)
-    var selected = 0; var index = 0; var cancelled = false; var releases = 0
-    every { anyConstructed<MediaExtractor>().setDataSource(any<String>()) } just Runs
-    every { anyConstructed<MediaExtractor>().selectTrack(any()) } answers { selected = firstArg(); index = 0 }
-    every { anyConstructed<MediaExtractor>().sampleTrackIndex } answers { if (index < if (missingTail) 2 else 3) selected else -1 }
-    every { anyConstructed<MediaExtractor>().sampleTime } answers { index * 1000000L + if (selected == 1) audioOffset * 1000L else 0L }
-    every { anyConstructed<MediaExtractor>().sampleFlags } returns if (partial) 4 else 0
+    var position = 0; var cancelled = false; var releases = 0; var sources = 0; var reads = 0
+    val selected = mutableSetOf<Int>()
+    val count = if (missingTail) 2 else 3
+    // Interleaved tracks preserve decode order within each track.
+    val sequence = (0 until count).flatMap { index -> (0..if (audio) 1 else 0).map { it to index } }
+    every { anyConstructed<MediaExtractor>().setDataSource(any<String>()) } answers { sources++ }
+    every { anyConstructed<MediaExtractor>().selectTrack(any()) } answers { selected.add(firstArg()) }
+    every { anyConstructed<MediaExtractor>().sampleTrackIndex } answers { sequence.getOrNull(position)?.first ?: -1 }
+    every { anyConstructed<MediaExtractor>().sampleTime } answers {
+      val (track, index) = sequence[position]
+      val start = if (track == 0) videoEdit ?: 0L else audioEdit ?: 0L
+      val raw = index * 1000000L + if (track == 1) audioOffset * 1000L else 0L
+      if (platformMode == "raw" || (mixedConvention && index == 1)) raw
+      else if (platformMode == "clamped") maxOf(0L, raw - start * 1000L) else raw - start * 1000L
+    }
+    if (Build.VERSION.SDK_INT >= 28) every { anyConstructed<MediaExtractor>().sampleSize } returns expectedSize
+    every { anyConstructed<MediaExtractor>().sampleFlags } answers { if (partial) 4 else if (sequence[position].second == 0) 1 else 0 }
     every { anyConstructed<MediaExtractor>().readSampleData(any(), 0) } answers {
+      reads++
       if (legacyBufferFailure) throw IllegalArgumentException("Capped buffer")
       if (cancelAfterRead) cancelled = true
-      4
+      if (readSize == 6) {
+        if (firstArg<ByteBuffer>().capacity() < 6) throw IllegalArgumentException("Capped buffer")
+        firstArg<ByteBuffer>().put(byteArrayOf(0,0,0,1,0x65,0x80.toByte()))
+      }
+      readSize
     }
-    every { anyConstructed<MediaExtractor>().advance() } answers { ++index < 3 }
+    every { anyConstructed<MediaExtractor>().advance() } answers { ++position < sequence.size }
     every { anyConstructed<MediaExtractor>().release() } answers { releases++ }
     return try {
-      StandardInputTimelineInspector(SampleScanLimits(maximumSamples = sampleLimit), 23).inspect(file, metadata(audio)) { cancelled }
-        .also { if (sampleLimit >= 3) assertTrue(releases > 0) }
+      StandardInputTimelineInspector(SampleScanLimits(maximumSamples = sampleLimit, maximumReadBytes = byteLimit), apiLevel)
+        .inspect(file, metadata(audio).copy(facts = metadata(audio).facts.copy(videoCodec = known(VideoCodec.H264)))) { cancelled }
+        .also {
+          if (it.status == SampleScanStatus.Complete) {
+            assertEquals(1, sources); assertEquals(1, releases)
+            assertEquals(if (audio) setOf(0,1) else setOf(0), selected)
+            assertEquals(sequence.size, reads)
+            assertNotNull(it.sampleFacts)
+          }
+        }
     } finally { unmockkConstructor(MediaExtractor::class); file.delete() }
   }
   @Test fun noAudioHasExplicitNotApplicableOffsetAndEffectiveEndpoint() {
@@ -138,5 +167,53 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
     val result = StandardInputTimelineInspector(apiLevel = 23).inspect(File("unused"),
       metadata(false).copy(container = known(ContainerKind.Matroska))) { true }
     assertEquals(SampleScanStatus.Cancelled, result.status)
+  }
+
+  @Test @Config(sdk = [28]) fun rawShiftedAndClampedEditTimesUseTheSameEffectiveTimeline() {
+    for (api in listOf(23,28,29,36)) for (mode in listOf("raw","shifted","clamped")) {
+      val result = inspect(audio = true, videoEdit = 1000, audioEdit = 1000, apiLevel = api, platformMode = mode)
+      assertEquals("$api $mode", SampleScanStatus.Complete, result.status)
+      assertEquals(known(2.0), result.timeline.durationSeconds)
+      assertEquals(known(listOf(0.0,1.0)), result.timeline.videoPresentationSeconds)
+      assertEquals(known(48L), result.sampleFacts!!.averageBitrate)
+      assertEquals(known(2.0), result.sampleFacts.maximumKeyframeIntervalSeconds)
+    }
+    assertEquals(SampleScanStatus.Unsupported, inspect(videoEdit = 1000, mixedConvention = true).status)
+  }
+
+  @Test fun extractorConventionMustAgreeForEverySampleIncludingBFrameReordering() {
+    val time = read(track(offsets = listOf(500,1500,-500), edits = edit(2000,1000)))
+    val shifted = PlatformTimestampMatcher(time)
+    assertTrue(time.presentationSeconds.indices.all { shifted.matches(it, time.presentationSeconds[it]) })
+    val capped = PlatformTimestampMatcher(time)
+    val raw = time.presentationSeconds.map { it + time.mediaStartSeconds }
+    assertTrue(raw.indices.all { capped.matches(it, maxOf(0.0, raw[it] - 0.5)) })
+    val wrong = PlatformTimestampMatcher(time)
+    assertTrue(wrong.matches(0, raw[0]))
+    assertFalse(wrong.matches(1, raw[1] + 0.001))
+  }
+
+  @Test @Config(sdk = [28]) fun modernSizeChecksHaveTheSameBoundsAsLegacyReads() {
+    assertEquals(SampleScanStatus.Complete, inspect(apiLevel = 28).status)
+    assertEquals(SampleScanStatus.Unreadable, inspect(apiLevel = 28, expectedSize = 7).status)
+    assertEquals(SampleScanStatus.LimitExceeded, inspect(apiLevel = 28, expectedSize = 0).status)
+    assertEquals(SampleScanStatus.LimitExceeded, inspect(apiLevel = 28, expectedSize = 4194305).status)
+    assertEquals(SampleScanStatus.LimitExceeded, inspect(apiLevel = 23, readSize = 4194305).status)
+    assertEquals(SampleScanStatus.Unreadable, inspect(apiLevel = 23, readSize = -1).status)
+  }
+
+  @Test fun combinedTracksShareOneBudgetAndExactEofLimitsAreAllowed() {
+    assertEquals(SampleScanStatus.Complete, inspect(audio = true, sampleLimit = 6, byteLimit = 36).status)
+    assertEquals(SampleScanStatus.LimitExceeded, inspect(audio = true, sampleLimit = 5).status)
+    assertEquals(SampleScanStatus.LimitExceeded, inspect(audio = true, byteLimit = 35).status)
+  }
+
+  @Test fun editedVfrEndpointAndTimescaleAreCarriedToSampleFacts() {
+    val time = read(track(deltas = listOf(1000,1000,1000,1000,2000), edits = edit(4500,1000)))
+    assertEquals(1000L, time.timescale)
+    assertEquals(4.5, time.endSeconds, 0.0)
+    val samples = List(5) { CompressedVideoSample((it - 1) * 1000000L, 100, it == 0 || it == 2,
+      known(GopStructure.ClosedWithIdr)) }
+    assertEquals(known(3.5), VideoSampleFactsReader.read(samples, MediaFact.Unknown, timeline = time).maximumKeyframeIntervalSeconds)
   }
 }
