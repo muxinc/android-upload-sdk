@@ -114,6 +114,8 @@ internal data class IsoTrackTimeline(
   val presentationSeconds: DoubleArray,
   val startSeconds: Double,
   val endSeconds: Double,
+  /** End of all sample presentation intervals, including trimmed tails, in the shifted timebase. */
+  val fullEndSeconds: Double,
   val effectivePresentationSeconds: List<Double>,
   val hasEdit: Boolean,
   val timescale: Long,
@@ -262,7 +264,7 @@ internal object IsoTimelineReader {
         val effectiveIndices = starts.indices.filter { ends[it].toDouble() / scale > mediaStart && platformTimes[it] < end }
         val effectiveTimes = effectiveIndices.map { maxOf(start, platformTimes[it]) }.sorted()
         require(effectiveTimes.isNotEmpty())
-        index to IsoTrackTimeline(platformTimes, start, end, effectiveTimes, editDuration != null, scale, mediaStart, effectiveIndices)
+        index to IsoTrackTimeline(platformTimes, start, end, rawEnd - mediaStart, effectiveTimes, editDuration != null, scale, mediaStart, effectiveIndices)
       }.toMap()
     }
 }

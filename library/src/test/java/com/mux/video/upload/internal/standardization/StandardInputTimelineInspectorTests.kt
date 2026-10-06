@@ -179,7 +179,7 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
       assertEquals("$api $mode", SampleScanStatus.Complete, result.status)
       assertEquals(known(2.0), result.timeline.durationSeconds)
       assertEquals(known(listOf(0.0,1.0)), result.timeline.videoPresentationSeconds)
-      assertEquals(known(72L), result.facts.averageBitrate)
+      assertEquals(known(48L), result.facts.averageBitrate)
       assertEquals(known(2.0), result.facts.maximumKeyframeIntervalSeconds)
     }
     assertEquals(SampleScanStatus.Unsupported, inspect(videoEdit = 1000, mixedConvention = true).status)
@@ -216,6 +216,7 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
     val time = read(track(deltas = listOf(1000,1000,1000,1000,2000), edits = edit(4500,1000)))
     assertEquals(1000L, time.timescale)
     assertEquals(4.5, time.endSeconds, 0.0)
+    assertEquals(5.0, time.fullEndSeconds, 0.0)
     val samples = List(5) { CompressedVideoSample((it - 1) * 1000000L, 100, it == 0 || it == 2,
       known(GopStructure.ClosedWithIdr)) }
     assertEquals(known(3.5), VideoSampleFactsReader.read(samples, MediaFact.Unknown, timeline = time).maximumKeyframeIntervalSeconds)

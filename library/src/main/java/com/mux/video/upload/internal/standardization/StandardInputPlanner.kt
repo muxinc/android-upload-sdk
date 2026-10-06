@@ -6,6 +6,8 @@ import com.mux.video.upload.internal.InputStandardization
 /** Proof for this source and conversion path, supplied by the caller, never inferred from a codec list. */
 internal data class PlanningCapabilities(
   val sourceIsDecodable: Boolean = false,
+  /** Effective source duration, A/V offset, and video timestamps are proven for output validation. */
+  val sourceTimelineIsProven: Boolean = false,
   val encodableVideoCodecs: Set<VideoCodec> = emptySet(),
   /** A FrameRate entry must prove cadence conversion while preserving the effective source timeline. */
   val remediableRequirements: Set<PolicyRequirement> = emptySet(),
@@ -21,6 +23,7 @@ internal data class PlanningCapabilities(
 ) {
   fun missingCapabilities(conversion: StandardInputConversion): Set<ConversionCapabilityFailure> = buildSet {
     if (!sourceIsDecodable) add(ConversionCapabilityFailure.SourceDecode)
+    if (!sourceTimelineIsProven) add(ConversionCapabilityFailure.SourceTimeline)
     if (conversion.outputCodec !in encodableVideoCodecs) add(ConversionCapabilityFailure.VideoEncode)
     for (requirement in conversion.requirementsToRemediate - remediableRequirements) {
       add(ConversionCapabilityFailure.Remediation(requirement))
@@ -37,6 +40,7 @@ internal data class PlanningCapabilities(
 /** Missing proof for the codec, range, and requirements carried by the associated conversion. */
 internal sealed interface ConversionCapabilityFailure {
   data object SourceDecode : ConversionCapabilityFailure
+  data object SourceTimeline : ConversionCapabilityFailure
   data object VideoEncode : ConversionCapabilityFailure
   data class Remediation(val requirement: PolicyRequirement) : ConversionCapabilityFailure
   data object AacAudioPreparation : ConversionCapabilityFailure
