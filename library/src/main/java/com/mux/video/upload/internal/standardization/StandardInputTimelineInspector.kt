@@ -6,7 +6,6 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.util.concurrent.CancellationException
 import kotlin.math.abs
-import kotlin.math.roundToLong
 
 internal sealed interface AudioVideoStartOffset {
   data object NotApplicable : AudioVideoStartOffset
@@ -71,7 +70,7 @@ internal class StandardInputTimelineInspector(
             if (trackIndex == video.extractorIndex) {
               val sync = flags and MediaExtractor.SAMPLE_FLAG_SYNC != 0
               val codec = metadata.facts.videoCodec.valueOrNull
-              samples.add(CompressedVideoSample((timing.presentationSeconds[index] * 1e6).roundToLong(), size, sync,
+              samples.add(CompressedVideoSample(size, sync,
                 if (sync && codec != null) SampleRandomAccessReader.read(codec, data, size) else MediaFact.Unknown))
             }
           }
@@ -86,8 +85,9 @@ internal class StandardInputTimelineInspector(
       val audioTime = firstAudio?.let { timingByExtractor.getValue(it.extractorIndex) }
       val offset = audioTime?.let { AudioVideoStartOffset.Seconds(it.startSeconds - videoTime.startSeconds) }
         ?: AudioVideoStartOffset.NotApplicable
-      val facts = VideoSampleFactsReader.read(samples, MediaFact.Unknown, metadata.facts, videoTime)
-        .copy(editList = videoEditList(metadata, video))
+      val facts = VideoSampleFactsReader.read(samples, videoTime, metadata.facts)
+        .copy(editList = metadata.isoTracks.valueOrNull
+          ?.getOrNull(video.containerIndex.valueOrNull ?: -1)?.editList ?: MediaFact.Unknown)
       reader.checkBudget()
       result(SampleScanStatus.Complete, StandardInputTimelineFacts(MediaFact.Known(tracks.values.maxOf { it.endSeconds }),
         MediaFact.Known(offset), MediaFact.Known(videoTime.effectivePresentationSeconds),

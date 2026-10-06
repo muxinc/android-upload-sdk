@@ -96,7 +96,7 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
     legacyBufferFailure: Boolean = false, apiLevel: Int = 23, expectedSize: Long = 6, readSize: Int = 6,
     videoEdit: Long? = null, audioEdit: Long? = null, platformMode: String = "shifted",
     mixedConvention: Boolean = false, byteLimit: Long = 1024L * 1024 * 1024,
-    sourcePath: Boolean = false, videoDeltas: List<Int> = listOf(1000,1000,1000), editDuration: Long = 2000,
+    videoDeltas: List<Int> = listOf(1000,1000,1000), editDuration: Long = 2000,
     input: MediaMetadataInspection = metadata(audio).copy(facts = metadata(audio).facts.copy(videoCodec = known(VideoCodec.H264)))
   ): MediaSampleInspection {
     val file = file(track(deltas = videoDeltas, edits = videoEdit?.let { edit(editDuration, it) } ?: byteArrayOf()) +
@@ -135,9 +135,7 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
     every { anyConstructed<MediaExtractor>().release() } answers { releases++ }
     return try {
       val limits = SampleScanLimits(maximumSamples = sampleLimit, maximumReadBytes = byteLimit)
-      val inspector = if (sourcePath) MediaSampleInspector(limits, apiLevel)::inspect
-        else StandardInputTimelineInspector(limits, apiLevel)::inspect
-      inspector(file, input) { cancelled }.also {
+      StandardInputTimelineInspector(limits, apiLevel).inspect(file, input) { cancelled }.also {
         if (it.status == SampleScanStatus.Complete) {
           assertEquals(1, sources); assertEquals(1, releases)
           assertEquals(if (audio) setOf(0,1) else setOf(0), selected)
@@ -167,10 +165,20 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
       assertEquals(StandardInputTimelineFacts(), result.timeline)
     }
   }
-  @Test fun cancellationWinsBeforeUnsupportedMetadata() {
-    val result = StandardInputTimelineInspector(apiLevel = 23).inspect(File("unused"),
-      metadata(false).copy(container = known(ContainerKind.Matroska))) { true }
-    assertEquals(SampleScanStatus.Cancelled, result.status)
+  @Test fun nonIsoScansReturnMetadataWithoutOpeningAnExtractorAndCancellationWins() {
+    mockkConstructor(MediaExtractor::class)
+    try {
+      for (container in listOf(known(ContainerKind.Matroska), known(ContainerKind.Other), MediaFact.Unknown)) {
+        val input = metadata(false).copy(container = container)
+        val result = StandardInputTimelineInspector().inspect(File("unused"), input)
+        assertEquals(SampleScanStatus.Unsupported, result.status)
+        assertEquals(input.facts, result.facts)
+        assertEquals(StandardInputTimelineFacts(), result.timeline)
+        assertEquals(0, result.sampleCount)
+        assertEquals(SampleScanStatus.Cancelled, StandardInputTimelineInspector().inspect(File("unused"), input) { true }.status)
+      }
+      verify(exactly = 0) { anyConstructed<MediaExtractor>().setDataSource(any<String>()) }
+    } finally { unmockkConstructor(MediaExtractor::class) }
   }
 
   @Test @Config(sdk = [28]) fun rawShiftedAndClampedEditTimesUseTheSameEffectiveTimeline() {
@@ -217,9 +225,9 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
     assertEquals(1000L, time.timescale)
     assertEquals(4.5, time.endSeconds, 0.0)
     assertEquals(5.0, time.fullEndSeconds, 0.0)
-    val samples = List(5) { CompressedVideoSample((it - 1) * 1000000L, 100, it == 0 || it == 2,
+    val samples = List(5) { CompressedVideoSample(100, it == 0 || it == 2,
       known(GopStructure.ClosedWithIdr)) }
-    assertEquals(known(3.5), VideoSampleFactsReader.read(samples, MediaFact.Unknown, timeline = time).maximumKeyframeIntervalSeconds)
+    assertEquals(known(3.5), VideoSampleFactsReader.read(samples, time).maximumKeyframeIntervalSeconds)
   }
 
   @Test fun editedIsoSourceCadencePlansAndValidatesOnlyThePresentedWindow() {
@@ -227,7 +235,7 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
       isoTracks = known(listOf(IsoTrackMetadata("vide", known(1), listOf("avc1"), false,
         known(0), true, known(EditList.Simple)))),
       facts = compliantFacts(dimensions = Dimensions(2560,1440)).copy(audioTracks = known(emptyList())))
-    val source = inspect(sourcePath = true, videoDeltas = listOf(25,200,200,200), videoEdit = 25,
+    val source = inspect(videoDeltas = listOf(25,200,200,200), videoEdit = 25,
       editDuration = 600, platformMode = "raw", input = input)
     assertEquals(SampleScanStatus.Complete, source.status)
     assertEquals(known(5.0), source.facts.frameRate)
@@ -252,16 +260,16 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
     assertTrue("Correctly trimmed output rejected: $result", result is StandardInputOutputValidation.Accepted)
   }
 
-  @Test fun isoSourceSharesTheCombinedBudgetAndNeverFallsBackToRawPartialFacts() {
-    val complete = inspect(audio = true, sourcePath = true, sampleLimit = 6, byteLimit = 36)
+  @Test fun incompleteIsoScansNeverPublishPartialFacts() {
+    val complete = inspect(audio = true, sampleLimit = 6, byteLimit = 36)
     assertEquals(SampleScanStatus.Complete, complete.status)
     assertEquals(6, complete.sampleCount)
     assertEquals(36L, complete.bytesRead)
     for ((result, status) in listOf(
-      inspect(audio = true, sourcePath = true, sampleLimit = 5) to SampleScanStatus.LimitExceeded,
-      inspect(sourcePath = true, cancelAfterRead = true) to SampleScanStatus.Cancelled,
-      inspect(sourcePath = true, missingTail = true) to SampleScanStatus.Unreadable,
-      inspect(sourcePath = true, videoEdit = 1000, mixedConvention = true) to SampleScanStatus.Unsupported)) {
+      inspect(audio = true, sampleLimit = 5) to SampleScanStatus.LimitExceeded,
+      inspect(cancelAfterRead = true) to SampleScanStatus.Cancelled,
+      inspect(missingTail = true) to SampleScanStatus.Unreadable,
+      inspect(videoEdit = 1000, mixedConvention = true) to SampleScanStatus.Unsupported)) {
       assertEquals(status, result.status)
       assertEquals(StandardInputTimelineFacts(), result.timeline)
       assertTrue(result.elapsedNanos > 0)

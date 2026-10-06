@@ -39,6 +39,12 @@ class StandardInputPlannerTests {
     }
   }
 
+  @Test fun resolutionViolationWithoutScannedCadenceFallsBackBeforeConversion() {
+    val facts = compliantFacts(dimensions = Dimensions(2560, 1440)).copy(frameRate = MediaFact.Unknown)
+    assertEquals(StandardInputAction.Fallback(FallbackReason.InsufficientEvidence),
+      planner.plan(facts, options(), fullCapabilities().copy(sourceTimelineIsProven = false)).action)
+  }
+
   @Test fun knownViolationPreservesH264AndHevcFamilies() {
     for (codec in listOf(VideoCodec.H264, VideoCodec.Hevc)) {
       val conversion = conversion(compliantFacts(codec).copy(frameRate = known(121.0)))
