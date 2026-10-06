@@ -138,7 +138,7 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
 
   private fun scan(limits: SampleScanLimits = SampleScanLimits(), cancel: () -> Boolean = { false },
     reader: ((ByteBuffer) -> Int)? = null, reportedSize: Long = 6, flagsOverride: Int? = null,
-    input: MediaMetadataInspection = metadata()): MediaSampleInspection {
+    input: MediaMetadataInspection = metadata(), provenDuration: MediaFact<Double>? = null): MediaSampleInspection {
     mockkConstructor(MediaExtractor::class)
     var index = 0
     var released = false
@@ -156,7 +156,7 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
     every { anyConstructed<MediaExtractor>().advance() } answers { ++index < 3 }
     every { anyConstructed<MediaExtractor>().release() } answers { released = true }
     return try {
-      MediaSampleInspector(limits).inspect(File("unused"), input, cancel).also {
+      MediaSampleInspector(limits).inspect(File("unused"), input, provenDuration, cancel).also {
         assertTrue(released)
       }
     } finally { unmockkConstructor(MediaExtractor::class) }
@@ -239,4 +239,14 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
       assertEquals(MediaFact.Unknown, SampleRandomAccessReader.read(VideoCodec.H264, data, data.size))
     } finally { unmockkStatic(NalUnitUtil::class) }
   }
+  @Test fun provenOutputDurationSuppliesBitrateAndFinalGopDenominator() {
+    val source = scan()
+    assertEquals(MediaFact.Known(48L), source.facts.averageBitrate)
+    val output = scan(provenDuration = MediaFact.Known(2.5))
+    assertEquals(SampleScanStatus.Complete, output.status)
+    assertEquals(MediaFact.Known(58L), output.facts.averageBitrate)
+    assertEquals(MediaFact.Known(58L), output.facts.maximumGopBitrate)
+    assertEquals(MediaFact.Known(2.5), output.facts.maximumKeyframeIntervalSeconds)
+  }
+
 }
