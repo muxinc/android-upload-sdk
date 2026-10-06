@@ -185,9 +185,8 @@ internal object VideoSampleFactsReader {
       timestamps = MediaFact.Known(TimestampFacts(ordered.first() / 1e6, ordered.last() / 1e6,
         ordered.size.toLong(), matchesDecodeOrder)),
     )
-    // Only a proven effective window replaces the raw source-duration observation.
-    // Unproven metadata must not extrapolate the final VFR interval.
-    val duration = timeline?.let { it.endSeconds - it.startSeconds } ?: reportedDuration.valueOrNull?.takeIf {
+    // Whole-track bytes use the full sample span; metadata must not extrapolate the final VFR interval.
+    val duration = timeline?.let { it.fullEndSeconds - it.presentationSeconds.min() } ?: reportedDuration.valueOrNull?.takeIf {
       it.isFinite() && it > span && it - span <= intervals.max() / 1e6 * 2
     }
     // Whole-track payload includes preroll and trimmed tails, even when cadence uses the effective edit.
@@ -216,7 +215,7 @@ internal object VideoSampleFactsReader {
       val end = boundaries.getOrNull(i + 1) ?: samples.size
       val startTime = maxOf(timeline?.startSeconds ?: Double.NEGATIVE_INFINITY, time(start))
       val rawEnd = if (end < samples.size) time(end)
-        else timeline?.endSeconds ?: duration?.plus(ordered.first() / 1e6) ?: return facts
+        else timeline?.fullEndSeconds ?: duration?.plus(ordered.first() / 1e6) ?: return facts
       val endTime = minOf(timeline?.endSeconds ?: Double.POSITIVE_INFINITY, rawEnd)
       val seconds = endTime - startTime
       if (!seconds.isFinite() || seconds <= 0) return facts
@@ -225,7 +224,7 @@ internal object VideoSampleFactsReader {
       // outside the edit. Without a reference graph, this is a conservative payload bound.
       val bytes = (start until end).sumOf { samples[it].byteSize.toLong() }
       maxBytes = maxOf(maxBytes, bytes)
-      maxRate = maxOf(maxRate, bitrate(bytes, seconds).valueOrNull ?: return facts)
+      maxRate = maxOf(maxRate, bitrate(bytes, rawEnd - time(start)).valueOrNull ?: return facts)
     }
     return facts.copy(maximumKeyframeIntervalSeconds = MediaFact.Known(maxInterval),
       // Leading pictures in open/unproven GOPs cannot be assigned reliably to a byte window.

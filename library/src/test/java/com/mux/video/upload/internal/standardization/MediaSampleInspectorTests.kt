@@ -239,16 +239,16 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
       assertEquals(MediaFact.Unknown, SampleRandomAccessReader.read(VideoCodec.H264, data, data.size))
     } finally { unmockkStatic(NalUnitUtil::class) }
   }
-  private fun editedTimeline(times: List<Double>, end: Double, presented: List<Int>): IsoTrackTimeline =
-    IsoTrackTimeline(times.toDoubleArray(), 0.0, end, presented.map { maxOf(0.0, times[it]) }.sorted(),
+  private fun editedTimeline(times: List<Double>, end: Double, presented: List<Int>, fullEnd: Double = end): IsoTrackTimeline =
+    IsoTrackTimeline(times.toDoubleArray(), 0.0, end, fullEnd, presented.map { maxOf(0.0, times[it]) }.sorted(),
       true, 1000, 1.0, presented)
 
   @Test fun effectiveEditCountsPrerollBytesAndRetainsTheIdrProof() {
     val samples = listOf(sample(-1_000_000, true, 1000), sample(0, bytes = 100), sample(1_000_000, bytes = 100))
     val time = editedTimeline(listOf(-1.0, 0.0, 1.0), 2.0, listOf(1, 2))
     val facts = VideoSampleFactsReader.read(samples, MediaFact.Unknown, timeline = time)
-    assertEquals(known(4800L), facts.averageBitrate)
-    assertEquals(known(4800L), facts.maximumGopBitrate)
+    assertEquals(known(3200L), facts.averageBitrate)
+    assertEquals(known(3200L), facts.maximumGopBitrate)
     assertEquals(known(1200L), facts.maximumGopByteSize)
     assertEquals(known(2.0), facts.maximumKeyframeIntervalSeconds)
     assertEquals(idr, facts.gopStructure)
@@ -259,30 +259,44 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
     assertEquals(MediaFact.Unknown, rejected.maximumGopBitrate)
   }
 
-  @Test fun editedVfrFinalGopEndsAtTheProvenEndpointInsteadOfRawFirstPtsPlusDuration() {
+  @Test fun editedVfrUsesFullSpanForBitrateAndEffectiveSpanForKeyframeInterval() {
     val samples = (0..4).map { sample((it - 1) * 1_000_000L, it == 0 || it == 2) }
-    val time = editedTimeline(listOf(-1.0, 0.0, 1.0, 2.0, 3.0), 4.5, listOf(1, 2, 3, 4))
+    val time = editedTimeline(listOf(-1.0, 0.0, 1.0, 2.0, 3.0), 4.5, listOf(1, 2, 3, 4), fullEnd = 5.0)
     val facts = VideoSampleFactsReader.read(samples, MediaFact.Unknown, timeline = time)
     assertEquals(known(3.5), facts.maximumKeyframeIntervalSeconds)
-    assertEquals(known(889L), facts.averageBitrate)
-    assertEquals(known(1600L), facts.maximumGopBitrate)
+    assertEquals(known(667L), facts.averageBitrate)
+    assertEquals(known(800L), facts.maximumGopBitrate)
   }
 
   @Test fun samplesWhollyPastTheEditCountTowardWholeTrackBitrateButNotPresentedCadence() {
     val samples = listOf(sample(0, true), sample(1_000_000),
       sample(2_000_000, true, 10000, known(GopStructure.Open)), sample(4_000_000))
-    val time = editedTimeline(listOf(0.0,1.0,2.0,4.0), 2.0, listOf(0,1))
+    val time = editedTimeline(listOf(0.0,1.0,2.0,4.0), 2.0, listOf(0,1), fullEnd = 5.0)
     val facts = VideoSampleFactsReader.read(samples, MediaFact.Unknown, timeline = time)
     assertEquals(known(Cadence.Constant), facts.cadence)
     assertEquals(idr, facts.gopStructure)
-    assertEquals(known(41200L), facts.averageBitrate)
+    assertEquals(known(16480L), facts.averageBitrate)
     assertEquals(known(2.0), facts.maximumKeyframeIntervalSeconds)
+  }
+
+  @Test fun compliantBitrateDoesNotIncreaseWhenAnEditCutsThroughAGop() {
+    val samples = List(120) { sample(it * 1_000_000L / 30, it % 60 == 0, 16667) }
+    for ((start, end) in listOf(59.0 / 30 to 4.0, 2.5 to 4.0, 0.0 to 61.0 / 30)) {
+      val times = samples.indices.map { it / 30.0 - start }
+      val presented = times.indices.filter { times[it] >= 0 && times[it] < end - start }
+      val timeline = editedTimeline(times, end - start, presented, fullEnd = 4.0 - start)
+      val facts = VideoSampleFactsReader.read(samples, MediaFact.Unknown, compliantFacts(), timeline)
+      assertEquals(known(4_000_080L), facts.averageBitrate)
+      assertEquals(known(4_000_080L), facts.maximumGopBitrate)
+      assertTrue(facts.maximumKeyframeIntervalSeconds.valueOrNull!! <= 2.0)
+      assertTrue(StandardInputPlanner().plan(facts, options(), fullCapabilities()).action is StandardInputAction.UploadOriginal)
+    }
   }
 
   @Test fun trimmingCannotHideOversizedDecodePrerollOrTailFromBitratePolicy() {
     val samples = listOf(sample(-1_000_000, true, 2_000_000), sample(0), sample(100_000),
       sample(200_000, bytes = 2_000_000))
-    val time = editedTimeline(listOf(-1.0, 0.0, 0.1, 0.2), 0.2, listOf(1,2))
+    val time = editedTimeline(listOf(-1.0, 0.0, 0.1, 0.2), 0.2, listOf(1,2), fullEnd = 0.3)
     val facts = VideoSampleFactsReader.read(samples, MediaFact.Unknown, compliantFacts(), time)
     val evaluation = StandardInputPolicyEvaluator().evaluate(facts, selection(), MediaRole.GeneratedOutput)
     assertTrue(evaluation.nonCompliantRequirements.contains(PolicyRequirement.AverageBitrate))
