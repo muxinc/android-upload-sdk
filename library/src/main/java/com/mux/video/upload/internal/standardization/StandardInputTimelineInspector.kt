@@ -23,17 +23,6 @@ internal data class StandardInputTimelineFacts(
   val videoTimescale: MediaFact<Long> = MediaFact.Unknown,
 )
 
-internal data class TimelineInspection(
-  val timeline: StandardInputTimelineFacts = StandardInputTimelineFacts(),
-  val status: SampleScanStatus,
-  /** Facts proven by the same payload scan; never published after a partial read. */
-  val sampleFacts: MediaFacts? = null,
-  val sampleCount: Int = 0,
-  val bytesRead: Long = 0,
-  val largestSampleBytes: Int = 0,
-  val elapsedNanos: Long = 0,
-)
-
 /**
  * Effective ISO presentation time, shared by source inspection and generated-output validation.
  * Timing tables prove the final sample's duration; full platform reads prove those samples exist.
@@ -44,11 +33,10 @@ internal class StandardInputTimelineInspector(
   private val apiLevel: Int = Build.VERSION.SDK_INT,
 ) {
   fun inspect(file: File, metadata: MediaMetadataInspection,
-    isCancelled: () -> Boolean = { Thread.currentThread().isInterrupted }): TimelineInspection {
+    isCancelled: () -> Boolean = { Thread.currentThread().isInterrupted }): MediaSampleInspection {
     val reader = BoundedSampleReader(limits, apiLevel, isCancelled)
     fun result(status: SampleScanStatus, timeline: StandardInputTimelineFacts = StandardInputTimelineFacts(),
-      facts: MediaFacts? = null) = TimelineInspection(timeline, status, facts, reader.sampleCount,
-        reader.bytesRead, reader.largestSampleBytes, reader.elapsedNanos)
+      facts: MediaFacts = metadata.facts) = reader.result(facts, status, timeline)
     return try {
       reader.checkBudget()
       if (metadata.container != MediaFact.Known(ContainerKind.IsoBaseMedia) ||

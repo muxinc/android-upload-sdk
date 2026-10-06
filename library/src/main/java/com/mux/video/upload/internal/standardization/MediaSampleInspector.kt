@@ -24,10 +24,10 @@ internal data class SampleScanLimits(
 internal data class MediaSampleInspection(
   val facts: MediaFacts,
   val status: SampleScanStatus,
-  val sampleCount: Int,
-  val bytesRead: Long,
-  val largestSampleBytes: Int,
-  val elapsedNanos: Long,
+  val sampleCount: Int = 0,
+  val bytesRead: Long = 0,
+  val largestSampleBytes: Int = 0,
+  val elapsedNanos: Long = 0,
   /** Proven ISO timeline from this scan; unknown for other containers or incomplete reads. */
   val timeline: StandardInputTimelineFacts = StandardInputTimelineFacts(),
 )
@@ -44,16 +44,12 @@ internal class MediaSampleInspector(private val limits: SampleScanLimits = Sampl
   private val apiLevel: Int = Build.VERSION.SDK_INT) {
   fun inspect(file: File, metadata: MediaMetadataInspection,
     isCancelled: () -> Boolean = { Thread.currentThread().isInterrupted }): MediaSampleInspection {
-    if (metadata.container == MediaFact.Known(ContainerKind.IsoBaseMedia)) {
-      val inspection = StandardInputTimelineInspector(limits, apiLevel).inspect(file, metadata, isCancelled)
-      return MediaSampleInspection(inspection.sampleFacts ?: metadata.facts, inspection.status,
-        inspection.sampleCount, inspection.bytesRead, inspection.largestSampleBytes, inspection.elapsedNanos,
-        inspection.timeline)
-    }
+    if (metadata.container == MediaFact.Known(ContainerKind.IsoBaseMedia))
+      return StandardInputTimelineInspector(limits, apiLevel).inspect(file, metadata, isCancelled)
     val reader = BoundedSampleReader(limits, apiLevel, isCancelled)
     val samples = ArrayList<CompressedVideoSample>()
     fun result(status: SampleScanStatus, facts: MediaFacts = metadata.facts) =
-      MediaSampleInspection(facts, status, reader.sampleCount, reader.bytesRead, reader.largestSampleBytes, reader.elapsedNanos)
+      reader.result(facts, status)
     if (isCancelled()) return result(SampleScanStatus.Cancelled)
     val track = metadata.tracks.filter { it.kind == TrackKind.Video }.singleOrNull()
       ?: return result(SampleScanStatus.Unsupported)
@@ -168,24 +164,26 @@ internal object VideoSampleFactsReader {
     if (samples.size < 2 || samples.any { it.byteSize <= 0 }) return base
     if (timeline != null && timeline.presentationSeconds.size != samples.size) return base
     val presented = timeline?.effectiveSampleIndices
-    if (presented != null && presented.size < 2) return base
     fun time(index: Int) = timeline?.presentationSeconds?.get(index) ?: (samples[index].presentationTimeUs / 1e6)
-    val measured = if (timeline == null) samples else presented!!.map { samples[it].copy(presentationTimeUs =
-      (maxOf(timeline?.startSeconds ?: Double.NEGATIVE_INFINITY, time(it)) * 1e6).roundToLong()) }
-    val ordered = LongArray(measured.size) { measured[it].presentationTimeUs }.also { it.sort() }
-    val intervals = LongArray(measured.size - 1) { ordered[it + 1] - ordered[it] }
+    val ordered = LongArray(presented?.size ?: samples.size) {
+      val index = presented?.get(it) ?: it
+      if (timeline == null) samples[index].presentationTimeUs
+      else (maxOf(timeline.startSeconds, time(index)) * 1e6).roundToLong()
+    }
+    if (ordered.size < 2) return base
+    val matchesDecodeOrder = (1 until ordered.size).all { ordered[it - 1] < ordered[it] }
+    ordered.sort()
+    val intervals = LongArray(ordered.size - 1) { ordered[it + 1] - ordered[it] }
     if (intervals.any { it <= 0 }) return base
     val span = (ordered.last() - ordered.first()) / 1e6
     if (!span.isFinite() || span <= 0) return base
-    val frameInterval = span / (measured.size - 1)
+    val frameInterval = span / (ordered.size - 1)
     val constant = intervals.all { abs(it / 1e6 - frameInterval) <= maxOf(2e-6, frameInterval * 0.001) }
     var facts = base.copy(
       frameRate = MediaFact.Known(1 / frameInterval),
       cadence = MediaFact.Known(if (constant) Cadence.Constant else Cadence.Variable),
       timestamps = MediaFact.Known(TimestampFacts(ordered.first() / 1e6, ordered.last() / 1e6,
-        measured.size.toLong(), (1 until measured.size).all {
-          measured[it - 1].presentationTimeUs < measured[it].presentationTimeUs
-        })),
+        ordered.size.toLong(), matchesDecodeOrder)),
     )
     // Only a proven effective window replaces the raw source-duration observation.
     // Unproven metadata must not extrapolate the final VFR interval.
