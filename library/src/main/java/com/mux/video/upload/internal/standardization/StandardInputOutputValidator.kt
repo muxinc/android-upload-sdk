@@ -13,7 +13,6 @@ internal sealed interface OutputRejection {
   data object EmptyOrUnreadable : OutputRejection
   data object ChangedDuringInspection : OutputRejection
   data class Metadata(val reason: MetadataFailure) : OutputRejection
-  data class SampleInspection(val status: SampleScanStatus) : OutputRejection
   data class TimelineInspection(val status: SampleScanStatus) : OutputRejection
   data class NonCompliant(val requirements: Set<PolicyRequirement>) : OutputRejection
   data class InsufficientPolicyEvidence(val requirements: Set<PolicyRequirement>) : OutputRejection
@@ -32,8 +31,6 @@ internal sealed interface StandardInputOutputValidation {
 internal class StandardInputOutputValidator(
   private val evaluator: StandardInputPolicyEvaluator = StandardInputPolicyEvaluator(),
   private val inspectMetadata: (File) -> MetadataInspectionResult = MediaMetadataInspector()::inspect,
-  private val inspectSamples: (File, MediaMetadataInspection, () -> Boolean, MediaFact<Double>) -> MediaSampleInspection =
-    { file, metadata, cancelled, duration -> MediaSampleInspector().inspect(file, metadata, duration, cancelled) },
   private val inspectTimeline: (File, MediaMetadataInspection, () -> Boolean) -> TimelineInspection =
     { file, metadata, cancelled -> StandardInputTimelineInspector().inspect(file, metadata, cancelled) },
 ) {
@@ -41,6 +38,7 @@ internal class StandardInputOutputValidator(
     conversion: StandardInputConversion,
     isCancelled: () -> Boolean = { Thread.currentThread().isInterrupted }): StandardInputOutputValidation {
     fun rejected(reason: OutputRejection) = StandardInputOutputValidation.Rejected(reason)
+    fun failedInspection() = if (isCancelled()) StandardInputOutputValidation.Cancelled else rejected(OutputRejection.EmptyOrUnreadable)
     return try {
       if (isCancelled()) return StandardInputOutputValidation.Cancelled
       if (!file.isFile || !file.canRead() || file.length() == 0L) return rejected(OutputRejection.EmptyOrUnreadable)
@@ -58,20 +56,14 @@ internal class StandardInputOutputValidator(
       val duration = timeline.timeline.videoDurationSeconds.valueOrNull
       if (duration == null || !duration.isFinite() || duration <= 0)
         return rejected(OutputRejection.InsufficientPlanEvidence(setOf(OutputExpectation.Duration)))
-      val samples = inspectSamples(file, metadata, isCancelled, timeline.timeline.videoDurationSeconds)
-      if (isCancelled() || samples.status == SampleScanStatus.Cancelled) return StandardInputOutputValidation.Cancelled
-      if (samples.status != SampleScanStatus.Complete) return rejected(OutputRejection.SampleInspection(samples.status))
-      if (isCancelled()) return StandardInputOutputValidation.Cancelled
+      val facts = timeline.sampleFacts ?: return rejected(OutputRejection.TimelineInspection(SampleScanStatus.Unreadable))
       if (file.length() != initialSize || file.lastModified() != initialModified)
         return rejected(OutputRejection.ChangedDuringInspection)
-      val result = validateFacts(samples.facts, source, sourceTimeline, timeline.timeline, conversion)
+      val result = validateFacts(facts, source, sourceTimeline, timeline.timeline, conversion)
       if (isCancelled()) StandardInputOutputValidation.Cancelled else result
     } catch (_: CancellationException) { StandardInputOutputValidation.Cancelled }
-      catch (_: LinkageError) {
-        if (isCancelled()) StandardInputOutputValidation.Cancelled else rejected(OutputRejection.EmptyOrUnreadable)
-      } catch (_: Exception) {
-        if (isCancelled()) StandardInputOutputValidation.Cancelled else rejected(OutputRejection.EmptyOrUnreadable)
-      }
+      catch (_: LinkageError) { failedInspection() }
+      catch (_: Exception) { failedInspection() }
   }
 
   fun validateFacts(output: MediaFacts, source: MediaFacts, sourceTimeline: StandardInputTimelineFacts,
@@ -128,9 +120,15 @@ internal class StandardInputOutputValidator(
         val outputTimes = outputTimeline.videoPresentationSeconds.valueOrNull
         if (sourceTimes == null || outputTimes == null || sourceTimes.isEmpty() || outputTimes.isEmpty())
           missing.add(OutputExpectation.Timestamps)
-        else if (sourceTimes.size != outputTimes.size || sourceTimes.indices.any {
-          !sourceTimes[it].isFinite() || !outputTimes[it].isFinite() || abs(sourceTimes[it] - outputTimes[it]) > 2e-6
-        }) mismatches.add(OutputExpectation.Timestamps)
+        else {
+          val timescale = outputTimeline.videoTimescale.valueOrNull?.takeIf { it > 0 }
+          if (timescale == null) missing.add(OutputExpectation.Timestamps)
+          else if (sourceTimes.size != outputTimes.size || sourceTimes.indices.any {
+            // Extractor/codec timestamps truncate to microseconds; the muxer rounds to output ticks.
+            !sourceTimes[it].isFinite() || !outputTimes[it].isFinite() ||
+              abs(sourceTimes[it] - outputTimes[it]) > 1e-6 + 0.5 / timescale + 1e-12
+          }) mismatches.add(OutputExpectation.Timestamps)
+        }
       }
     }
     fun compareDuration(sourceFact: MediaFact<Double>, outputFact: MediaFact<Double>) {
