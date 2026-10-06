@@ -77,7 +77,10 @@ internal class MediaSampleInspector(private val limits: SampleScanLimits = Sampl
         // API 23–27 has no size query. Cap the native buffer's capacity as well as its limit.
         val remaining = limits.maximumReadBytes - bytes
         val readBuffer = if (remaining < data.size) ByteBuffer.wrap(data, 0, remaining.toInt()).slice() else buffer
-        val size = extractor.readSampleData(readBuffer, 0)
+        val size = try { extractor.readSampleData(readBuffer, 0) } catch (_: IllegalArgumentException) {
+          // Legacy extractors signal an insufficient sample buffer with IllegalArgumentException.
+          return result(if (apiLevel < 28) SampleScanStatus.LimitExceeded else SampleScanStatus.Unreadable)
+        }
         if (size <= 0 || size > data.size || size.toLong() > limits.maximumReadBytes - bytes ||
           (expectedSize != null && size.toLong() != expectedSize)) return result(SampleScanStatus.LimitExceeded)
         bytes += size
@@ -90,8 +93,13 @@ internal class MediaSampleInspector(private val limits: SampleScanLimits = Sampl
       if (isCancelled()) return result(SampleScanStatus.Cancelled)
       if (System.nanoTime() - started >= limits.maximumElapsedNanos) return result(SampleScanStatus.LimitExceeded)
       // Match the shared video-edit policy. Audio edits remain separate track observations.
-      val edit = metadata.isoTracks.valueOrNull?.getOrNull(track.containerIndex.valueOrNull ?: -1)?.editList
-        ?: MediaFact.Unknown
+      val edit = when (metadata.container.valueOrNull) {
+        ContainerKind.IsoBaseMedia -> metadata.isoTracks.valueOrNull
+          ?.getOrNull(track.containerIndex.valueOrNull ?: -1)?.editList ?: MediaFact.Unknown
+        // This proves absence of ISO edits only, not an effective Matroska presentation timeline.
+        ContainerKind.Matroska -> MediaFact.Known(EditList.None)
+        else -> MediaFact.Unknown
+      }
       val facts = VideoSampleFactsReader.read(samples, track.reportedDurationSeconds, metadata.facts).copy(editList = edit)
       if (isCancelled()) return result(SampleScanStatus.Cancelled)
       if (System.nanoTime() - started >= limits.maximumElapsedNanos) return result(SampleScanStatus.LimitExceeded)
@@ -135,24 +143,25 @@ internal object SampleRandomAccessReader {
               if (next - start < 2 || (type == 5 && data[start].toInt() and 96 == 0)) return MediaFact.Unknown
               slices++; idr = idr && type == 5; hasIdr = hasIdr || type == 5
             }
-            6, 7, 8, 9, 12 -> Unit
-            else -> return MediaFact.Unknown
+            2, 3, 4 -> return MediaFact.Unknown
+            else -> Unit // Non-VCL NALs do not establish or invalidate random-access kind.
           }
         }
         VideoCodec.Hevc -> {
-          if (next - start < 3 || data[start].toInt() and 1 != 0 ||
+          if (next - start < 2 || data[start].toInt() and 1 != 0 ||
             data[start + 1].toInt() and 248 != 0 || data[start + 1].toInt() and 7 == 0)
             return MediaFact.Unknown
           val type = (data[start].toInt() and 126) shr 1
           when (type) {
             in 0..9, in 16..21 -> {
+              if (next - start < 3) return MediaFact.Unknown
               slices++
               idr = idr && type in 19..20
               hasIdr = hasIdr || type in 19..20
               if (type in 16..18 || type == 21) open = true
             }
-            32, 33, 34, 35, 38, 39, 40 -> Unit
-            else -> return MediaFact.Unknown
+            in 10..15, in 22..31 -> return MediaFact.Unknown
+            else -> Unit // Includes EOS/EOB and Dolby RPU signaling; HDR eligibility is separate.
           }
         }
         else -> return MediaFact.Unknown
