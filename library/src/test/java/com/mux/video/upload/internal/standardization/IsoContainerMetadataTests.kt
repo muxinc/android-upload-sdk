@@ -12,8 +12,10 @@ class IsoContainerMetadataTests : AbsRobolectricTest() {
   private fun int(value: Int) = ByteBuffer.allocate(4).putInt(value).array()
   private fun box(type: String, payload: ByteArray) = int(payload.size + 8) + type.toByteArray() + payload
   private fun track(handler: String = "vide", entry: String = "hvc1", extension: ByteArray = byteArrayOf(),
+    edits: ByteArray = byteArrayOf(), trackId: Int = 0,
     matrix: IntArray = intArrayOf(65536, 0, 0, 0, 65536, 0, 0, 0, 0x40000000)): ByteArray {
     val tkhd = ByteArray(84)
+    int(trackId).copyInto(tkhd, 12)
     for (i in matrix.indices) int(matrix[i]).copyInto(tkhd, 40 + i * 4)
     val hdlr = ByteArray(8) + handler.toByteArray()
     val description = ByteArray(if (handler == "vide") 78 else 28)
@@ -24,7 +26,7 @@ class IsoContainerMetadataTests : AbsRobolectricTest() {
     }
     val sampleEntry = box(entry, description + extension)
     val stsd = box("stsd", ByteArray(4) + int(1) + sampleEntry)
-    return box("trak", box("tkhd", tkhd) +
+    return box("trak", box("tkhd", tkhd) + edits +
       box("mdia", box("hdlr", hdlr) + box("minf", box("stbl", stsd))))
   }
 
@@ -44,6 +46,55 @@ class IsoContainerMetadataTests : AbsRobolectricTest() {
 
   @Test fun readsDolbySampleEntryEvenWithoutConfigurationChild() {
     assertTrue(read(box("moov", track(entry = "dvh1"))).valueOrNull!![0].hasDolbyVisionConfiguration)
+  }
+
+  private fun edit(version: Int = 0, entries: List<Pair<Long, Long>> = listOf(3000L to 0L),
+    rate: Int = 65536): ByteArray {
+    val payload = byteArrayOf(version.toByte(), 0, 0, 0) + int(entries.size) + entries.fold(byteArrayOf()) { bytes, (duration, time) ->
+      bytes + (if (version == 0) int(duration.toInt()) + int(time.toInt())
+        else ByteBuffer.allocate(16).putLong(duration).putLong(time).array()) + int(rate)
+    }
+    return box("edts", box("elst", payload))
+  }
+
+  @Test fun classifiesEditsWithoutApplyingTheirTimeline() {
+    fun classification(edits: ByteArray) = read(box("moov", track(edits = edits))).valueOrNull!!.single().editList
+    assertEquals(MediaFact.Known(EditList.None), classification(byteArrayOf()))
+    assertEquals(MediaFact.Known(EditList.None), classification(edit(entries = emptyList())))
+    for (version in 0..1) {
+      assertEquals(MediaFact.Unknown, classification(edit(version, listOf(0L to 0L))))
+      assertEquals(MediaFact.Unknown, classification(edit(version, listOf(3000L to 0L, 0L to 1000L))))
+      assertEquals(MediaFact.Known(EditList.None), classification(edit(version, listOf(3000L to 0L))))
+      assertEquals(MediaFact.Known(EditList.Simple), classification(edit(version, listOf(3000L to 123L))))
+      assertEquals(MediaFact.Known(EditList.Complex), classification(edit(version, listOf(3000L to -1L))))
+    }
+    assertEquals(MediaFact.Known(EditList.Complex), classification(edit(entries = listOf(3000L to 0L, 1000L to 2000L))))
+    assertEquals(MediaFact.Known(EditList.Complex), classification(edit(rate = 0)))
+    assertEquals(MediaFact.Unknown, classification(edit(version = 2)))
+    assertEquals(MediaFact.Unknown, classification(edit() + edit()))
+    assertEquals(MediaFact.Unknown, classification(box("edts", box("elst", ByteArray(5)))))
+  }
+
+  @Test fun malformedOrOversizedEditsPreserveAllOtherTrackMetadata() {
+    val quarterTurn = intArrayOf(0, 65536, 0, -65536, 0, 0, 1920 * 65536, 0, 0x40000000)
+    val tooManyChildren = box("edts", List(4097) { box("free", byteArrayOf()) }.fold(byteArrayOf()) { a, b -> a + b })
+    for (edits in listOf(
+      box("edts", box("elst", ByteArray(5))),
+      edit(entries = List(65) { 3000L to 0L }),
+      box("edts", int(100) + "elst".toByteArray() + ByteArray(4)),
+      tooManyChildren)) {
+      val tracks = read(box("moov", track(edits = edits, trackId = 7, matrix = quarterTurn,
+        extension = box("dvvC", ByteArray(4))) + track("soun", "mp4a", trackId = 8))).valueOrNull!!
+      assertEquals(listOf("vide", "soun"), tracks.map { it.handler })
+      val video = tracks.first()
+      assertEquals(MediaFact.Known(7), video.trackId)
+      assertEquals(MediaFact.Known(270), video.rotationDegrees)
+      assertEquals(listOf("hvc1"), video.sampleEntries)
+      assertTrue(video.hasSimpleSampleGeometry)
+      assertTrue(video.hasDolbyVisionConfiguration)
+      assertEquals(MediaFact.Unknown, video.editList)
+      assertEquals(MediaFact.Known(8), tracks.last().trackId)
+    }
   }
 
   @Test fun doesNotClaimSimpleGeometryForReflectionShearOrScale() {
