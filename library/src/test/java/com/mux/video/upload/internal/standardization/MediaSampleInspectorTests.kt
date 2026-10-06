@@ -30,6 +30,7 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
     assertEquals(MediaFact.Known(500L), facts.maximumGopByteSize)
     assertEquals(MediaFact.Known(2.0), facts.maximumKeyframeIntervalSeconds)
     assertEquals(idr, facts.gopStructure)
+    assertTrue(facts.timestamps.valueOrNull!!.presentationOrderMatchesDecodeOrder)
     assertEquals(MediaFact.Unknown, facts.durationSeconds)
     assertEquals(MediaFact.Unknown, facts.audioVideoStartOffsetSeconds)
   }
@@ -38,6 +39,7 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
     val facts = facts(listOf(sample(0, true), sample(2_000_000), sample(1_000_000)))
     assertEquals(MediaFact.Known(Cadence.Constant), facts.cadence)
     assertEquals(MediaFact.Known(TimestampFacts(0.0, 2.0, 3, false)), facts.timestamps)
+    assertFalse(facts.timestamps.valueOrNull!!.presentationOrderMatchesDecodeOrder)
   }
 
   @Test fun variableIntervalsRemainVariableAndNegativePrerollIsObserved() {
@@ -109,6 +111,21 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
       assertEquals(MediaFact.Unknown, SampleRandomAccessReader.read(VideoCodec.Hevc, data, data.size))
   }
 
+  @Test fun nonVclNalsDoNotHideIdrButMalformedAndReservedHeadersStayUnknown() {
+    val avc = nal(0x65, 0x80) + nal(10) + nal(11)
+    assertEquals(idr, SampleRandomAccessReader.read(VideoCodec.H264, avc, avc.size))
+    val hevc = nal(0x26, 1, 0x80) + nal(62 shl 1, 1, 0x80) + nal(36 shl 1, 1) + nal(37 shl 1, 1)
+    assertEquals(idr, SampleRandomAccessReader.read(VideoCodec.Hevc, hevc, hevc.size))
+    for (extra in listOf(nal(0xfc, 1), nal(0x7c), nal(0x7d, 1), nal(0x7c, 0), nal(44, 1, 0x80))) {
+      val data = nal(0x26, 1, 0x80) + extra
+      assertEquals(MediaFact.Unknown, SampleRandomAccessReader.read(VideoCodec.Hevc, data, data.size))
+    }
+    val partition = nal(0x65, 0x80) + nal(2, 0x80)
+    assertEquals(MediaFact.Unknown, SampleRandomAccessReader.read(VideoCodec.H264, partition, partition.size))
+    val nonVclOnly = nal(62 shl 1, 1, 0x80)
+    assertEquals(MediaFact.Unknown, SampleRandomAccessReader.read(VideoCodec.Hevc, nonVclOnly, nonVclOnly.size))
+  }
+
   @Test fun threeBytePrefixesAndSeveralSlicesAreSupported() {
     val data = byteArrayOf(0, 0, 1, 0x65, 0x80.toByte(), 0, 0, 1, 0x65, 0x80.toByte())
     assertEquals(idr, SampleRandomAccessReader.read(VideoCodec.H264, data, data.size))
@@ -120,7 +137,8 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
     MediaFacts(videoCodec = MediaFact.Known(VideoCodec.H264), videoTrackCount = MediaFact.Known(1)), 0)
 
   private fun scan(limits: SampleScanLimits = SampleScanLimits(), cancel: () -> Boolean = { false },
-    reader: ((ByteBuffer) -> Int)? = null, reportedSize: Long = 6, flagsOverride: Int? = null): MediaSampleInspection {
+    reader: ((ByteBuffer) -> Int)? = null, reportedSize: Long = 6, flagsOverride: Int? = null,
+    input: MediaMetadataInspection = metadata()): MediaSampleInspection {
     mockkConstructor(MediaExtractor::class)
     var index = 0
     var released = false
@@ -138,7 +156,7 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
     every { anyConstructed<MediaExtractor>().advance() } answers { ++index < 3 }
     every { anyConstructed<MediaExtractor>().release() } answers { released = true }
     return try {
-      MediaSampleInspector(limits).inspect(File("unused"), metadata(), cancel).also {
+      MediaSampleInspector(limits).inspect(File("unused"), input, cancel).also {
         assertTrue(released)
       }
     } finally { unmockkConstructor(MediaExtractor::class) }
@@ -173,7 +191,10 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
     assertEquals(16, capacity)
     assertEquals(SampleScanStatus.LimitExceeded, result.status)
     assertEquals(metadata().facts, result.facts)
-    assertEquals(SampleScanStatus.Unreadable, scan(reader = { throw IllegalArgumentException() }).status)
+    val oversized = scan(reader = { throw IllegalArgumentException() })
+    assertEquals(SampleScanStatus.LimitExceeded, oversized.status)
+    assertEquals(metadata().facts, oversized.facts)
+    assertEquals(SampleScanStatus.Unreadable, scan(reader = { throw IllegalStateException() }).status)
   }
 
   @Test @Config(sdk = [28]) fun api28ChecksSizeBeforeReadAndRejectsInconsistentCount() {
@@ -183,6 +204,17 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
     assertFalse(read)
     assertEquals(SampleScanStatus.LimitExceeded, scan(reportedSize = 7).status)
     assertEquals(SampleScanStatus.Complete, scan().status)
+    assertEquals(SampleScanStatus.Unreadable, scan(reader = { throw IllegalArgumentException() }).status)
+  }
+
+  @Test fun matroskaHasNoIsoEditListWhileOtherContainersStayUnknown() {
+    val result = scan(input = metadata().copy(container = MediaFact.Known(ContainerKind.Matroska)))
+    assertEquals(SampleScanStatus.Complete, result.status)
+    assertEquals(MediaFact.Known(EditList.None), result.facts.editList)
+    assertEquals(MediaFact.Unknown, result.facts.durationSeconds)
+    assertEquals(MediaFact.Unknown, result.facts.audioVideoStartOffsetSeconds)
+    for (container in listOf(MediaFact.Unknown, MediaFact.Known(ContainerKind.Other)))
+      assertEquals(MediaFact.Unknown, scan(input = metadata().copy(container = container)).facts.editList)
   }
 
   @Test fun encryptedAndPartialFramesCannotSupplySampleFacts() {
