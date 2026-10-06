@@ -31,7 +31,7 @@ internal sealed interface StandardInputOutputValidation {
 internal class StandardInputOutputValidator(
   private val evaluator: StandardInputPolicyEvaluator = StandardInputPolicyEvaluator(),
   private val inspectMetadata: (File) -> MetadataInspectionResult = MediaMetadataInspector()::inspect,
-  private val inspectTimeline: (File, MediaMetadataInspection, () -> Boolean) -> TimelineInspection =
+  private val inspectTimeline: (File, MediaMetadataInspection, () -> Boolean) -> MediaSampleInspection =
     { file, metadata, cancelled -> StandardInputTimelineInspector().inspect(file, metadata, cancelled) },
 ) {
   fun validateGeneratedOutput(file: File, source: MediaFacts, sourceTimeline: StandardInputTimelineFacts,
@@ -53,13 +53,9 @@ internal class StandardInputOutputValidator(
       val timeline = inspectTimeline(file, metadata, isCancelled)
       if (isCancelled() || timeline.status == SampleScanStatus.Cancelled) return StandardInputOutputValidation.Cancelled
       if (timeline.status != SampleScanStatus.Complete) return rejected(OutputRejection.TimelineInspection(timeline.status))
-      val duration = timeline.timeline.videoDurationSeconds.valueOrNull
-      if (duration == null || !duration.isFinite() || duration <= 0)
-        return rejected(OutputRejection.InsufficientPlanEvidence(setOf(OutputExpectation.Duration)))
-      val facts = timeline.sampleFacts ?: return rejected(OutputRejection.TimelineInspection(SampleScanStatus.Unreadable))
       if (file.length() != initialSize || file.lastModified() != initialModified)
         return rejected(OutputRejection.ChangedDuringInspection)
-      val result = validateFacts(facts, source, sourceTimeline, timeline.timeline, conversion)
+      val result = validateFacts(timeline.facts, source, sourceTimeline, timeline.timeline, conversion)
       if (isCancelled()) StandardInputOutputValidation.Cancelled else result
     } catch (_: CancellationException) { StandardInputOutputValidation.Cancelled }
       catch (_: LinkageError) { failedInspection() }

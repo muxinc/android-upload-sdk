@@ -19,6 +19,10 @@ internal class BoundedSampleReader(
   var largestSampleBytes = 0; private set
   val elapsedNanos get() = System.nanoTime() - started
 
+  fun result(facts: MediaFacts, status: SampleScanStatus,
+    timeline: StandardInputTimelineFacts = StandardInputTimelineFacts()) =
+    MediaSampleInspection(facts, status, sampleCount, bytesRead, largestSampleBytes, elapsedNanos, timeline)
+
   fun checkBudget(beforeRead: Boolean = false) {
     if (isCancelled()) throw SampleScanStop(SampleScanStatus.Cancelled)
     if (elapsedNanos >= limits.maximumElapsedNanos ||

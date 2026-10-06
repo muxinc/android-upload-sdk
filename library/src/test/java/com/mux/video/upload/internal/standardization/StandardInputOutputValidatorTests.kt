@@ -124,7 +124,7 @@ class StandardInputOutputValidatorTests {
       file.writeBytes(byteArrayOf(1))
       for (status in SampleScanStatus.entries.filter { it != SampleScanStatus.Complete }) {
         val v = StandardInputOutputValidator(inspectMetadata = { MetadataInspectionResult.Success(metadata) },
-          inspectTimeline = { _, _, _ -> TimelineInspection(timeline(), status, output) })
+          inspectTimeline = { _, _, _ -> MediaSampleInspection(output, status, timeline = timeline()) })
         val result = v.validateGeneratedOutput(file, source, timeline(), plan)
         if (status == SampleScanStatus.Cancelled) assertEquals(StandardInputOutputValidation.Cancelled, result)
         else assertEquals(OutputRejection.TimelineInspection(status), reason(result))
@@ -134,22 +134,17 @@ class StandardInputOutputValidatorTests {
       assertEquals(StandardInputOutputValidation.Cancelled, v.validateGeneratedOutput(file, source, timeline(), plan) { cancelled })
     } finally { file.delete() }
   }
-  @Test fun timelineFailureCancellationAndFileChangesCannotSelectGeneratedBytes() {
+  @Test fun changedFileCannotSelectGeneratedBytesAfterCompleteInspection() {
     val file = File.createTempFile("validation", ".mp4")
     val metadata = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), emptyList(), MediaFact.Unknown, output, 0)
-    fun validator(timelineRead: () -> TimelineInspection) = StandardInputOutputValidator(
+    fun validator(timelineRead: () -> MediaSampleInspection) = StandardInputOutputValidator(
       inspectMetadata = { MetadataInspectionResult.Success(metadata) },
       inspectTimeline = { _, _, _ -> timelineRead() })
     try {
       file.writeBytes(byteArrayOf(1))
-      for (status in SampleScanStatus.entries.filter { it != SampleScanStatus.Complete }) {
-        val result = validator { TimelineInspection(status = status) }.validateGeneratedOutput(file, source, timeline(), plan)
-        if (status == SampleScanStatus.Cancelled) assertEquals(StandardInputOutputValidation.Cancelled, result)
-        else assertEquals(OutputRejection.TimelineInspection(status), reason(result))
-      }
-      val changed = validator { file.appendBytes(byteArrayOf(2)); TimelineInspection(timeline(), SampleScanStatus.Complete, output) }
+      val changed = validator { file.appendBytes(byteArrayOf(2)); MediaSampleInspection(output, SampleScanStatus.Complete, timeline = timeline()) }
       assertEquals(OutputRejection.ChangedDuringInspection, reason(changed.validateGeneratedOutput(file, source, timeline(), plan)))
-      val accepted = validator { TimelineInspection(timeline(), SampleScanStatus.Complete, output) }.validateGeneratedOutput(file, source, timeline(), plan)
+      val accepted = validator { MediaSampleInspection(output, SampleScanStatus.Complete, timeline = timeline()) }.validateGeneratedOutput(file, source, timeline(), plan)
       assertTrue(accepted is StandardInputOutputValidation.Accepted)
     } finally { file.delete() }
   }
@@ -187,9 +182,9 @@ class StandardInputOutputValidatorTests {
       file.writeBytes(byteArrayOf(1))
       val metadata = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), emptyList(), MediaFact.Unknown, output, 0)
       val validator = StandardInputOutputValidator(inspectMetadata = { MetadataInspectionResult.Success(metadata) },
-        inspectTimeline = { _, _, _ -> TimelineInspection(timeline(), SampleScanStatus.Complete) })
-      assertEquals(OutputRejection.TimelineInspection(SampleScanStatus.Unreadable),
-        reason(validator.validateGeneratedOutput(file, source, timeline(), plan)))
+        inspectTimeline = { _, _, _ -> MediaSampleInspection(MediaFacts(), SampleScanStatus.Complete, timeline = timeline()) })
+      assertTrue(reason(validator.validateGeneratedOutput(file, source, timeline(), plan))
+        is OutputRejection.InsufficientPolicyEvidence)
     } finally { file.delete() }
   }
 }
