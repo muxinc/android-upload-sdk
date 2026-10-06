@@ -84,38 +84,47 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
     } finally { file.delete() }
   }
 
-  private fun metadata(audio: Boolean): MediaMetadataInspection {
+  private fun metadata(audio: Boolean, secondaryAudio: Boolean = false): MediaMetadataInspection {
     fun track(index: Int, kind: TrackKind) = TrackMetadata(index, known(index), known(index + 1), kind,
       MediaFact.Unknown, known(999.0), MediaFact.Unknown, MediaFact.Unknown)
     return MediaMetadataInspection(known(ContainerKind.IsoBaseMedia),
-      listOf(track(0, TrackKind.Video)) + if (audio) listOf(track(1, TrackKind.Audio)) else emptyList(),
-      MediaFact.Unknown, MediaFacts(videoTrackCount = known(1), audioTracks = known(if (audio) listOf(AudioTrack()) else emptyList())), 0)
+      listOf(track(0, TrackKind.Video)) + (if (audio) listOf(track(1, TrackKind.Audio)) else emptyList()) +
+        (if (secondaryAudio) listOf(track(2, TrackKind.Audio)) else emptyList()),
+      MediaFact.Unknown, MediaFacts(videoTrackCount = known(1),
+        audioTracks = known(List(if (secondaryAudio) 2 else if (audio) 1 else 0) { AudioTrack() })), 0)
   }
-  private fun inspect(audio: Boolean = false, audioOffset: Int = 0, sampleLimit: Int = 250000,
+  private fun inspect(audio: Boolean = false, audioOffset: Int = 0, secondaryAudioDelta: Int? = null, sampleLimit: Int = 250000,
     missingTail: Boolean = false, partial: Boolean = false, cancelAfterRead: Boolean = false,
     legacyBufferFailure: Boolean = false, apiLevel: Int = 23, expectedSize: Long = 6, readSize: Int = 6,
     videoEdit: Long? = null, audioEdit: Long? = null, platformMode: String = "shifted",
     mixedConvention: Boolean = false, byteLimit: Long = 1024L * 1024 * 1024,
     videoDeltas: List<Int> = listOf(1000,1000,1000), editDuration: Long = 2000,
-    input: MediaMetadataInspection = metadata(audio).copy(facts = metadata(audio).facts.copy(videoCodec = known(VideoCodec.H264)))
+    input: MediaMetadataInspection = metadata(audio, secondaryAudioDelta != null).copy(
+      facts = metadata(audio, secondaryAudioDelta != null).facts.copy(videoCodec = known(VideoCodec.H264)))
   ): MediaSampleInspection {
     val file = file(track(deltas = videoDeltas, edits = videoEdit?.let { edit(editDuration, it) } ?: byteArrayOf()) +
-      if (audio) track(kind = "soun", offsets = List(3) { audioOffset },
-        edits = audioEdit?.let { edit(2000, it) } ?: byteArrayOf()) else byteArrayOf())
+      (if (audio) track(kind = "soun", offsets = List(3) { audioOffset },
+        edits = audioEdit?.let { edit(2000, it) } ?: byteArrayOf()) else byteArrayOf()) +
+      (secondaryAudioDelta?.let { delta -> track(kind = "soun", deltas = List(3) { delta }) } ?: byteArrayOf()))
     mockkConstructor(MediaExtractor::class)
     var position = 0; var cancelled = false; var releases = 0; var sources = 0; var reads = 0
     val selected = mutableSetOf<Int>()
     val rawTimes = videoDeltas.runningFold(0L) { time, delta -> time + delta * 1000L }.dropLast(1)
     val count = rawTimes.size - if (missingTail) 1 else 0
     // Interleaved tracks preserve decode order within each track.
-    val sequence = (0 until count).flatMap { index -> (0..if (audio) 1 else 0).map { it to index } }
+    val lastTrack = if (secondaryAudioDelta != null) 2 else if (audio) 1 else 0
+    val sequence = (0 until count).flatMap { index -> (0..lastTrack).map { it to index } }
     every { anyConstructed<MediaExtractor>().setDataSource(any<String>()) } answers { sources++ }
     every { anyConstructed<MediaExtractor>().selectTrack(any()) } answers { selected.add(firstArg()) }
     every { anyConstructed<MediaExtractor>().sampleTrackIndex } answers { sequence.getOrNull(position)?.first ?: -1 }
     every { anyConstructed<MediaExtractor>().sampleTime } answers {
       val (track, index) = sequence[position]
       val start = if (track == 0) videoEdit ?: 0L else audioEdit ?: 0L
-      val raw = rawTimes[index] + if (track == 1) audioOffset * 1000L else 0L
+      val raw = when (track) {
+        0 -> rawTimes[index]
+        1 -> index * 1_000_000L + audioOffset * 1000L
+        else -> index * secondaryAudioDelta!! * 1000L
+      }
       if (platformMode == "raw" || (mixedConvention && index == 1)) raw
       else if (platformMode == "clamped") maxOf(0L, raw - start * 1000L) else raw - start * 1000L
     }
@@ -138,7 +147,7 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
       StandardInputTimelineInspector(limits, apiLevel).inspect(file, input) { cancelled }.also {
         if (it.status == SampleScanStatus.Complete) {
           assertEquals(1, sources); assertEquals(1, releases)
-          assertEquals(if (audio) setOf(0,1) else setOf(0), selected)
+          assertEquals((0..lastTrack).toSet(), selected)
           assertEquals(sequence.size, reads)
         } else assertEquals(input.facts, it.facts)
       }
@@ -156,6 +165,30 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
     assertEquals(known(3.1), result.timeline.durationSeconds)
     assertEquals(known(AudioVideoStartOffset.Seconds(0.1)), result.timeline.audioVideoStartOffset)
   }
+  @Test fun droppedSecondaryAudioDoesNotExtendTheValidatedTimeline() {
+    val firstAudio = compliantFacts().audioTracks.valueOrNull!!.single()
+    val input = metadata(true, true).copy(facts = compliantFacts().copy(audioTracks = known(listOf(firstAudio, AudioTrack()))),
+      isoTracks = known(listOf(IsoTrackMetadata("vide", known(1), listOf("avc1"), false, known(0), true, known(EditList.None)))))
+    val output = inspect(audio = true, audioOffset = 100, videoDeltas = List(3) { 200 },
+      input = input.copy(tracks = input.tracks.take(2), facts = input.facts.copy(audioTracks = known(listOf(firstAudio)))))
+    for (secondaryDelta in listOf(500, 2000)) {
+      val source = inspect(audio = true, audioOffset = 100, secondaryAudioDelta = secondaryDelta,
+        videoDeltas = List(3) { 200 }, input = input)
+      assertEquals(SampleScanStatus.Complete, source.status)
+      assertEquals(9, source.sampleCount)
+      val conversion = (StandardInputPlanner().plan(source.facts.copy(averageBitrate = known(9_000_000L)),
+        options(), fullCapabilities()).action as StandardInputAction.Convert).conversion
+      val facts = output.facts.copy(rotationDegrees = known(0), encodedDimensions = known(conversion.outputDimensions))
+      val validator = StandardInputOutputValidator()
+      val result = validator.validateFacts(facts, source.facts, source.timeline, output.timeline, conversion)
+      assertTrue("Secondary audio duration changed acceptance: $result", result is StandardInputOutputValidation.Accepted)
+      assertEquals(known(3.1), source.timeline.durationSeconds)
+      val shortened = validator.validateFacts(facts, source.facts, source.timeline,
+        output.timeline.copy(firstAudioDurationSeconds = known(2.0)), conversion) as StandardInputOutputValidation.Rejected
+      assertTrue(OutputExpectation.Duration in (shortened.reason as OutputRejection.DoesNotMatchPlan).expectations)
+    }
+  }
+
   @Test fun truncatedPartialCancelledOrFailedLegacyReadsNeverPublishTimeline() {
     for ((result, status) in listOf(inspect(missingTail = true) to SampleScanStatus.Unreadable,
       inspect(partial = true) to SampleScanStatus.Unsupported,
