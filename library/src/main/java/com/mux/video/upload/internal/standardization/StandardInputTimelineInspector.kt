@@ -28,6 +28,10 @@ internal data class TimelineInspection(
   val status: SampleScanStatus,
   /** Facts proven by the same payload scan; never published after a partial read. */
   val sampleFacts: MediaFacts? = null,
+  val sampleCount: Int = 0,
+  val bytesRead: Long = 0,
+  val largestSampleBytes: Int = 0,
+  val elapsedNanos: Long = 0,
 )
 
 /**
@@ -42,21 +46,23 @@ internal class StandardInputTimelineInspector(
   fun inspect(file: File, metadata: MediaMetadataInspection,
     isCancelled: () -> Boolean = { Thread.currentThread().isInterrupted }): TimelineInspection {
     val reader = BoundedSampleReader(limits, apiLevel, isCancelled)
-    fun failure(status: SampleScanStatus) = TimelineInspection(status = status)
+    fun result(status: SampleScanStatus, timeline: StandardInputTimelineFacts = StandardInputTimelineFacts(),
+      facts: MediaFacts? = null) = TimelineInspection(timeline, status, facts, reader.sampleCount,
+        reader.bytesRead, reader.largestSampleBytes, reader.elapsedNanos)
     return try {
       reader.checkBudget()
       if (metadata.container != MediaFact.Known(ContainerKind.IsoBaseMedia) ||
         metadata.facts.videoTrackCount != MediaFact.Known(1) || metadata.facts.audioTracks == MediaFact.Unknown)
-        return failure(SampleScanStatus.Unsupported)
+        return result(SampleScanStatus.Unsupported)
       val tracks = IsoTimelineReader.read(file, limits.maximumSamples) { reader.checkBudget() }
       val media = metadata.tracks.filter { it.kind == TrackKind.Video || it.kind == TrackKind.Audio }
       if (media.size != tracks.size || media.any { it.containerIndex.valueOrNull !in tracks.keys })
-        return failure(SampleScanStatus.Unsupported)
+        return result(SampleScanStatus.Unsupported)
       val timingByExtractor = media.associate { it.extractorIndex to tracks.getValue(it.containerIndex.valueOrNull!!) }
       for (track in media) {
         if (track.kind == TrackKind.Audio && !timingByExtractor.getValue(track.extractorIndex).hasEdit && track.audio?.let {
             (it.encoderDelaySamples.valueOrNull ?: 0) > 0 || (it.encoderPaddingSamples.valueOrNull ?: 0) > 0
-          } == true) return failure(SampleScanStatus.Unsupported)
+          } == true) return result(SampleScanStatus.Unsupported)
       }
       val video = media.single { it.kind == TrackKind.Video }
       val videoTime = timingByExtractor.getValue(video.extractorIndex)
@@ -95,15 +101,15 @@ internal class StandardInputTimelineInspector(
       val facts = VideoSampleFactsReader.read(samples, MediaFact.Unknown, metadata.facts, videoTime)
         .copy(editList = videoEditList(metadata, video))
       reader.checkBudget()
-      TimelineInspection(StandardInputTimelineFacts(MediaFact.Known(tracks.values.maxOf { it.endSeconds }),
+      result(SampleScanStatus.Complete, StandardInputTimelineFacts(MediaFact.Known(tracks.values.maxOf { it.endSeconds }),
         MediaFact.Known(offset), MediaFact.Known(videoTime.effectivePresentationSeconds),
         MediaFact.Known(videoTime.endSeconds - videoTime.startSeconds),
         audioTime?.let { MediaFact.Known(it.endSeconds - it.startSeconds) } ?: MediaFact.Unknown,
-        MediaFact.Known(videoTime.timescale)), SampleScanStatus.Complete, facts)
-    } catch (stop: SampleScanStop) { failure(stop.status) }
-      catch (_: CancellationException) { failure(SampleScanStatus.Cancelled) }
-      catch (_: LinkageError) { failure(SampleScanStatus.Unsupported) }
-      catch (_: Exception) { failure(if (isCancelled()) SampleScanStatus.Cancelled else SampleScanStatus.Unreadable) }
+        MediaFact.Known(videoTime.timescale)), facts)
+    } catch (stop: SampleScanStop) { result(stop.status) }
+      catch (_: CancellationException) { result(SampleScanStatus.Cancelled) }
+      catch (_: LinkageError) { result(SampleScanStatus.Unsupported) }
+      catch (_: Exception) { result(if (isCancelled()) SampleScanStatus.Cancelled else SampleScanStatus.Unreadable) }
   }
 
 }
