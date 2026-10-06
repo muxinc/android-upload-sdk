@@ -12,12 +12,14 @@ import java.io.File
 import java.nio.ByteBuffer
 
 @Config(sdk = [23])
-class MediaSampleInspectorTests : AbsRobolectricTest() {
+class MediaSampleFactsTests : AbsRobolectricTest() {
   private val idr = MediaFact.Known(GopStructure.ClosedWithIdr)
   private fun sample(time: Long, sync: Boolean = false, bytes: Int = 100,
-    kind: MediaFact<GopStructure> = idr) = CompressedVideoSample(time, bytes, sync, kind)
-  private fun facts(samples: List<CompressedVideoSample>, duration: Double = 3.0) =
-    VideoSampleFactsReader.read(samples, MediaFact.Known(duration))
+    kind: MediaFact<GopStructure> = idr) = time to CompressedVideoSample(bytes, sync, kind)
+  private fun facts(samples: List<Pair<Long, CompressedVideoSample>>, duration: Double = 3.0): MediaFacts {
+    val times = samples.map { it.first / 1e6 }
+    return VideoSampleFactsReader.read(samples.map { it.second }, editedTimeline(times, duration, times.indices.toList()))
+  }
   private fun nal(vararg bytes: Int) = byteArrayOf(0, 0, 0, 1) + bytes.map { it.toByte() }.toByteArray()
 
   @Test fun measuresWholeVideoSeparatelyFromMaximumGopAndIncludesFinalTail() {
@@ -42,11 +44,11 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
     assertFalse(facts.timestamps.valueOrNull!!.presentationOrderMatchesDecodeOrder)
   }
 
-  @Test fun variableIntervalsRemainVariableAndNegativePrerollIsObserved() {
-    val facts = facts(listOf(sample(-100_000, true), sample(100_000), sample(400_000)), 0.8)
+  @Test fun variablePresentedIntervalsRemainVariable() {
+    val facts = facts(listOf(sample(0, true), sample(200_000), sample(500_000)), 0.8)
     assertEquals(MediaFact.Known(Cadence.Variable), facts.cadence)
     assertEquals(MediaFact.Known(4.0), facts.frameRate)
-    assertEquals(-0.1, facts.timestamps.valueOrNull!!.firstPresentationSeconds, 0.0)
+    assertEquals(0.0, facts.timestamps.valueOrNull!!.firstPresentationSeconds, 0.0)
   }
 
   @Test fun noSyncAtStartCannotProveGops() {
@@ -68,16 +70,6 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
     assertEquals(MediaFact.Unknown, facts.maximumGopBitrate)
     assertEquals(MediaFact.Unknown, facts.maximumGopByteSize)
     assertEquals(MediaFact.Known(2.0), facts.maximumKeyframeIntervalSeconds)
-  }
-
-  @Test fun contradictoryOrMissingDurationDoesNotExtrapolateVfrTail() {
-    val samples = listOf(sample(0, true), sample(1_000_000), sample(2_000_000))
-    for (duration in listOf(MediaFact.Unknown, MediaFact.Known(1.0), MediaFact.Known(100.0))) {
-      val facts = VideoSampleFactsReader.read(samples, duration)
-      assertEquals(MediaFact.Known(1.0), facts.frameRate)
-      assertEquals(MediaFact.Unknown, facts.averageBitrate)
-      assertEquals(MediaFact.Unknown, facts.maximumKeyframeIntervalSeconds)
-    }
   }
 
   @Test fun duplicateTimesEmptyOrInvalidBytesCannotInventRates() {
@@ -137,37 +129,39 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
     MediaFacts(videoCodec = MediaFact.Known(VideoCodec.H264), videoTrackCount = MediaFact.Known(1)), 0)
 
   private fun scan(limits: SampleScanLimits = SampleScanLimits(), cancel: () -> Boolean = { false },
-    reader: ((ByteBuffer) -> Int)? = null, reportedSize: Long = 6, flagsOverride: Int? = null,
-    input: MediaMetadataInspection = metadata()): MediaSampleInspection {
-    mockkConstructor(MediaExtractor::class)
+    reader: ((ByteBuffer) -> Int)? = null, reportedSize: Long = 6, flagsOverride: Int? = null): MediaSampleInspection {
+    val extractor = mockk<MediaExtractor>()
+    val bounded = BoundedSampleReader(limits, Build.VERSION.SDK_INT, cancel)
     var index = 0
-    var released = false
     val bytes = nal(0x65, 0x80)
-    every { anyConstructed<MediaExtractor>().setDataSource(any<String>()) } just Runs
-    every { anyConstructed<MediaExtractor>().selectTrack(0) } just Runs
-    every { anyConstructed<MediaExtractor>().sampleTrackIndex } answers { if (index < 3) 0 else -1 }
-    every { anyConstructed<MediaExtractor>().sampleFlags } answers { flagsOverride ?: if (index == 0) 1 else 0 }
-    if (Build.VERSION.SDK_INT >= 28) every { anyConstructed<MediaExtractor>().sampleSize } returns reportedSize
-    every { anyConstructed<MediaExtractor>().sampleTime } answers { index * 1_000_000L }
-    every { anyConstructed<MediaExtractor>().readSampleData(any(), 0) } answers {
+    every { extractor.sampleTrackIndex } answers { if (index < 3) 0 else -1 }
+    every { extractor.sampleFlags } answers { flagsOverride ?: if (index == 0) 1 else 0 }
+    if (Build.VERSION.SDK_INT >= 28) every { extractor.sampleSize } returns reportedSize
+    every { extractor.sampleTime } answers { index * 1_000_000L }
+    every { extractor.readSampleData(any(), 0) } answers {
       reader?.invoke(firstArg()) ?: if (firstArg<ByteBuffer>().capacity() < bytes.size) -1
         else bytes.size.also { firstArg<ByteBuffer>().put(bytes) }
     }
-    every { anyConstructed<MediaExtractor>().advance() } answers { ++index < 3 }
-    every { anyConstructed<MediaExtractor>().release() } answers { released = true }
+    every { extractor.advance() } answers { ++index < 3 }
     return try {
-      MediaSampleInspector(limits).inspect(File("unused"), input, cancel).also {
-        assertTrue(released)
+      while (extractor.sampleTrackIndex >= 0) {
+        bounded.read(extractor) { _, size, flags, data ->
+          if (flags and MediaExtractor.SAMPLE_FLAG_SYNC != 0)
+            assertEquals(idr, SampleRandomAccessReader.read(VideoCodec.H264, data, size))
+        }
+        extractor.advance()
       }
-    } finally { unmockkConstructor(MediaExtractor::class) }
+      bounded.result(metadata().facts, SampleScanStatus.Complete)
+    } catch (stop: SampleScanStop) { bounded.result(metadata().facts, stop.status) }
+      catch (_: Exception) { bounded.result(metadata().facts, SampleScanStatus.Unreadable) }
   }
 
-  @Test fun api23UsesBoundedReadsAndReleasesExtractor() {
+  @Test fun api23UsesBoundedPayloadForNalInspection() {
     val result = scan(SampleScanLimits(maximumSampleBytes = 16))
     assertEquals(SampleScanStatus.Complete, result.status)
     assertEquals(18L, result.bytesRead)
     assertEquals(3, result.sampleCount)
-    assertEquals(idr, result.facts.gopStructure)
+    assertEquals(6, result.largestSampleBytes)
   }
 
   @Test fun limitsAndCancellationDiscardPartialProof() {
@@ -202,19 +196,9 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
     assertEquals(SampleScanStatus.LimitExceeded,
       scan(SampleScanLimits(maximumSampleBytes = 16), reader = { read = true; 6 }, reportedSize = 17).status)
     assertFalse(read)
-    assertEquals(SampleScanStatus.LimitExceeded, scan(reportedSize = 7).status)
+    assertEquals(SampleScanStatus.Unreadable, scan(reportedSize = 7).status)
     assertEquals(SampleScanStatus.Complete, scan().status)
     assertEquals(SampleScanStatus.Unreadable, scan(reader = { throw IllegalArgumentException() }).status)
-  }
-
-  @Test fun matroskaHasNoIsoEditListWhileOtherContainersStayUnknown() {
-    val result = scan(input = metadata().copy(container = MediaFact.Known(ContainerKind.Matroska)))
-    assertEquals(SampleScanStatus.Complete, result.status)
-    assertEquals(MediaFact.Known(EditList.None), result.facts.editList)
-    assertEquals(MediaFact.Unknown, result.facts.durationSeconds)
-    assertEquals(MediaFact.Unknown, result.facts.audioVideoStartOffsetSeconds)
-    for (container in listOf(MediaFact.Unknown, MediaFact.Known(ContainerKind.Other)))
-      assertEquals(MediaFact.Unknown, scan(input = metadata().copy(container = container)).facts.editList)
   }
 
   @Test fun encryptedAndPartialFramesCannotSupplySampleFacts() {
@@ -225,12 +209,6 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
     }
   }
 
-  @Test fun cancellationWinsBeforeUnsupportedInputFallback() {
-    val result = MediaSampleInspector().inspect(File("unused"), metadata().copy(tracks = emptyList())) { true }
-    assertEquals(SampleScanStatus.Cancelled, result.status)
-    assertEquals(metadata().facts, result.facts)
-  }
-
   @Test fun incompatibleMedia3HelperLeavesRandomAccessUnknown() {
     mockkStatic(NalUnitUtil::class)
     try {
@@ -238,5 +216,69 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
       val data = nal(0x65, 0x80)
       assertEquals(MediaFact.Unknown, SampleRandomAccessReader.read(VideoCodec.H264, data, data.size))
     } finally { unmockkStatic(NalUnitUtil::class) }
+  }
+  private fun editedTimeline(times: List<Double>, end: Double, presented: List<Int>, fullEnd: Double = end): IsoTrackTimeline =
+    IsoTrackTimeline(times.toDoubleArray(), 0.0, end, fullEnd, presented.map { maxOf(0.0, times[it]) }.sorted(),
+      true, 1000, 1.0, presented)
+
+  @Test fun effectiveEditCountsPrerollBytesAndRetainsTheIdrProof() {
+    val samples = listOf(sample(-1_000_000, true, 1000), sample(0, bytes = 100), sample(1_000_000, bytes = 100))
+    val time = editedTimeline(listOf(-1.0, 0.0, 1.0), 2.0, listOf(1, 2))
+    val facts = VideoSampleFactsReader.read(samples.map { it.second }, time)
+    assertEquals(known(3200L), facts.averageBitrate)
+    assertEquals(known(3200L), facts.maximumGopBitrate)
+    assertEquals(known(1200L), facts.maximumGopByteSize)
+    assertEquals(known(2.0), facts.maximumKeyframeIntervalSeconds)
+    assertEquals(idr, facts.gopStructure)
+    assertEquals(known(TimestampFacts(0.0, 1.0, 2, true)), facts.timestamps)
+    val unproven = samples.toMutableList().apply { this[0] = this[0].first to this[0].second.copy(randomAccess = MediaFact.Unknown) }
+    val rejected = VideoSampleFactsReader.read(unproven.map { it.second }, time)
+    assertEquals(MediaFact.Unknown, rejected.gopStructure)
+    assertEquals(MediaFact.Unknown, rejected.maximumGopBitrate)
+  }
+
+  @Test fun editedVfrUsesFullSpanForBitrateAndEffectiveSpanForKeyframeInterval() {
+    val samples = (0..4).map { sample((it - 1) * 1_000_000L, it == 0 || it == 2) }
+    val time = editedTimeline(listOf(-1.0, 0.0, 1.0, 2.0, 3.0), 4.5, listOf(1, 2, 3, 4), fullEnd = 5.0)
+    val facts = VideoSampleFactsReader.read(samples.map { it.second }, time)
+    assertEquals(known(3.5), facts.maximumKeyframeIntervalSeconds)
+    assertEquals(known(667L), facts.averageBitrate)
+    assertEquals(known(800L), facts.maximumGopBitrate)
+  }
+
+  @Test fun samplesWhollyPastTheEditCountTowardWholeTrackBitrateButNotPresentedCadence() {
+    val samples = listOf(sample(0, true), sample(1_000_000),
+      sample(2_000_000, true, 10000, known(GopStructure.Open)), sample(4_000_000))
+    val time = editedTimeline(listOf(0.0,1.0,2.0,4.0), 2.0, listOf(0,1), fullEnd = 5.0)
+    val facts = VideoSampleFactsReader.read(samples.map { it.second }, time)
+    assertEquals(known(Cadence.Constant), facts.cadence)
+    assertEquals(idr, facts.gopStructure)
+    assertEquals(known(16480L), facts.averageBitrate)
+    assertEquals(known(2.0), facts.maximumKeyframeIntervalSeconds)
+  }
+
+  @Test fun compliantBitrateDoesNotIncreaseWhenAnEditCutsThroughAGop() {
+    val samples = List(120) { sample(it * 1_000_000L / 30, it % 60 == 0, 16667) }
+    for ((start, end) in listOf(59.0 / 30 to 4.0, 2.5 to 4.0, 0.0 to 61.0 / 30)) {
+      val times = samples.indices.map { it / 30.0 - start }
+      val presented = times.indices.filter { times[it] >= 0 && times[it] < end - start }
+      val timeline = editedTimeline(times, end - start, presented, fullEnd = 4.0 - start)
+      val facts = VideoSampleFactsReader.read(samples.map { it.second }, timeline, compliantFacts())
+      assertEquals(known(4_000_080L), facts.averageBitrate)
+      assertEquals(known(4_000_080L), facts.maximumGopBitrate)
+      assertTrue(facts.maximumKeyframeIntervalSeconds.valueOrNull!! <= 2.0)
+      assertTrue(StandardInputPlanner().plan(facts, options(), fullCapabilities()).action is StandardInputAction.UploadOriginal)
+    }
+  }
+
+  @Test fun trimmingCannotHideOversizedDecodePrerollOrTailFromBitratePolicy() {
+    val samples = listOf(sample(-1_000_000, true, 2_000_000), sample(0), sample(100_000),
+      sample(200_000, bytes = 2_000_000))
+    val time = editedTimeline(listOf(-1.0, 0.0, 0.1, 0.2), 0.2, listOf(1,2), fullEnd = 0.3)
+    val facts = VideoSampleFactsReader.read(samples.map { it.second }, time, compliantFacts())
+    val evaluation = StandardInputPolicyEvaluator().evaluate(facts, selection(), MediaRole.GeneratedOutput)
+    assertTrue(evaluation.nonCompliantRequirements.contains(PolicyRequirement.AverageBitrate))
+    assertTrue(evaluation.nonCompliantRequirements.contains(PolicyRequirement.MaximumGopBitrate))
+    assertEquals(known(4_000_200L), facts.maximumGopByteSize)
   }
 }

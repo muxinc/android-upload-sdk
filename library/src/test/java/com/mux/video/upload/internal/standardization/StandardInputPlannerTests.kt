@@ -39,6 +39,12 @@ class StandardInputPlannerTests {
     }
   }
 
+  @Test fun resolutionViolationWithoutScannedCadenceFallsBackBeforeConversion() {
+    val facts = compliantFacts(dimensions = Dimensions(2560, 1440)).copy(frameRate = MediaFact.Unknown)
+    assertEquals(StandardInputAction.Fallback(FallbackReason.InsufficientEvidence),
+      planner.plan(facts, options(), fullCapabilities().copy(sourceTimelineIsProven = false)).action)
+  }
+
   @Test fun knownViolationPreservesH264AndHevcFamilies() {
     for (codec in listOf(VideoCodec.H264, VideoCodec.Hevc)) {
       val conversion = conversion(compliantFacts(codec).copy(frameRate = known(121.0)))
@@ -98,6 +104,7 @@ class StandardInputPlannerTests {
   @Test fun unknownAudioRequiresIndependentAacPreparationProof() {
     val videoCapabilities = PlanningCapabilities(
       sourceIsDecodable = true,
+      sourceTimelineIsProven = true,
       encodableVideoCodecs = setOf(VideoCodec.H264),
       remediableRequirements = setOf(PolicyRequirement.FrameRate),
     )
@@ -295,6 +302,7 @@ class StandardInputPlannerTests {
     val full = fullCapabilities()
     val cases = listOf(
       full.copy(sourceIsDecodable = false) to ConversionCapabilityFailure.SourceDecode,
+      full.copy(sourceTimelineIsProven = false) to ConversionCapabilityFailure.SourceTimeline,
       full.copy(encodableVideoCodecs = emptySet()) to ConversionCapabilityFailure.VideoEncode,
       full.copy(remediableRequirements = emptySet()) to
         ConversionCapabilityFailure.Remediation(PolicyRequirement.GopStructure),
@@ -307,6 +315,8 @@ class StandardInputPlannerTests {
       assertEquals(VideoCodec.Hevc, reason.conversion.outputCodec)
       assertEquals(DynamicRange.Hlg, reason.conversion.sourceDynamicRange)
     }
+    assertTrue(planner.plan(compliantFacts(), capabilities = full.copy(sourceTimelineIsProven = false))
+      .action is StandardInputAction.UploadOriginal)
     val allMissing = fallback(facts, PlanningCapabilities(), toneMapOptions()) as FallbackReason.UnsupportedConversion
     assertEquals(cases.map { it.second }.toSet(), allMissing.missingCapabilities)
   }

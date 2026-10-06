@@ -51,7 +51,7 @@ internal object IsoContainerMetadataReader {
     }
   } catch (_: Exception) { MediaFact.Unknown }
 
-  private class Reader(val input: RandomAccessFile) {
+  internal class Reader(val input: RandomAccessFile) {
     var boxCount = 0
     val boxHeader = ByteArray(16)
 

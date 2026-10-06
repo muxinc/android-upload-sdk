@@ -51,7 +51,7 @@ internal data class TrackMetadata(
   val audio: AudioTrackMetadata? = null,
 )
 
-/** Effective duration and A/V offset remain unknown until timeline validation is implemented. */
+/** Metadata alone does not prove duration or A/V offset; use StandardInputTimelineInspector. */
 internal data class MediaMetadataInspection(
   val container: MediaFact<ContainerKind>,
   val tracks: List<TrackMetadata>,

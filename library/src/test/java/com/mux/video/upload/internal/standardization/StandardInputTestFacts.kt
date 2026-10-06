@@ -30,6 +30,7 @@ internal fun hdrFacts(range: DynamicRange = DynamicRange.Hlg): MediaFacts = comp
 
 internal fun fullCapabilities() = PlanningCapabilities(
   sourceIsDecodable = true,
+  sourceTimelineIsProven = true,
   encodableVideoCodecs = setOf(VideoCodec.H264, VideoCodec.Hevc),
   remediableRequirements = PolicyRequirement.entries.toSet(),
   toneMappableDynamicRanges = setOf(DynamicRange.Hlg, DynamicRange.Pq),
