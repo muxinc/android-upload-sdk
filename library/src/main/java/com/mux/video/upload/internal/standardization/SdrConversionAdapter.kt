@@ -27,7 +27,7 @@ internal class SdrGeneratedFile private constructor(val file: File) {
   }
 }
 
-/** Small Media3 boundary so terminal races and cleanup can be tested without a platform encoder. */
+/** Internal boundary for Media3 export and cancellation. */
 internal interface SdrExportEngine {
   fun start(input: File, output: File, completed: (String?, String?) -> Unit,
     failed: (SdrConversionFailure) -> Unit)

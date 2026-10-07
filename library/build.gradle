@@ -35,9 +35,6 @@ android {
   buildFeatures {
     buildConfig true
   }
-  testOptions {
-    targetSdk = 36
-  }
 }
 
 muxDistribution {
@@ -101,6 +98,4 @@ dependencies {
   testImplementation 'androidx.test.ext:junit:1.2.1'
   testImplementation "io.mockk:mockk:1.13.9"
   testImplementation 'org.robolectric:robolectric:4.11.1'
-  androidTestImplementation 'androidx.test:runner:1.6.2'
-  androidTestImplementation 'androidx.test.ext:junit:1.2.1'
 }
