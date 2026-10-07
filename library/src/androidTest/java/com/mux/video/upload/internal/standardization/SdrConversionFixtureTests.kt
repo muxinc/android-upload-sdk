@@ -13,7 +13,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-/** Stage external fixtures as documented in the adapter README; never package media in the APK. */
+/** Runs the adapter against externally staged fixtures without media in the APK. */
 @RunWith(AndroidJUnit4::class)
 class SdrConversionFixtureTests {
   private val instrumentation = InstrumentationRegistry.getInstrumentation()
