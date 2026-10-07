@@ -105,10 +105,7 @@ internal class FirstAudioTrackSelector(context: Context, private val trackId: St
       .setExceedAudioConstraintsIfNecessary(true).setExceedRendererCapabilitiesIfNecessary(true))
   }
   override fun selectAudioTrack(mappedTrackInfo: MappedTrackInfo, rendererFormatSupports: Array<Array<IntArray>>,
-    rendererMixedMimeTypeAdaptationSupports: IntArray, params: Parameters): Pair<ExoTrackSelection.Definition, Int>? =
-    selectFirstAudioTrack(mappedTrackInfo)
-
-  internal fun selectFirstAudioTrack(mappedTrackInfo: MappedTrackInfo): Pair<ExoTrackSelection.Definition, Int>? {
+    rendererMixedMimeTypeAdaptationSupports: IntArray, params: Parameters): Pair<ExoTrackSelection.Definition, Int>? {
     if (trackId == null) return null
     for (renderer in 0 until mappedTrackInfo.rendererCount) {
       if (mappedTrackInfo.getRendererType(renderer) != C.TRACK_TYPE_AUDIO) continue
@@ -153,9 +150,6 @@ internal class StrictSdrEncoderFactory(
     val media = SdrVideoEncoderConfiguration.create(exact, targets, capability.level)
     return DefaultCodec(context, exact, media, capability.name, false, null)
   }
-
-  internal fun videoConfiguration(format: Format): MediaFormat =
-    SdrVideoEncoderConfiguration.create(requestedVideoFormat(format), targets, capability.level)
 
   private fun requestedVideoFormat(format: Format): Format {
     check(format.sampleMimeType == targets.videoMime && format.width == conversion.outputDimensions.width &&
