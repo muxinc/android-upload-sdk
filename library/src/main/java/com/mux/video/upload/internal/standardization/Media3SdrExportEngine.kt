@@ -11,6 +11,7 @@ import android.util.Pair
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.Clock
 import androidx.media3.common.util.MediaFormatUtil
 import androidx.media3.common.util.UnstableApi
@@ -51,7 +52,7 @@ internal class Media3SdrExportEngine(
       .setRemoveAudio(targets.audioChannels == null)
       .setEffects(Effects(emptyList(), listOf(Presentation.createForWidthAndHeight(
         conversion.outputDimensions.width, conversion.outputDimensions.height, Presentation.LAYOUT_SCALE_TO_FIT))))
-    if (conversion.outputCadence == OutputCadence.ConstantFrameRate) item.setFrameRate(30)
+    if (conversion.outputCadence == OutputCadence.ConstantFrameRate) item.setFrameRate(conversion.outputFrameRate.toInt())
     val items = listOf(item.build())
     val sequence = if (targets.audioChannels == null) EditedMediaItemSequence.withVideoFrom(items)
       else EditedMediaItemSequence.withAudioAndVideoFrom(items)
@@ -61,23 +62,11 @@ internal class Media3SdrExportEngine(
       .setLooper(looper)
       .setPortraitEncodingEnabled(true)
       .setVideoMimeType(targets.videoMime)
-      .setAudioMimeType("audio/mp4a-latm")
+      .setAudioMimeType(MimeTypes.AUDIO_AAC)
       .setAssetLoaderFactory(assetLoader)
       .setEncoderFactory(StrictSdrEncoderFactory(context, conversion, targets, capability))
-      .addListener(object : Transformer.Listener {
-        override fun onCompleted(composition: Composition, exportResult: ExportResult) {
-          if (targets.audioChannels != null && (exportResult.channelCount != targets.audioChannels ||
-              exportResult.sampleRate != targets.audioSampleRate)) failed(SdrConversionFailure.OutputInvalid)
-          else completed(exportResult.videoMimeType, exportResult.audioMimeType)
-        }
-        override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
-          failed(SdrConversionFailure.Export)
-        }
-        override fun onFallbackApplied(composition: Composition, originalTransformationRequest: TransformationRequest,
-          fallbackTransformationRequest: TransformationRequest) {
-          failed(SdrConversionFailure.ForbiddenFallback)
-        }
-      }).build()
+      // Retain Media3's default no-output-sample watchdog (10s; 25s on emulators).
+      .addListener(SdrExportListener(targets, completed, failed)).build()
     transformer = exporter
     exporter.start(composition, output.absolutePath)
   }
@@ -89,6 +78,25 @@ internal class Media3SdrExportEngine(
   }
 }
 
+@UnstableApi
+internal class SdrExportListener(
+  private val targets: SdrEncodingTargets, private val completed: (String?, String?) -> Unit,
+  private val failed: (SdrConversionFailure) -> Unit,
+) : Transformer.Listener {
+  override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+    if (targets.audioChannels != null && (exportResult.channelCount != targets.audioChannels ||
+        exportResult.sampleRate != targets.audioSampleRate)) failed(SdrConversionFailure.OutputInvalid)
+    else completed(exportResult.videoMimeType, exportResult.audioMimeType)
+  }
+  override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
+    failed(SdrConversionFailure.Export)
+  }
+  override fun onFallbackApplied(composition: Composition, originalTransformationRequest: TransformationRequest,
+    fallbackTransformationRequest: TransformationRequest) {
+    failed(SdrConversionFailure.ForbiddenFallback)
+  }
+}
+
 /** MP4 Format.id is the container track ID. Never choose a preferred/default secondary track. */
 @UnstableApi
 internal class FirstAudioTrackSelector(context: Context, private val trackId: String?) : DefaultTrackSelector(context) {
@@ -97,7 +105,10 @@ internal class FirstAudioTrackSelector(context: Context, private val trackId: St
       .setExceedAudioConstraintsIfNecessary(true).setExceedRendererCapabilitiesIfNecessary(true))
   }
   override fun selectAudioTrack(mappedTrackInfo: MappedTrackInfo, rendererFormatSupports: Array<Array<IntArray>>,
-    rendererMixedMimeTypeAdaptationSupports: IntArray, params: Parameters): Pair<ExoTrackSelection.Definition, Int>? {
+    rendererMixedMimeTypeAdaptationSupports: IntArray, params: Parameters): Pair<ExoTrackSelection.Definition, Int>? =
+    selectFirstAudioTrack(mappedTrackInfo)
+
+  internal fun selectFirstAudioTrack(mappedTrackInfo: MappedTrackInfo): Pair<ExoTrackSelection.Definition, Int>? {
     if (trackId == null) return null
     for (renderer in 0 until mappedTrackInfo.rendererCount) {
       if (mappedTrackInfo.getRendererType(renderer) != C.TRACK_TYPE_AUDIO) continue
@@ -132,23 +143,50 @@ internal class StrictSdrEncoderFactory(
   override fun audioNeedsEncoding() = targets.audioChannels != null && !targets.copyAac
 
   override fun createForAudioEncoding(format: Format, logSessionId: LogSessionId?): Codec {
-    check(format.sampleMimeType == "audio/mp4a-latm" && format.channelCount == targets.audioChannels &&
+    check(format.sampleMimeType == MimeTypes.AUDIO_AAC && format.channelCount == targets.audioChannels &&
       format.sampleRate == targets.audioSampleRate)
     return audioDelegate.createForAudioEncoding(format, logSessionId)
   }
 
   override fun createForVideoEncoding(format: Format, logSessionId: LogSessionId?): Codec {
+    val exact = requestedVideoFormat(format)
+    val media = SdrVideoEncoderConfiguration.create(exact, targets, capability.level)
+    return DefaultCodec(context, exact, media, capability.name, false, null)
+  }
+
+  internal fun videoConfiguration(format: Format): MediaFormat =
+    SdrVideoEncoderConfiguration.create(requestedVideoFormat(format), targets, capability.level)
+
+  private fun requestedVideoFormat(format: Format): Format {
     check(format.sampleMimeType == targets.videoMime && format.width == conversion.outputDimensions.width &&
       format.height == conversion.outputDimensions.height && format.rotationDegrees == 0 &&
       format.colorInfo?.colorTransfer == C.COLOR_TRANSFER_SDR)
-    val exact = format.buildUpon().setFrameRate(conversion.outputFrameRate.toFloat()).setAverageBitrate(targets.bitrate).build()
-    val media = MediaFormatUtil.createMediaFormatFromFormat(exact)
+    return format.buildUpon().setFrameRate(conversion.outputFrameRate.toFloat()).setAverageBitrate(targets.bitrate).build()
+  }
+}
+
+/** Shared preflight/export keys; capability metadata remains only an advertised-format guard. */
+@UnstableApi
+internal object SdrVideoEncoderConfiguration {
+  fun create(format: Format, targets: SdrEncodingTargets, level: Int,
+    sdk: Int = Build.VERSION.SDK_INT, device: String = Build.DEVICE,
+    soc: String = if (Build.VERSION.SDK_INT >= 31) Build.SOC_MODEL else ""): MediaFormat {
+    val media = MediaFormatUtil.createMediaFormatFromFormat(format)
     media.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
     media.setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
     media.setInteger(MediaFormat.KEY_PROFILE, targets.platformProfile)
-    media.setInteger(MediaFormat.KEY_LEVEL, capability.level)
+    media.setInteger(MediaFormat.KEY_LEVEL, level)
     media.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, targets.keyframeIntervalSeconds)
-    if (Build.VERSION.SDK_INT >= 29) media.setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
-    return DefaultCodec(context, exact, media, capability.name, false, null)
+    if (sdk >= 29) media.setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
+    // Media3 1.11.1's empirical encoder performance settings, retaining its exceptions.
+    if (sdk >= 25) {
+      media.setInteger(MediaFormat.KEY_PRIORITY, 1)
+      val overflow = sdk in 31..34 && soc in setOf("SM8550", "SM7450", "SM6450", "SC9863A", "T612", "T606", "T603")
+      media.setInteger(MediaFormat.KEY_OPERATING_RATE, if (sdk == 26) 30 else if (overflow) 1000 else Int.MAX_VALUE)
+    }
+    // Redmi Note 9 Pro rejects high KEY_FRAME_RATE. This is a codec hint; timestamps
+    // and Media3's cadence remain planned. Lowering it only shortens the requested GOP.
+    if (sdk < 30 && device == "joyeuse" && format.frameRate > 30) media.setFloat(MediaFormat.KEY_FRAME_RATE, 30f)
+    return media
   }
 }
