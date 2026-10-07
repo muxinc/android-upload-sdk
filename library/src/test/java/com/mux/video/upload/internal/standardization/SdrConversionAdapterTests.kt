@@ -37,14 +37,14 @@ class SdrConversionAdapterTests {
   private fun targets(plan: StandardInputConversion = conversion, input: MediaFacts = facts,
     tracks: List<TrackMetadata> = listOf(audio())) = SdrEncodingTargets.from(plan, metadata(tracks), samples(input))
 
-  @Test fun vfrGopTargetUsesSlowestPresentationGapAndValidatorStillChecksActualOutput() {
+  @Test fun vfrGopTargetUsesActualFrameWindowsAndValidatorStillChecksActualOutput() {
     val times = (0..900).map { if (it <= 450) it / 60.0 else 7.5 + (it - 450) / 20.0 }
     val variable = facts.copy(cadence = known(Cadence.Variable))
     val time = timeline.copy(durationSeconds = known(30.0), videoDurationSeconds = known(30.0),
       firstAudioDurationSeconds = known(30.0), videoPresentationSeconds = known(times))
     val source = samples(variable).copy(timeline = time)
     val target = SdrEncodingTargets.from(conversion, metadata(), source)!!
-    assertTrue(target.keyframeIntervalSeconds in 1..12)
+    assertEquals(12, target.keyframeIntervalSeconds)
     // Model an encoder that converts seconds to a frame count at the nominal 30 fps.
     fun exportedGap(seconds: Int): Double {
       val frames = seconds * 30
@@ -55,6 +55,43 @@ class SdrConversionAdapterTests {
       rotationDegrees = known(0)), variable, time, time, conversion)
     assertTrue(validate(18) is StandardInputOutputValidation.Rejected)
     assertTrue(validate(target.keyframeIntervalSeconds) is StandardInputOutputValidation.Accepted)
+  }
+
+  @Test fun isolatedVfrPausesShortenGopOnlyByTheirActualSpan() {
+    for ((pause, expected) in listOf(0.05 to 17, 0.2 to 17, 0.61 to 17, 1.0 to 17, 3.0 to 15)) {
+      val times = (0 until 1800).map { it / 30.0 + if (it >= 900) pause else 0.0 }
+      assertEquals("pause=$pause", expected, vfrTargets(times, 60.0 + pause)!!.keyframeIntervalSeconds)
+    }
+  }
+
+  @Test fun repeatedScreenRecordingPausesUseWorstActualWindow() {
+    val times = (0 until 1800).map { it / 30.0 + (it / 300) * 3.0 }
+    assertEquals(12, vfrTargets(times, 75.0)!!.keyframeIntervalSeconds)
+  }
+
+  @Test fun highResolutionHevcVfrDoesNotRejectAnIsolatedHitch() {
+    val plan = conversion.copy(sourceCodec = VideoCodec.Hevc, outputCodec = VideoCodec.Hevc,
+      outputFrameRate = 60.0, outputPolicyLimits = StandardInputPolicyProfile.PublishedMux.highResolution)
+    val times = (0 until 3600).map { it / 60.0 + if (it >= 1800) 0.1 else 0.0 }
+    assertEquals(5, vfrTargets(times, 60.1, plan)!!.keyframeIntervalSeconds)
+  }
+
+  @Test fun vfrGopIncludesLastSampleDurationAndRejectsUnusableWindows() {
+    val times = (0 until 60).map { it / 30.0 }
+    assertEquals(1, vfrTargets(times, 19.0)!!.keyframeIntervalSeconds)
+    assertNull(vfrTargets(times, 20.0))
+    assertNull(vfrTargets(listOf(0.0, 0.1, 0.1), 1.0))
+    assertNull(vfrTargets(listOf(0.0, Double.NaN), 1.0))
+    assertNull(vfrTargets(times, 1.0))
+  }
+
+  private fun vfrTargets(times: List<Double>, duration: Double,
+    plan: StandardInputConversion = conversion): SdrEncodingTargets? {
+    val variable = facts.copy(cadence = known(Cadence.Variable), videoCodec = known(plan.sourceCodec),
+      frameRate = known(plan.outputFrameRate))
+    val time = timeline.copy(durationSeconds = known(duration), videoDurationSeconds = known(duration),
+      firstAudioDurationSeconds = known(duration), videoPresentationSeconds = known(times))
+    return SdrEncodingTargets.from(plan, metadata(), samples(variable).copy(timeline = time))
   }
 
   @Test fun linearTaggedSdrIsRejectedBeforeAllocatingOrStartingExport() {
@@ -143,11 +180,11 @@ class SdrConversionAdapterTests {
       validate = { _, _, _, _, _ -> duringValidation?.invoke(); validation }, createEngine = { _, _, _, _, _ -> engine })
     val attempt = adapter.start(sourceFile, inputMetadata, samples(), conversion, results::add)
     fun idle() {
-      if (results.isNotEmpty()) return
+      if (results.isNotEmpty() || !attempt.looper.thread.isAlive) return
       try { shadowOf(attempt.looper).idle() }
       catch (error: IllegalStateException) {
         // PAUSED-mode idle posts a barrier; terminal cleanup can quit before that post.
-        if (results.isEmpty() || error.message?.contains("handler thread dead") != true) throw error
+        if (results.isEmpty() || attempt.looper.thread.isAlive) throw error
       }
     }
     fun assertInputSafe() { assertEquals("original", sourceFile.readText()); assertEquals("customer", unrelated.readText()) }

@@ -133,8 +133,8 @@ internal class StrictSdrEncoderFactory(
 ) : Codec.EncoderFactory {
   private val audioDelegate = DefaultEncoderFactory.Builder(context)
     .setEnableFallback(false).setEnableFormatFallback(false)
-    .setRequestedAudioEncoderSettings(AudioEncoderSettings.Builder().setBitrate(160_000)
-      .setProfile(MediaCodecInfo.CodecProfileLevel.AACObjectLC).build()).build()
+    .setRequestedAudioEncoderSettings(AudioEncoderSettings.Builder().setBitrate(SdrEncodingTargets.AAC_BITRATE)
+      .setProfile(SdrEncodingTargets.AAC_PROFILE).build()).build()
 
   override fun videoNeedsEncoding() = true
   override fun audioNeedsEncoding() = targets.audioChannels != null && !targets.copyAac
@@ -165,6 +165,9 @@ internal object SdrVideoEncoderConfiguration {
   fun create(format: Format, targets: SdrEncodingTargets, level: Int,
     sdk: Int = Build.VERSION.SDK_INT, device: String = Build.DEVICE,
     soc: String = if (Build.VERSION.SDK_INT >= 31) Build.SOC_MODEL else ""): MediaFormat {
+    // Media3 forces a 30-fps hint on this device. Other rates have unproven GOP/rate
+    // control here; preflight rejects them instead of changing the planned settings.
+    check(sdk >= 30 || device != "joyeuse" || format.frameRate == 30f)
     val media = MediaFormatUtil.createMediaFormatFromFormat(format)
     media.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
     media.setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
@@ -178,9 +181,6 @@ internal object SdrVideoEncoderConfiguration {
       val overflow = sdk in 31..34 && soc in setOf("SM8550", "SM7450", "SM6450", "SC9863A", "T612", "T606", "T603")
       media.setInteger(MediaFormat.KEY_OPERATING_RATE, if (sdk == 26) 30 else if (overflow) 1000 else Int.MAX_VALUE)
     }
-    // Redmi Note 9 Pro rejects high KEY_FRAME_RATE. This is a codec hint; timestamps
-    // and Media3's cadence remain planned. Lowering it only shortens the requested GOP.
-    if (sdk < 30 && device == "joyeuse" && format.frameRate > 30) media.setFloat(MediaFormat.KEY_FRAME_RATE, 30f)
     return media
   }
 }
