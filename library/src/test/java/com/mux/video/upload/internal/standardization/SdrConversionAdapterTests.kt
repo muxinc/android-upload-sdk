@@ -1,6 +1,12 @@
 package com.mux.video.upload.internal.standardization
 
 import android.content.Context
+import android.media.MediaFormat
+import androidx.media3.common.MediaItem
+import androidx.media3.transformer.Composition
+import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.EditedMediaItemSequence
+import androidx.media3.transformer.ExportResult
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.*
 import org.junit.Test
@@ -30,6 +36,39 @@ class SdrConversionAdapterTests {
   private fun samples(input: MediaFacts = facts) = MediaSampleInspection(input, SampleScanStatus.Complete, timeline = timeline)
   private fun targets(plan: StandardInputConversion = conversion, input: MediaFacts = facts,
     tracks: List<TrackMetadata> = listOf(audio())) = SdrEncodingTargets.from(plan, metadata(tracks), samples(input))
+
+  @Test fun vfrGopTargetUsesSlowestPresentationGapAndValidatorStillChecksActualOutput() {
+    val times = (0..900).map { if (it <= 450) it / 60.0 else 7.5 + (it - 450) / 20.0 }
+    val variable = facts.copy(cadence = known(Cadence.Variable))
+    val time = timeline.copy(durationSeconds = known(30.0), videoDurationSeconds = known(30.0),
+      firstAudioDurationSeconds = known(30.0), videoPresentationSeconds = known(times))
+    val source = samples(variable).copy(timeline = time)
+    val target = SdrEncodingTargets.from(conversion, metadata(), source)!!
+    assertTrue(target.keyframeIntervalSeconds in 1..12)
+    // Model an encoder that converts seconds to a frame count at the nominal 30 fps.
+    fun exportedGap(seconds: Int): Double {
+      val frames = seconds * 30
+      return times.indices.filter { it + frames < times.size }.maxOf { times[it + frames] - times[it] }
+    }
+    fun validate(seconds: Int) = StandardInputOutputValidator().validateFacts(variable.copy(
+      maximumKeyframeIntervalSeconds = known(exportedGap(seconds)), encodedDimensions = known(conversion.outputDimensions),
+      rotationDegrees = known(0)), variable, time, time, conversion)
+    assertTrue(validate(18) is StandardInputOutputValidation.Rejected)
+    assertTrue(validate(target.keyframeIntervalSeconds) is StandardInputOutputValidation.Accepted)
+  }
+
+  @Test fun linearTaggedSdrIsRejectedBeforeAllocatingOrStartingExport() {
+    val format = MediaFormat.createVideoFormat("video/avc", 1920, 1080).apply {
+      setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_LINEAR)
+    }
+    val video = MediaTrackMetadataReader.read(0, format)
+    val inspection = metadata().copy(tracks = listOf(video, audio()))
+    assertEquals(known(DynamicRange.Sdr), video.video!!.dynamicRange)
+    assertNull(SdrEncodingTargets.from(conversion, inspection, samples()))
+    val run = Run(inputMetadata = inspection); run.idle()
+    assertEquals(SdrConversionResult.Failed(SdrConversionFailure.UnsupportedPlan), run.results.single())
+    assertEquals(0, run.engine.starts); run.assertInputSafe()
+  }
 
   @Test fun pinsCodecFamilyAndTargetsBelowPublishedCeilings() {
     assertEquals("video/avc", targets()!!.videoMime)
@@ -66,7 +105,8 @@ class SdrConversionAdapterTests {
     assertNull(targets(tracks = listOf(audio().copy(sourceTrackId = MediaFact.Unknown))))
   }
   @Test fun permitsOnlyProvenIntegralCadenceReductionAndKeepsVfrTimestamps() {
-    assertNotNull(targets(input = facts.copy(cadence = known(Cadence.Variable))))
+    assertNotNull(SdrEncodingTargets.from(conversion, metadata(), samples(facts.copy(cadence = known(Cadence.Variable)))
+      .copy(timeline = timeline.copy(videoPresentationSeconds = known(listOf(0.0, 0.03, 0.08))))))
     val cfr = conversion.copy(outputCadence = OutputCadence.ConstantFrameRate)
     assertNotNull(targets(cfr, facts.copy(frameRate = known(240.0))))
     assertNotNull(targets(cfr, facts.copy(frameRate = known(240.00004008351402))))
@@ -93,6 +133,7 @@ class SdrConversionAdapterTests {
       StandardInputPolicyEvaluator().evaluate(facts, selection())),
     capability: SdrEncoderCapability? = SdrEncoderCapability("fake", 1),
     duringValidation: (() -> Unit)? = null,
+    inputMetadata: MediaMetadataInspection = metadata(),
   ) {
     val sourceFile = File.createTempFile("customer-", ".mp4", context.cacheDir).apply { writeText("original") }
     val unrelated = File(context.cacheDir, "mux-upload/customer-copy.mp4").apply { parentFile!!.mkdirs(); writeText("customer") }
@@ -100,8 +141,15 @@ class SdrConversionAdapterTests {
     val results = mutableListOf<SdrConversionResult>()
     val adapter = SdrConversionAdapter(context, preflight = { _, _, _, _ -> capability },
       validate = { _, _, _, _, _ -> duringValidation?.invoke(); validation }, createEngine = { _, _, _, _, _ -> engine })
-    val attempt = adapter.start(sourceFile, metadata(), samples(), conversion, results::add)
-    fun idle() { shadowOf(attempt.looper).idle() }
+    val attempt = adapter.start(sourceFile, inputMetadata, samples(), conversion, results::add)
+    fun idle() {
+      if (results.isNotEmpty()) return
+      try { shadowOf(attempt.looper).idle() }
+      catch (error: IllegalStateException) {
+        // PAUSED-mode idle posts a barrier; terminal cleanup can quit before that post.
+        if (results.isEmpty() || error.message?.contains("handler thread dead") != true) throw error
+      }
+    }
     fun assertInputSafe() { assertEquals("original", sourceFile.readText()); assertEquals("customer", unrelated.readText()) }
   }
   @Test fun successRetainsVerifiedFileUntilOwnerDeletesItAndIgnoresLateEvents() {
@@ -118,6 +166,18 @@ class SdrConversionAdapterTests {
     assertEquals(listOf(SdrConversionResult.Failed(SdrConversionFailure.Export)), run.results)
     assertFalse(run.engine.output!!.exists()); run.assertInputSafe()
     run.engine.complete(); assertEquals(1, run.results.size)
+  }
+  @Test fun media3MuxerWatchdogErrorUsesTerminalCleanupAndSuppressesLateCompletion() {
+    val run = Run(); run.idle()
+    val composition = Composition.Builder(EditedMediaItemSequence.withVideoFrom(listOf(
+      EditedMediaItem.Builder(MediaItem.fromUri("file:///test.mp4")).build()))).build()
+    SdrExportListener(targets()!!, run.engine.completions!!, run.engine.failures!!)
+      .onError(composition, ExportResult.Builder().build(), muxerTimeoutException())
+    run.idle()
+    assertEquals(listOf(SdrConversionResult.Failed(SdrConversionFailure.Export)), run.results)
+    assertFalse(run.engine.output!!.exists()); run.assertInputSafe()
+    run.engine.complete(); run.attempt.cancel()
+    assertEquals(1, run.results.size); assertEquals(1, run.engine.cancellations)
   }
   @Test fun cancelTerminatesWithoutMedia3CallbackAndSuppressesQueuedCompletion() {
     val run = Run(); run.idle(); run.engine.complete(); run.attempt.cancel(); run.idle()
