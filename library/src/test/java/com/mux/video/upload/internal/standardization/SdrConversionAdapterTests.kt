@@ -16,6 +16,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
 import java.io.File
+import java.util.concurrent.CopyOnWriteArrayList
 
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [28])
@@ -175,16 +176,23 @@ class SdrConversionAdapterTests {
     val sourceFile = File.createTempFile("customer-", ".mp4", context.cacheDir).apply { writeText("original") }
     val unrelated = File(context.cacheDir, "mux-upload/customer-copy.mp4").apply { parentFile!!.mkdirs(); writeText("customer") }
     val engine = FakeEngine()
-    val results = mutableListOf<SdrConversionResult>()
+    val results = CopyOnWriteArrayList<SdrConversionResult>()
     val adapter = SdrConversionAdapter(context, preflight = { _, _, _, _ -> capability },
       validate = { _, _, _, _, _ -> duringValidation?.invoke(); validation }, createEngine = { _, _, _, _, _ -> engine })
     val attempt = adapter.start(sourceFile, inputMetadata, samples(), conversion, results::add)
     fun idle() {
-      if (results.isNotEmpty() || !attempt.looper.thread.isAlive) return
-      try { shadowOf(attempt.looper).idle() }
-      catch (error: IllegalStateException) {
-        // PAUSED-mode idle posts a barrier; terminal cleanup can quit before that post.
-        if (results.isEmpty() || attempt.looper.thread.isAlive) throw error
+      val thread = attempt.looper.thread
+      if (results.isEmpty() && thread.isAlive) {
+        try { shadowOf(attempt.looper).idle() }
+        catch (error: IllegalStateException) {
+          // PAUSED-mode idle can race a terminal quit before its barrier is posted.
+          thread.join(5_000)
+          if (results.isEmpty() || thread.isAlive) throw error
+        }
+      }
+      if (results.isNotEmpty()) {
+        thread.join(5_000)
+        assertFalse("Terminal attempt thread still running", thread.isAlive)
       }
     }
     fun assertInputSafe() { assertEquals("original", sourceFile.readText()); assertEquals("customer", unrelated.readText()) }

@@ -107,12 +107,7 @@ internal class SdrConversionAdapter(
                 // The shared validator checks policy, pixels, cadence, and effective timeline.
                 // Add this adapter's concrete encoder-profile and non-AAC channel contract.
                 val audio = validation.facts.audioTracks.valueOrNull?.singleOrNull()?.format?.valueOrNull as? AudioFormat.Aac
-                val expectedLayout = when (targets.audioChannels) {
-                  1 -> AudioChannelLayout.Mono
-                  2 -> AudioChannelLayout.Stereo
-                  6 -> AudioChannelLayout.FivePointOne
-                  else -> null
-                }
+                val expectedLayout = CodecMetadataReader.aacChannelLayout(targets.audioChannels)
                 if (validation.facts.videoProfile != MediaFact.Known(targets.profile) ||
                   (targets.audioChannels != null && audio?.layout != expectedLayout)) fail(SdrConversionFailure.OutputInvalid)
                 else finish(SdrConversionResult.Completed(owned, validation.facts))

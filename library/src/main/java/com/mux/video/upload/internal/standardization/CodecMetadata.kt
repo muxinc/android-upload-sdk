@@ -192,14 +192,16 @@ internal object CodecMetadataReader {
       val config = AacUtil.parseAudioSpecificConfig(configuration)
       if (config.sampleRateHz <= 0 || (channelCount != null && config.channelCount != channelCount))
         return MediaFact.Unknown
-      MediaFact.Known(when (config.channelCount) {
-        1 -> AudioChannelLayout.Mono
-        2 -> AudioChannelLayout.Stereo
-        6 -> AudioChannelLayout.FivePointOne
-        else -> AudioChannelLayout.Other
-      })
+      MediaFact.Known(aacChannelLayout(config.channelCount) ?: AudioChannelLayout.Other)
     } catch (_: LinkageError) { MediaFact.Unknown }
       catch (_: Exception) { MediaFact.Unknown }
+  }
+
+  fun aacChannelLayout(channelCount: Int?): AudioChannelLayout? = when (channelCount) {
+    1 -> AudioChannelLayout.Mono
+    2 -> AudioChannelLayout.Stereo
+    6 -> AudioChannelLayout.FivePointOne
+    else -> null
   }
 }
 
