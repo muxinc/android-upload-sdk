@@ -22,17 +22,20 @@ import androidx.test.core.app.ApplicationProvider
 import io.mockk.*
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.After
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
 import org.robolectric.shadows.MediaCodecInfoBuilder
+import org.robolectric.shadows.ShadowBuild
 import java.lang.reflect.InvocationTargetException
 
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [28], shadows = [SupportedFormatShadow::class])
 class SdrMedia3ConfigurationTests {
+  @After fun resetAdvertisedFormats() { SupportedFormatShadow.supported = { true } }
   private val context = ApplicationProvider.getApplicationContext<Context>()
   private val facts = compliantFacts().copy(cadence = known(Cadence.Constant))
   private val conversion = (StandardInputPlanner().plan(facts.copy(averageBitrate = known(9_000_000L)),
@@ -71,14 +74,27 @@ class SdrMedia3ConfigurationTests {
       .getInteger(MediaFormat.KEY_OPERATING_RATE))
   }
 
-  @Test fun redmiFrameRateWorkaroundDoesNotIncreaseLowRateGopOrResampleTimestamps() {
-    val high = format.buildUpon().setFrameRate(120f).build()
-    assertEquals(30f, SdrVideoEncoderConfiguration.create(high, targets, 4, sdk = 29, device = "joyeuse")
-      .getFloat(MediaFormat.KEY_FRAME_RATE), 0f)
-    val low = format.buildUpon().setFrameRate(5f).build()
-    assertEquals(5f, SdrVideoEncoderConfiguration.create(low, targets, 4, sdk = 29, device = "joyeuse")
-      .getFloat(MediaFormat.KEY_FRAME_RATE), 0f)
-    assertEquals(120f, high.frameRate, 0f)
+  @Test fun redmiRejectsUnprovenRateHintsInsteadOfChangingBitrateOrGop() {
+    for (rate in listOf(5f, 24f, 60f, 120f)) {
+      val requested = format.buildUpon().setFrameRate(rate).build()
+      assertThrows(IllegalStateException::class.java) {
+        SdrVideoEncoderConfiguration.create(requested, targets, 4, sdk = 29, device = "joyeuse")
+      }
+      assertEquals(rate, SdrVideoEncoderConfiguration.create(requested, targets, 4, sdk = 30, device = "joyeuse")
+        .getFloat(MediaFormat.KEY_FRAME_RATE), 0f)
+    }
+    val accepted = SdrVideoEncoderConfiguration.create(format, targets, 4, sdk = 29, device = "joyeuse")
+    assertEquals(30f, accepted.getFloat(MediaFormat.KEY_FRAME_RATE), 0f)
+    assertEquals(targets.bitrate, accepted.getInteger(MediaFormat.KEY_BIT_RATE))
+    assertEquals(targets.keyframeIntervalSeconds, accepted.getInteger(MediaFormat.KEY_I_FRAME_INTERVAL))
+  }
+
+  @Test fun redmiPreflightRejectsNonThirtyFpsBeforeEncoding() {
+    ShadowBuild.setDevice("joyeuse")
+    val infos = arrayOf(codec(false, "video/avc"), codec(true, "video/avc"))
+    assertNull(SdrCapabilityPreflight({ infos }, { 0L })
+      .videoEncoder(conversion.copy(outputFrameRate = 60.0), metadata, targets) { false })
+    assertNotNull(SdrCapabilityPreflight({ infos }, { 0L }).videoEncoder(conversion, metadata, targets) { false })
   }
 
   private fun codec(encoder: Boolean, mime: String): MediaCodecInfo {
@@ -95,7 +111,7 @@ class SdrMedia3ConfigurationTests {
       .setIsEncoder(encoder).setCapabilities(capabilities).build()
   }
 
-  @Test fun coldEnumerationHasSeparateBoundAndUnrelatedCodecsDoNotExhaustQueries() {
+  @Test fun coldEnumerationDoesNotConsumeQueryBudgetAndUnrelatedCodecsDoNotExhaustQueries() {
     var now = 0L
     val unrelated = codec(false, "audio/mpeg")
     val encoder = codec(true, "video/avc")
@@ -111,21 +127,27 @@ class SdrMedia3ConfigurationTests {
     assertEquals(1, queried.last().getInteger(MediaFormat.KEY_PRIORITY))
   }
 
-  @Test fun preflightStillBoundsColdInitializationQueriesAndCancellation() {
+  @Test fun preflightAcceptsSlowEnumerationButBoundsQueriesAndCancellation() {
     var now = 0L
     val encoder = codec(true, "video/avc")
     val slowDecoder = codec(false, "video/avc")
     var queries = 0
-    SupportedFormatShadow.supported = { queries++; now += 500_000_000L; true }
     val infos = arrayOf(slowDecoder, encoder)
-    assertNull(SdrCapabilityPreflight({ now += 2_000_000_000L; infos }, { now })
+    SupportedFormatShadow.supported = { queries++; true }
+    assertNotNull(SdrCapabilityPreflight({ now += 3_000_000_000L; infos }, { now })
       .videoEncoder(conversion, metadata, targets) { false })
+    assertEquals(2, queries)
+    queries = 0
+    SupportedFormatShadow.supported = { queries++; now += 500_000_000L; true }
     now = 0
     assertNull(SdrCapabilityPreflight({ infos }, { now }).videoEncoder(conversion, metadata, targets) { false })
     assertEquals(1, queries)
     var enumerated = false
     assertNull(SdrCapabilityPreflight({ enumerated = true; infos }, { 0L }).videoEncoder(conversion, metadata, targets) { true })
     assertFalse(enumerated)
+    var cancelled = false
+    assertNull(SdrCapabilityPreflight({ cancelled = true; infos }, { 0L })
+      .videoEncoder(conversion, metadata, targets) { cancelled })
     val rejected = codec(false, "video/avc")
     queries = 0
     SupportedFormatShadow.supported = { queries++; false }

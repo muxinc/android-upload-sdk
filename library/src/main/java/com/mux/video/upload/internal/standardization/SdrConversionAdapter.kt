@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import androidx.media3.common.MimeTypes
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -97,7 +98,7 @@ internal class SdrConversionAdapter(
         exporter.start(input, owned.file, { videoMime, audioMime ->
           handler.post { guarded {
             if (isTerminal()) return@guarded
-            if (videoMime != targets.videoMime || audioMime != if (targets.audioChannels != null) "audio/mp4a-latm" else null)
+            if (videoMime != targets.videoMime || audioMime != if (targets.audioChannels != null) MimeTypes.AUDIO_AAC else null)
               return@guarded fail(SdrConversionFailure.CodecChanged)
             if (!sourceUnchanged()) return@guarded fail(SdrConversionFailure.SourceChanged)
             when (val validation = validate(owned.file, source.facts, source.timeline, conversion, cancelled::get)) {

@@ -34,6 +34,9 @@ internal data class SdrEncodingTargets(
   }
 
   companion object {
+    const val AAC_BITRATE = 160_000
+    const val AAC_PROFILE = CodecProfileLevel.AACObjectLC
+
     fun from(conversion: StandardInputConversion, metadata: MediaMetadataInspection,
       source: MediaSampleInspection): SdrEncodingTargets? {
       val facts = source.facts
@@ -85,16 +88,24 @@ internal data class SdrEncodingTargets(
       if (conversion.outputCadence == OutputCadence.PreserveSourceTimestamps &&
         facts.cadence == MediaFact.Known(Cadence.Variable)) {
         val times = source.timeline.videoPresentationSeconds.valueOrNull!!
-        if (times.size < 2 || times.any { !it.isFinite() }) return null
-        var longestGap = 0.0
+        val duration = source.timeline.videoDurationSeconds.valueOrNull!!
+        if (times.size < 2 || times.any { !it.isFinite() } || !duration.isFinite() || duration <= 0) return null
+        val end = times.first() + duration
+        if (!end.isFinite() || end < times.last()) return null
         for (index in 1 until times.size) {
-          val gap = times[index] - times[index - 1]
-          if (gap <= 0) return null
-          longestGap = maxOf(longestGap, gap)
+          if (times[index] <= times[index - 1]) return null
         }
-        // Encoders commonly turn the interval into nominal-rate frames. Bound their
-        // elapsed span using the slowest observed gap; validation still proves output.
-        gopSeconds = minOf(gopSeconds, floor(interval * 0.9 / (rate * longestGap)).toInt())
+        // Encoders commonly turn seconds into nominal-rate frames. Check every real
+        // frame window, including the final sample's duration, without retiming gaps.
+        while (gopSeconds >= 1) {
+          val frames = ceil(gopSeconds * rate).toInt()
+          val fits = times.indices.all { index ->
+            val windowEnd = times.getOrNull(index + frames) ?: end
+            windowEnd - times[index] <= interval * 0.9 + 2e-6
+          }
+          if (fits) break
+          gopSeconds--
+        }
         if (gopSeconds < 1) return null
       }
       return SdrEncodingTargets(
@@ -118,11 +129,10 @@ internal class SdrCapabilityPreflight(
 ) {
   fun videoEncoder(conversion: StandardInputConversion, metadata: MediaMetadataInspection,
     targets: SdrEncodingTargets, isCancelled: () -> Boolean): SdrEncoderCapability? {
-    val enumerationStarted = nanoTime()
     if (isCancelled()) return null
     val infos = codecInfos()
-    // Cold native enumeration has its own cooperative bound, not the query budget.
-    if (isCancelled() || nanoTime() - enumerationStarted >= 2_000_000_000L) return null
+    // Native enumeration cannot be interrupted; budget subsequent capability queries.
+    if (isCancelled()) return null
     val started = nanoTime()
     var queries = 0
     fun withinBudget() = !isCancelled() && nanoTime() - started < 500_000_000L
@@ -156,8 +166,8 @@ internal class SdrCapabilityPreflight(
       val audioMime = metadata.tracks.first { it.sourceTrackId.valueOrNull?.toString() == targets.firstAudioTrackId }.mimeType.valueOrNull ?: return null
       if (!supportsDecode(audioMime, MediaFormat.createAudioFormat(audioMime, targets.audioSampleRate!!, targets.audioChannels))) return null
       val aac = MediaFormat.createAudioFormat(MimeTypes.AUDIO_AAC, targets.audioSampleRate, targets.audioChannels)
-      aac.setInteger(MediaFormat.KEY_BIT_RATE, 160_000)
-      aac.setInteger(MediaFormat.KEY_AAC_PROFILE, CodecProfileLevel.AACObjectLC)
+      aac.setInteger(MediaFormat.KEY_BIT_RATE, SdrEncodingTargets.AAC_BITRATE)
+      aac.setInteger(MediaFormat.KEY_AAC_PROFILE, SdrEncodingTargets.AAC_PROFILE)
       if (infos.none { withinBudget() && it.isEncoder && it.supportedTypes.contains(MimeTypes.AUDIO_AAC) &&
           supports(it, MimeTypes.AUDIO_AAC, aac) }) return null
     }
@@ -170,8 +180,6 @@ internal class SdrCapabilityPreflight(
         val caps = info.getCapabilitiesForType(targets.videoMime)
         val level = caps.profileLevels.filter { it.profile == targets.platformProfile }.maxOfOrNull { it.level } ?: return@runCatching null
         val size = conversion.outputDimensions
-        // A device workaround may lower KEY_FRAME_RATE as a configure-time hint.
-        // Still guard the actual planned size/rate against advertised video limits.
         if (caps.videoCapabilities?.areSizeAndRateSupported(size.width, size.height, conversion.outputFrameRate) != true)
           return@runCatching null
         val requested = Format.Builder().setSampleMimeType(targets.videoMime).setWidth(size.width).setHeight(size.height)
