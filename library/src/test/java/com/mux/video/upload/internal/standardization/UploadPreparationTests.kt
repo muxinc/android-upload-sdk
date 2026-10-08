@@ -157,6 +157,35 @@ class UploadPreparationTests : AbsRobolectricTest() {
     }
   }
 
+  @Test fun cancelledPreparationDeadlineRetainsAReleaseBarrier() = runBlocking {
+    val facts = source().copy(averageBitrate = known(9_000_000L))
+    val started = CompletableDeferred<Unit>()
+    val released = CompletableDeferred<Unit>()
+    val export = mockk<SdrConversionAdapter.Attempt> {
+      every { cancel() } just Runs
+      coEvery { awaitRelease() } coAnswers { released.await() }
+    }
+    mockkConstructor(SdrConversionAdapter::class)
+    every { anyConstructed<SdrConversionAdapter>().start(any(), any(), any(), any(), any()) } answers {
+      started.complete(Unit); export
+    }
+    val state = UploadPreparationState()
+    val upload = upload().copy(attempt = UploadAttempt(state, MuxUpload.Progress()))
+    val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata(facts)) },
+      inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) })
+    val job = launch(Dispatchers.Default) { preparation.prepare(upload, context, true) }
+    try {
+      withTimeout(5000) { started.await() }
+      job.cancel()
+      withTimeout(8000) { job.join() }
+      assertTrue(job.isCancelled)
+      assertNotNull(state.releaseBarrier)
+      assertFalse(released.isCompleted)
+      released.complete(Unit)
+      withTimeout(1000) { state.releaseBarrier!!.invoke() }
+    } finally { released.complete(Unit); job.cancelAndJoin(); unmockkConstructor(SdrConversionAdapter::class) }
+  }
+
   private fun bridgeRace(cancel: Boolean) = runBlocking {
     val facts = source().copy(averageBitrate = known(9_000_000L))
     val callback = slot<(SdrConversionResult) -> Unit>()
