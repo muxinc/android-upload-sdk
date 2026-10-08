@@ -1,5 +1,6 @@
 package com.mux.video.upload.internal.standardization
 
+import kotlinx.coroutines.CompletableDeferred
 import android.content.Context
 import android.os.Handler
 import android.os.HandlerThread
@@ -91,6 +92,7 @@ internal class SdrConversionAdapter(
     private val cancelled = AtomicBoolean(false)
     private val terminalLock = Any()
     private var terminal = false
+    private val released = CompletableDeferred<Unit>()
     private var engine: SdrExportEngine? = null
     private var output: SdrGeneratedFile? = null
     /** Exact deletion authority retained if the OS refuses cleanup, including cancellation. */
@@ -106,6 +108,8 @@ internal class SdrConversionAdapter(
       }
       handler.post { finish(SdrConversionResult.Cancelled) }
     }
+
+    suspend fun awaitRelease() { released.await() }
 
     internal fun begin() { handler.post {
       guarded {
@@ -183,6 +187,7 @@ internal class SdrConversionAdapter(
         engine = null
         handler.removeCallbacksAndMessages(null)
         thread.quitSafely()
+        released.complete(Unit)
       }
     }
   }

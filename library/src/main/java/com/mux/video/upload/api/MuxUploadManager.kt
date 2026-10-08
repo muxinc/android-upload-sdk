@@ -45,7 +45,7 @@ object MuxUploadManager {
     uploadsByFilename[videoFile.absolutePath]?.let { MuxUpload.create(it) }
 
   /**
-   * Finds all in-progress or paused uploads and returns [MuxUpload] objects representing them. You
+   * Finds all in-progress, paused, or failed uploads and returns [MuxUpload] objects representing them. You
    * don't need to hold these specific instances except where they're locally used. The upload jobs
    * will continue in parallel with the rest of your app
    */
@@ -63,16 +63,23 @@ object MuxUploadManager {
   @JvmSynthetic
   @MainThread
   internal fun resumeCachedJobs(includePaused: Boolean): List<MuxUpload> {
-    return readAllCachedUploads(includePaused)
-       .filter { uploadInfo ->
-         val exists = uploadInfo.inputFile.exists()
-         if (!exists) {
-             forgetUploadState(uploadInfo)
-         }
-         exists
-       }
-      .map { uploadInfo -> startJob(uploadInfo, restart = false) }
-      .map { MuxUpload.create(it) }
+    val restored = readAllCachedUploads().filter { upload ->
+      upload.inputFile.exists().also { if (!it) forgetUploadState(upload) }
+    }.map { upload ->
+      if (!includePaused && readUploadResumeState(upload).paused) {
+        uploadsByFilename.getOrPut(upload.inputFile.absolutePath) {
+          val saved = readUploadResumeState(upload)
+          val preparation = UploadPreparationState().apply { originalSelected = saved.originalSelected }
+          val attempt = UploadAttempt(preparation, MuxUpload.Progress(
+            bytesUploaded = if (saved.generatedResumeBlocked) 0 else saved.bytesSent,
+            totalBytes = upload.inputFile.length()), previousPersistenceOwnerId = saved.attemptId)
+          attempt.pause {}
+          upload.update(attempt = attempt, statusFlow = attempt.status).also { it.session.current.value = it }
+        }
+      } else startJob(upload, restart = false)
+    }
+    notifyListListeners()
+    return restored.map { MuxUpload.create(it) }
   }
 
   /**
@@ -113,7 +120,7 @@ object MuxUploadManager {
   internal fun pauseJob(upload: UploadInfo): UploadInfo {
     assertMainThread()
     // Paused jobs stay in the manager and remain persisted
-    uploadsByFilename[upload.inputFile.absolutePath]?.let {
+    uploadsByFilename[upload.inputFile.absolutePath]?.takeIf { it.session === upload.session }?.let {
       it.attempt?.pause { state -> writeUploadState(it, state) }
       cancelJobInner(it)
       notifyListListeners()
@@ -127,12 +134,17 @@ object MuxUploadManager {
   @MainThread
   internal fun cancelJob(upload: UploadInfo) {
     assertMainThread()
-    val current = uploadsByFilename[upload.inputFile.absolutePath] ?: upload
-    observerJobsByFilename.remove(current.inputFile.absolutePath)?.cancel()
-    current.attempt?.cancel { forgetUploadState(current) }
-    cancelJobInner(current)
-    uploadsByFilename -= current.inputFile.absolutePath
-    forgetUploadState(current)
+    val current = uploadsByFilename[upload.inputFile.absolutePath]
+    if (current != null && current.session !== upload.session) {
+      // An old destination's handle must not stop or forget its replacement.
+      upload.attempt?.cancel {}
+      upload.uploadJob?.cancel()
+      return
+    }
+    val cancelled = current ?: upload
+    observerJobsByFilename.remove(cancelled.inputFile.absolutePath)?.cancel()
+    cancelAttempt(cancelled)
+    uploadsByFilename -= cancelled.inputFile.absolutePath
     notifyListListeners()
   }
 
@@ -140,12 +152,13 @@ object MuxUploadManager {
   @MainThread
   internal fun jobFinished(upload: UploadInfo, forgetJob: Boolean = true) {
     assertMainThread()
+    // Persistence belongs to the attempt, even when it was never registered with the manager.
+    if (forgetJob) forgetUploadState(upload)
     if (uploadsByFilename[upload.inputFile.absolutePath]?.attempt !== upload.attempt) return
     observerJobsByFilename.remove(upload.inputFile.absolutePath)?.cancel()
-    uploadsByFilename -= upload.inputFile.absolutePath
-    if (forgetJob) {
-      forgetUploadState(upload)
-    }
+    // Keep failed jobs discoverable so existing handles follow a manager-driven retry.
+    if (forgetJob || upload.statusFlow?.value !is UploadStatus.UploadFailed)
+      uploadsByFilename -= upload.inputFile.absolutePath
     notifyListListeners()
   }
 
@@ -160,6 +173,12 @@ object MuxUploadManager {
     upload.uploadJob?.cancel()
   }
 
+  private fun cancelAttempt(upload: UploadInfo) {
+    val attempt = upload.attempt
+    if (attempt == null) forgetUploadState(upload) else attempt.cancel { forgetUploadState(upload) }
+    upload.uploadJob?.cancel()
+  }
+
   private fun insertOrUpdateUpload(upload: UploadInfo, restart: Boolean): UploadInfo {
     val filename = upload.inputFile.absolutePath
     val previous = uploadsByFilename[filename]
@@ -169,12 +188,12 @@ object MuxUploadManager {
     var source = previous ?: upload
     if (restart || newDestination) {
       val generatedMayExistRemotely = !newDestination && (source.generatedResumeBlocked ||
-        source.attempt?.preparation?.generatedRequestStarted == true)
-      previous?.attempt?.cancel { if (!generatedMayExistRemotely) forgetUploadState(source) }
-      previous?.uploadJob?.cancel()
-      if (!generatedMayExistRemotely) forgetUploadState(upload)
+        source.attempt?.preparation?.generatedRequestStarted == true || readUploadResumeState(upload).generatedResumeBlocked)
+      cancelAttempt(source)
       source = upload.update(attempt = null, uploadJob = source.uploadJob,
-        statusFlow = null, restoredFromOriginal = false, generatedResumeBlocked = generatedMayExistRemotely)
+        statusFlow = null, restoredFromOriginal = false, generatedResumeBlocked = generatedMayExistRemotely).also {
+        it.session = if (newDestination) upload.session else source.session
+      }
     }
     val newUpload = startUploadJob(source)
     uploadsByFilename += upload.inputFile.absolutePath to newUpload
