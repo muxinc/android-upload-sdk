@@ -40,6 +40,7 @@ internal class UploadAttempt(
   val status = MutableStateFlow<UploadStatus>(UploadStatus.Started)
   private var stopped = false
   private var cancelled = false
+  private var restarting = false
   private var terminal = false
   private var superseded = false
   private var confirmed = initialProgress
@@ -48,6 +49,7 @@ internal class UploadAttempt(
 
   @Synchronized fun isStopped() = stopped
   @Synchronized fun isCancelled() = cancelled
+  @Synchronized fun isRestarting() = restarting
   @Synchronized fun replacementFailure() = replacement
   @Synchronized fun confirmedProgress() = confirmed
   @Synchronized fun supersede() { superseded = true }
@@ -98,11 +100,12 @@ internal class UploadAttempt(
     persist(confirmed)
   }
 
-  fun cancel(forget: () -> Unit) {
+  fun cancel(forRestart: Boolean = false, forget: () -> Unit) {
     synchronized(this) {
       if (cancelled) return
       stopped = true
       cancelled = true
+      restarting = forRestart
       forget()
     }
     preparation.deleteOwnedFile()

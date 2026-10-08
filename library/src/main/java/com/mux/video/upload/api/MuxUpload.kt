@@ -13,6 +13,7 @@ import com.mux.video.upload.internal.forgetUploadState
 import com.mux.video.upload.internal.readUploadResumeState
 import com.mux.video.upload.internal.UploadCancelledException
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -155,7 +156,7 @@ class MuxUpload private constructor(
           readUploadResumeState(uploadInfo).generatedResumeBlocked
         val previous = uploadInfo
         if (previous.attempt == null) forgetUploadState(previous)
-        else previous.attempt.cancel { forgetUploadState(previous) }
+        else previous.attempt.cancel(forRestart = true) { forgetUploadState(previous) }
         previous.uploadJob?.cancel()
         uploadInfo = uploadInfo.update(attempt = null, statusFlow = null,
           restoredFromOriginal = false, generatedResumeBlocked = blocked)
@@ -175,6 +176,7 @@ class MuxUpload private constructor(
    * completes
    *
    * If the upload already succeeded, the old result will be returned immediately.
+   * If force restart interrupts the attempt, existing waiters follow the restarted upload.
    * [cancel] returns a failure to existing waiters and later calls without restarting.
    * [pause] interrupts existing waiters with [CancellationException]; the upload remains resumable.
    * Cancellation of the calling coroutine still throws [CancellationException]. Replacement by
@@ -191,17 +193,31 @@ class MuxUpload private constructor(
     } else {
       coroutineScope {
         startInner(coroutineScope = this)
-        val awaited = uploadInfo
-        replacementResult(awaited)?.let { return@coroutineScope it }
-        try {
-          awaited.uploadJob?.await() ?: Result.failure(Exception("Upload failed to start"))
-        } catch (e: CancellationException) {
-          // Upload cancellation/replacement must not cancel an active caller.
-          currentCoroutineContext().ensureActive()
-          replacementResult(awaited) ?: if (cancelled || awaited.attempt?.isCancelled() == true) {
-            Result.failure(UploadCancelledException())
-          } else throw e
-        }
+        awaitUploadResult(uploadInfo)
+      }
+    }
+  }
+
+  private suspend fun awaitUploadResult(initial: UploadInfo): Result<UploadStatus> {
+    var awaited = initial
+    while (true) {
+      replacementResult(awaited)?.let { return it }
+      try {
+        return awaited.uploadJob?.await() ?: Result.failure(Exception("Upload failed to start"))
+      } catch (e: CancellationException) {
+        // Upload lifecycle changes must not cancel an active caller.
+        currentCoroutineContext().ensureActive()
+        replacementResult(awaited)?.let { return it }
+        val previous = awaited.attempt
+        if (!cancelled && previous?.isRestarting() == true) {
+          // Restart marks the old attempt before cancellation. Publication of the new job
+          // can race this waiter, so wait for its identity in the same destination session.
+          awaited = awaited.session.current.filterNotNull().first {
+            it.attempt != null && it.attempt !== previous && it.uploadJob != null
+          }
+        } else if (cancelled || previous?.isCancelled() == true) {
+          return Result.failure(UploadCancelledException())
+        } else throw e
       }
     }
   }
