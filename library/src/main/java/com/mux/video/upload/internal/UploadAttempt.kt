@@ -4,6 +4,12 @@ import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.UploadStatus
 import com.mux.video.upload.internal.standardization.SdrGeneratedFile
 import kotlinx.coroutines.flow.MutableStateFlow
+import java.util.UUID
+
+/** Handles for one destination follow replacements through this shared record. */
+internal class UploadSession {
+  val current = MutableStateFlow<UploadInfo?>(null)
+}
 
 /** Shared across in-process pause/resume, never reconstructed as a generated payload from disk. */
 internal class UploadPreparationState {
@@ -28,7 +34,9 @@ internal class UploadPreparationState {
 internal class UploadAttempt(
   val preparation: UploadPreparationState,
   initialProgress: MuxUpload.Progress,
+  val previousPersistenceOwnerId: String? = null,
 ) {
+  val id: String = UUID.randomUUID().toString()
   val status = MutableStateFlow<UploadStatus>(UploadStatus.Started)
   private var stopped = false
   private var cancelled = false
@@ -61,10 +69,10 @@ internal class UploadAttempt(
 
   @Synchronized fun beginTransport(generated: Boolean, persist: () -> Unit) {
     if (stopped) throw kotlinx.coroutines.CancellationException("Upload stopped")
-    if (generated) {
-      preparation.generatedRequestStarted = true
-      persist()
-    }
+    if (generated) preparation.generatedRequestStarted = true
+    else preparation.originalSelected = true
+    // Persist payload selection before the first request, even without an acknowledgement.
+    persist()
   }
 
   @Synchronized fun publish(value: UploadStatus) {
@@ -72,7 +80,7 @@ internal class UploadAttempt(
   }
 
   @Synchronized fun acknowledge(progress: MuxUpload.Progress, persist: () -> Unit) {
-    if (stopped || terminal) return
+    if (stopped || terminal || superseded) return
     confirmed = progress
     persist()
     status.value = UploadStatus.Uploading(progress)
@@ -85,16 +93,18 @@ internal class UploadAttempt(
     persist(confirmed)
   }
 
-  @Synchronized fun cancel(forget: () -> Unit) {
-    if (cancelled) return
-    stopped = true
-    cancelled = true
-    forget()
+  fun cancel(forget: () -> Unit) {
+    synchronized(this) {
+      if (cancelled) return
+      stopped = true
+      cancelled = true
+      forget()
+    }
     preparation.deleteOwnedFile()
   }
 
   @Synchronized fun finish(value: UploadStatus): Boolean {
-    if (stopped || terminal) return false
+    if (stopped || terminal || superseded) return false
     terminal = true
     status.value = value
     return true
@@ -104,3 +114,5 @@ internal class UploadAttempt(
 internal class GeneratedResumeBlockedException : IllegalStateException(
   "Generated payload identity or server offset is unverified. Create a new Direct Upload."
 )
+
+internal class UploadCancelledException : IllegalStateException("Upload was cancelled. Create a new upload handle.")

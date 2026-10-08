@@ -82,7 +82,6 @@ internal data class UploadInfo(
   @JvmSynthetic internal val inputStandardization: InputStandardization = InputStandardization(),
   @JvmSynthetic internal val remoteUri: Uri,
   @JvmSynthetic internal val inputFile: File,
-  @JvmSynthetic internal val standardizedFile: File? = null,
   @JvmSynthetic internal val chunkSize: Int,
   @JvmSynthetic internal val retriesPerChunk: Int,
   @JvmSynthetic internal val optOut: Boolean,
@@ -92,6 +91,8 @@ internal data class UploadInfo(
   @JvmSynthetic internal val restoredFromOriginal: Boolean = false,
   @JvmSynthetic internal val generatedResumeBlocked: Boolean = false,
 ) {
+  internal var session = UploadSession()
+
   fun isRunning(): Boolean = attempt?.isStopped() != true &&
     (statusFlow?.value?.let {
       it is UploadStatus.Uploading || it is UploadStatus.Started || it is UploadStatus.Preparing
@@ -108,7 +109,6 @@ internal fun UploadInfo.update(
   inputStandardization: InputStandardization = this.inputStandardization,
   remoteUri: Uri = this.remoteUri,
   file: File = this.inputFile,
-  standardizedFile: File? = this.standardizedFile,
   chunkSize: Int = this.chunkSize,
   retriesPerChunk: Int = this.retriesPerChunk,
   optOut: Boolean = this.optOut,
@@ -121,7 +121,6 @@ internal fun UploadInfo.update(
   inputStandardization,
   remoteUri,
   file,
-  standardizedFile,
   chunkSize,
   retriesPerChunk,
   optOut,
@@ -130,4 +129,4 @@ internal fun UploadInfo.update(
   attempt,
   restoredFromOriginal,
   generatedResumeBlocked,
-)
+).also { it.session = session }

@@ -41,7 +41,7 @@ class UploadPreparationTests : AbsRobolectricTest() {
       val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata(facts)) },
         inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) },
         convert = { _, _, _, _, _ -> error("Compliant input must pass through") })
-      assertEquals(PreparedUpload.Original(), preparation.prepare(upload(), context))
+      assertEquals(PreparedUpload.Original(), preparation.prepare(upload(), context, true))
     }
   }
 
@@ -101,7 +101,7 @@ class UploadPreparationTests : AbsRobolectricTest() {
 
   @Test fun inspectionFailuresAndMissingTimelineSelectOriginalWithoutRawDiagnosticText() = runBlocking {
     val failed = UploadPreparation(inspectMetadata = { throw NoSuchMethodError("https://secret.invalid/path") })
-    assertEquals(PreparedUpload.Original(PreparationDiagnostic.InspectionFailed), failed.prepare(upload(), context))
+    assertEquals(PreparedUpload.Original(PreparationDiagnostic.InspectionFailed), failed.prepare(upload(), context, true))
     val facts = source().copy(averageBitrate = known(9_000_000L))
     val incomplete = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata(facts)) },
       inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.LimitExceeded) },
@@ -112,11 +112,70 @@ class UploadPreparationTests : AbsRobolectricTest() {
   @Test fun adapterCompletionRacingPauseTransfersVerifiedOwnershipBeforeCoroutineDispatch() = bridgeRace(cancel = false)
   @Test fun adapterCompletionRacingCancelDeletesOnlyItsOwnedFile() = bridgeRace(cancel = true)
 
+
+  @Test fun closedGateSkipsAllMediaInspectionAndExport() = runBlocking {
+    val preparation = UploadPreparation(inspectMetadata = { error("Gate must precede metadata") },
+      inspectSamples = { _, _, _ -> error("Gate must precede samples") },
+      convert = { _, _, _, _, _ -> error("Gate must precede export") })
+    assertEquals(PreparedUpload.Original(PreparationDiagnostic.GeneratedResumeUnavailable), preparation.prepare(upload(), context))
+  }
+
+  @Test fun supportedPlannerConversionReachesAdapter() = runBlocking {
+    val facts = source().copy(averageBitrate = known(9_000_000L))
+    val plan = StandardInputPlanner().plan(facts, options(), fullCapabilities())
+    assertTrue(plan.action is StandardInputAction.Convert)
+    mockkConstructor(StandardInputPlanner::class)
+    try {
+      every { anyConstructed<StandardInputPlanner>().plan(any(), any(), any()) } returns plan
+      var exports = 0
+      val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata(facts)) },
+        inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) },
+        convert = { _, _, _, _, _ -> exports++; SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid) })
+      assertEquals(PreparedUpload.Original(PreparationDiagnostic.ConversionFailed(SdrConversionFailure.OutputInvalid)),
+        preparation.prepare(upload(), context, true))
+      assertEquals(1, exports)
+    } finally { unmockkConstructor(StandardInputPlanner::class) }
+  }
+
+  @Test fun cancellationWaitsForAdapterReleaseBeforePreparationJobCompletes() = runBlocking {
+    val facts = source().copy(averageBitrate = known(9_000_000L))
+    val started = CompletableDeferred<Unit>()
+    val cancellationRequested = CompletableDeferred<Unit>()
+    val released = CompletableDeferred<Unit>()
+    val callback = slot<(SdrConversionResult) -> Unit>()
+    val export = mockk<SdrConversionAdapter.Attempt> {
+      every { cancel() } answers { cancellationRequested.complete(Unit); Unit }
+      coEvery { awaitRelease() } coAnswers { released.await() }
+    }
+    mockkConstructor(SdrConversionAdapter::class)
+    every { anyConstructed<SdrConversionAdapter>().start(any(), any(), any(), any(), capture(callback)) } answers {
+      started.complete(Unit); export
+    }
+    val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata(facts)) },
+      inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) })
+    val job = launch(Dispatchers.Default) { preparation.prepare(upload(), context, true) }
+    try {
+      withTimeout(5000) { started.await() }
+      job.cancel()
+      withTimeout(5000) { cancellationRequested.await() }
+      assertFalse(job.isCompleted)
+      released.complete(Unit)
+      withTimeout(5000) { job.join() }
+      assertTrue(job.isCompleted)
+      callback.captured(SdrConversionResult.Cancelled)
+    } finally {
+      released.complete(Unit); job.cancelAndJoin(); unmockkConstructor(SdrConversionAdapter::class)
+    }
+  }
+
   private fun bridgeRace(cancel: Boolean) = runBlocking {
     val facts = source().copy(averageBitrate = known(9_000_000L))
     val callback = slot<(SdrConversionResult) -> Unit>()
     val started = CompletableDeferred<Unit>()
-    val export = mockk<SdrConversionAdapter.Attempt> { every { cancel() } just Runs }
+    val export = mockk<SdrConversionAdapter.Attempt> {
+      every { cancel() } just Runs
+      coEvery { awaitRelease() } just Runs
+    }
     mockkConstructor(SdrConversionAdapter::class)
     every { anyConstructed<SdrConversionAdapter>().start(any(), any(), any(), any(), capture(callback)) } answers {
       started.complete(Unit); export

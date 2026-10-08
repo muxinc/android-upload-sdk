@@ -3,6 +3,8 @@ package com.mux.video.upload.internal.standardization
 import android.content.Context
 import com.mux.video.upload.internal.UploadInfo
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -32,7 +34,8 @@ internal class UploadPreparation(
     { file, metadata, cancelled -> StandardInputTimelineInspector().inspect(file, metadata, cancelled) },
   private val convert: suspend (Context, UploadInfo, MediaMetadataInspection, MediaSampleInspection, StandardInputConversion) -> SdrConversionResult =
     { context, upload, metadata, source, conversion ->
-      suspendCancellableCoroutine { continuation ->
+      var export: SdrConversionAdapter.Attempt? = null
+      try { suspendCancellableCoroutine { continuation ->
         val attempt = SdrConversionAdapter(context, onPendingCleanup = { upload.attempt?.trackCleanup(it) })
           .start(upload.inputFile, metadata, source, conversion) { result ->
           // Transfer ownership before dispatch: completion can race pause or cancellation.
@@ -41,7 +44,10 @@ internal class UploadPreparation(
             if (value is SdrConversionResult.Completed && upload.attempt == null) value.output.delete()
           }
         }
+        export = attempt
         continuation.invokeOnCancellation { attempt.cancel() }
+      } } finally {
+        if (!coroutineContext.isActive) withContext(NonCancellable) { export?.awaitRelease() }
       }
     },
 ) {
@@ -49,6 +55,7 @@ internal class UploadPreparation(
     generatedResumeVerified: Boolean = false): PreparedUpload = withContext(Dispatchers.IO) {
     fun original(reason: PreparationDiagnostic) = PreparedUpload.Original(reason)
     if (!upload.isStandardizationRequested()) return@withContext original(PreparationDiagnostic.Original)
+    if (!generatedResumeVerified) return@withContext original(PreparationDiagnostic.GeneratedResumeUnavailable)
     val job = coroutineContext
     try {
       val metadata = (inspectMetadata(upload.inputFile) as? MetadataInspectionResult.Success)?.inspection
@@ -60,14 +67,13 @@ internal class UploadPreparation(
       if (action is StandardInputAction.UploadOriginal) return@withContext original(PreparationDiagnostic.Original)
       // The adapter provides source-specific preflight and proves actual output. Planning keeps
       // unsupported HDR and unsafe structure out of this SDR boundary.
-      val conversion = (action as? StandardInputAction.Fallback)?.reason.let {
-        (it as? FallbackReason.UnsupportedConversion)?.conversion
+      val conversion = when (action) {
+        is StandardInputAction.Convert -> action.conversion
+        is StandardInputAction.Fallback -> (action.reason as? FallbackReason.UnsupportedConversion)?.conversion
+        is StandardInputAction.UploadOriginal -> null
       } ?: return@withContext original(PreparationDiagnostic.UnsupportedPlan)
       if (SdrEncodingTargets.from(conversion, metadata, source) == null)
         return@withContext original(PreparationDiagnostic.UnsupportedPlan)
-      // Until the Mux status/offset protocol is verified, new attempts upload original bytes.
-      // This gate also avoids spending conversion time on an unusable replacement payload.
-      if (!generatedResumeVerified) return@withContext original(PreparationDiagnostic.GeneratedResumeUnavailable)
       when (val result = convert(context, upload, metadata, source, conversion)) {
         is SdrConversionResult.Completed -> PreparedUpload.Generated(result.output)
         is SdrConversionResult.Failed -> original(PreparationDiagnostic.ConversionFailed(result.reason))

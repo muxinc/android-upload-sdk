@@ -35,13 +35,14 @@ internal class UploadJobFactory internal constructor(
 
   fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope): UploadInfo {
     uploadInfo.attempt?.supersede()
+    val saved = readUploadResumeState(uploadInfo)
     val preparation = uploadInfo.attempt?.preparation ?: UploadPreparationState().apply {
-      originalSelected = uploadInfo.restoredFromOriginal || hasOriginalResumeState(uploadInfo)
+      originalSelected = uploadInfo.restoredFromOriginal || saved.originalSelected
     }
     val startTime = System.currentTimeMillis()
     val attempt = UploadAttempt(preparation, MuxUpload.Progress(
-      bytesUploaded = readLastByteForFile(uploadInfo), totalBytes = uploadInfo.inputFile.length(),
-      startTime = startTime, updatedTime = startTime))
+      bytesUploaded = if (saved.generatedResumeBlocked) 0 else saved.bytesSent, totalBytes = uploadInfo.inputFile.length(),
+      startTime = startTime, updatedTime = startTime), previousPersistenceOwnerId = saved.attemptId)
     var runningInfo = uploadInfo.update(attempt = attempt, statusFlow = attempt.status.asStateFlow())
     // Lazy startup lets the returned identity be installed before any completion callback.
     val job = outerScope.async(start = CoroutineStart.LAZY) {
@@ -51,7 +52,7 @@ internal class UploadJobFactory internal constructor(
         // An old export or request must finish cancellation before another attempt uses its files.
         uploadInfo.uploadJob?.join()
         ensureActive()
-        if (uploadInfo.generatedResumeBlocked || preparation.generatedRequestStarted || uploadInfo.standardizedFile != null)
+        if (uploadInfo.generatedResumeBlocked || saved.generatedResumeBlocked || preparation.generatedRequestStarted)
           throw GeneratedResumeBlockedException()
         if (!preparation.originalSelected && preparation.verified == null && uploadInfo.isStandardizationRequested()) {
           attempt.publish(UploadStatus.Preparing)
@@ -135,9 +136,15 @@ internal class UploadJobFactory internal constructor(
       } catch (e: Exception) {
         val failure = UploadStatus.UploadFailed(e, attempt.confirmedProgress())
         if (attempt.finish(failure)) {
-          MuxUploadSdk.logger.e("MuxUpload", "Upload failed")
+          val category = when (e) {
+            is GeneratedResumeBlockedException -> "GeneratedResumeBlocked"
+            is java.io.IOException -> "Io"
+            is IllegalStateException, is IllegalArgumentException -> "InvalidPayload"
+            else -> "Unexpected"
+          }
+          MuxUploadSdk.logger.e("MuxUpload", "Upload failed: $category")
           if (!uploadInfo.optOut) metrics.reportUploadFailed(startTime, System.currentTimeMillis(), 0,
-            "Upload failed", sessionId, uploadInfo)
+            "Upload failed: $category", sessionId, uploadInfo)
           withContext(Dispatchers.Main) { MuxUploadManager.jobFinished(runningInfo, false) }
         }
         Result.failure(e)
@@ -146,6 +153,7 @@ internal class UploadJobFactory internal constructor(
       }
     }
     runningInfo = runningInfo.update(uploadJob = job)
+    runningInfo.session.current.value = runningInfo
     job.start()
     return runningInfo
   }

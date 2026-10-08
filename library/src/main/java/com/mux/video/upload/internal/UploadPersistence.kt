@@ -9,6 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.*
+import java.security.MessageDigest
 
 @JvmSynthetic
 internal fun initializeUploadPersistence(appContext: Context) {
@@ -32,21 +33,27 @@ internal fun writeUploadState(uploadInfo: UploadInfo, state: MuxUpload.Progress)
       retriesPerChunk = uploadInfo.retriesPerChunk,
       optOut = uploadInfo.optOut,
       inputStandardization = uploadInfo.inputStandardization,
+      originalSelected = uploadInfo.attempt?.preparation?.originalSelected ?: true,
+      attemptId = uploadInfo.attempt?.id,
       generatedResumeBlocked = uploadInfo.attempt?.preparation?.generatedRequestStarted == true || uploadInfo.generatedResumeBlocked,
     )
   )
 }
 
-@JvmSynthetic
-internal fun readLastByteForFile(upload: UploadInfo): Long {
-  val entry = UploadPersistence.readEntries()[upload.inputFile.absolutePath]
-  return entry?.takeIf { it.url == upload.remoteUri.toString() }?.bytesSent ?: 0
-}
+internal data class UploadResumeState(
+  val bytesSent: Long = 0,
+  val originalSelected: Boolean = false,
+  val generatedResumeBlocked: Boolean = false,
+  val paused: Boolean = false,
+  val attemptId: String? = null,
+)
 
-internal fun hasOriginalResumeState(upload: UploadInfo): Boolean =
-  UploadPersistence.readEntries()[upload.inputFile.absolutePath]?.let {
-    it.url == upload.remoteUri.toString() && !it.generatedResumeBlocked
-  } == true
+internal fun readUploadResumeState(upload: UploadInfo): UploadResumeState = UploadPersistence.readState(upload)
+
+@JvmSynthetic
+internal fun readLastByteForFile(upload: UploadInfo): Long = readUploadResumeState(upload).let {
+  if (it.generatedResumeBlocked) 0 else it.bytesSent
+}
 
 @JvmSynthetic
 internal fun forgetUploadState(uploadInfo: UploadInfo) {
@@ -68,7 +75,7 @@ internal fun readAllCachedUploads(includePaused: Boolean = true): List<UploadInf
         optOut = it.optOut,
         uploadJob = null,
         statusFlow = null,
-        restoredFromOriginal = true,
+        restoredFromOriginal = it.originalSelected,
         generatedResumeBlocked = it.generatedResumeBlocked,
       )
   }
@@ -84,6 +91,7 @@ private object UploadPersistence {
   const val WAS_RUNNING = 0
   const val WAS_PAUSED = 1
   const val LIST_KEY = "uploads"
+  const val BLOCKS_KEY = "generated_upload_blocks"
 
   lateinit var prefs: SharedPreferences
 
@@ -93,16 +101,39 @@ private object UploadPersistence {
     checkInitialized()
     val entries = fetchEntries()
     entries[entry.file.absolutePath] = entry
-    writeEntries(entries)
+    val blocks = readBlocks()
+    if (entry.generatedResumeBlocked) blocks += destinationKey(entry.url)
+    writeEntries(entries, blocks)
+  }
+
+  @Synchronized
+  fun readState(upload: UploadInfo): UploadResumeState {
+    checkInitialized()
+    val entry = fetchEntries()[upload.inputFile.absolutePath]?.takeIf { it.url == upload.remoteUri.toString() }
+    return UploadResumeState(
+      bytesSent = entry?.bytesSent ?: 0,
+      originalSelected = entry?.originalSelected ?: false,
+      generatedResumeBlocked = entry?.generatedResumeBlocked == true ||
+        destinationKey(upload.remoteUri.toString()) in readBlocks(),
+      paused = entry?.state == WAS_PAUSED,
+      attemptId = entry?.attemptId,
+    )
   }
 
   @Throws
   @Synchronized
   fun removeForFile(upload: UploadInfo) {
     checkInitialized()
-    val entries = readEntries()
+    val entries = fetchEntries()
+    val entry = entries[upload.inputFile.absolutePath] ?: return
+    if (entry.url != upload.remoteUri.toString() ||
+      (upload.attempt != null && entry.attemptId != null && entry.attemptId != upload.attempt.id &&
+        entry.attemptId != upload.attempt.previousPersistenceOwnerId)) return
+    val blocks = readBlocks()
+    // Cancelling or replacing a handle cannot undo bytes already sent to this destination.
+    if (entry.generatedResumeBlocked) blocks += destinationKey(entry.url)
     entries -= upload.inputFile.absolutePath
-    writeEntries(entries)
+    writeEntries(entries, blocks)
   }
 
   @Throws
@@ -114,10 +145,11 @@ private object UploadPersistence {
 
   @Throws
   @Synchronized
-  private fun writeEntries(entries: Map<String, UploadEntry>) {
+  private fun writeEntries(entries: Map<String, UploadEntry>, blocks: Set<String>) {
     val entriesJson = JSONArray()
     entries.forEach { entriesJson.put(it.value.toJson()) }
-    prefs.edit().putString(LIST_KEY, entriesJson.toString()).apply()
+    prefs.edit().putString(LIST_KEY, entriesJson.toString())
+      .putString(BLOCKS_KEY, JSONArray(blocks.toList()).toString()).apply()
   }
 
   @Throws
@@ -143,6 +175,15 @@ private object UploadPersistence {
     }
   }
 
+  private fun destinationKey(url: String): String = MessageDigest.getInstance("SHA-256")
+    .digest(url.toByteArray(Charsets.UTF_8))
+    .joinToString("") { "%02x".format(it) }
+
+  private fun readBlocks(): MutableSet<String> {
+    val json = JSONArray(prefs.getString(BLOCKS_KEY, null) ?: "[]")
+    return (0 until json.length()).mapTo(mutableSetOf()) { json.getString(it) }
+  }
+
   private fun checkInitialized() {
     if (!this::prefs.isInitialized) {
       throw IllegalStateException(
@@ -164,12 +205,16 @@ private data class UploadEntry(
   val bytesSent: Long,
   val inputStandardization: InputStandardization,
   val generatedResumeBlocked: Boolean = false,
+  val originalSelected: Boolean = true,
+  val attemptId: String? = null,
 ) {
   fun toJson(): JSONObject {
     return JSONObject().apply {
       put("file", file.absolutePath)
       put("data", JSONObject().apply {
         put("generated_resume_blocked", generatedResumeBlocked)
+        put("original_selected", originalSelected)
+        put("attempt_id", attemptId)
         put("url", url)
         put("chunk_size", chunkSize)
         put("retries_per_chunk", retriesPerChunk)
@@ -200,6 +245,8 @@ private fun JSONObject.parsePersistenceEntry(): UploadEntry {
     state = data.optInt("state"),
     bytesSent = data.optLong("bytes_sent"),
     generatedResumeBlocked = data.optBoolean("generated_resume_blocked", false),
+    originalSelected = data.optBoolean("original_selected", true),
+    attemptId = data.optString("attempt_id").takeIf { it.isNotEmpty() },
     inputStandardization = data.optJSONObject("input_standardization").let { options ->
       InputStandardization(
         standardizationRequested = options?.optBoolean("requested", true) ?: true,
