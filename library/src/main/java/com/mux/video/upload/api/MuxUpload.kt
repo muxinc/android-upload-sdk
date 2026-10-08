@@ -175,9 +175,10 @@ class MuxUpload private constructor(
    * completes
    *
    * If the upload already succeeded, the old result will be returned immediately.
-   * After [cancel], this returns a failure without restarting. Cancellation of the calling
-   * coroutine still throws [CancellationException]. Replacement by a new destination returns
-   * a failure to existing waiters and ends this handle.
+   * [cancel] returns a failure to existing waiters and later calls without restarting.
+   * [pause] interrupts existing waiters with [CancellationException]; the upload remains resumable.
+   * Cancellation of the calling coroutine still throws [CancellationException]. Replacement by
+   * a new destination returns a failure to existing waiters and ends this handle.
    */
   @Throws
   @Suppress("unused")
@@ -195,9 +196,11 @@ class MuxUpload private constructor(
         try {
           awaited.uploadJob?.await() ?: Result.failure(Exception("Upload failed to start"))
         } catch (e: CancellationException) {
-          // Replacing the upload ends its job, but must not cancel an active caller.
+          // Upload cancellation/replacement must not cancel an active caller.
           currentCoroutineContext().ensureActive()
-          replacementResult(awaited) ?: throw e
+          replacementResult(awaited) ?: if (cancelled || awaited.attempt?.isCancelled() == true) {
+            Result.failure(UploadCancelledException())
+          } else throw e
         }
       }
     }

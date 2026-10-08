@@ -394,7 +394,20 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     val upload = MuxUpload.create(info())
     upload.start(); pump { chunks.isNotEmpty() }
     val before = internalInfo(upload).uploadJob
+    var waitingResult: Result<UploadStatus>? = null
+    val waitingCaller = scope.launch { waitingResult = upload.awaitSuccess() }
+    var cancelledCallerReturned = false
+    val cancelledCaller = scope.launch { upload.awaitSuccess(); cancelledCallerReturned = true }
+    dispatcher.scheduler.runCurrent()
+    assertTrue(waitingCaller.isActive); assertTrue(cancelledCaller.isActive)
+    cancelledCaller.cancel()
     upload.cancel(); upload.start(forceRestart = true)
+    pump { waitingCaller.isCompleted && cancelledCaller.isCompleted }
+    assertTrue(cancelledCaller.isCancelled)
+    assertFalse(cancelledCallerReturned)
+    assertFalse(waitingCaller.isCancelled)
+    assertTrue(waitingResult!!.exceptionOrNull() is UploadCancelledException)
+    assertTrue(results.isEmpty())
     assertSame(before, internalInfo(upload).uploadJob)
     var result: Result<UploadStatus>? = null
     val caller = scope.launch { result = upload.awaitSuccess() }
