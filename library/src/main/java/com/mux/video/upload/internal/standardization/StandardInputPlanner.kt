@@ -96,6 +96,7 @@ internal sealed interface OriginalReason {
 internal sealed interface FallbackReason {
   data object InsufficientEvidence : FallbackReason
   data object UnsafeVideoTrackStructure : FallbackReason
+  data object UnverifiedAudioSelection : FallbackReason
   data class UnsupportedConversion(
     val conversion: StandardInputConversion,
     val missingCapabilities: Set<ConversionCapabilityFailure>,
@@ -168,6 +169,11 @@ internal class StandardInputPlanner(
     if (requirements.isEmpty() && !toneMap) return original(
       if (evaluation.outcome == PolicyStatus.Compliant) OriginalReason.StandardInput
       else OriginalReason.NoKnownStandardInputViolation)
+
+    // The first track can differ from the primary/default track Mux ingests.
+    // Preserve all original bytes so server audio selection is unchanged.
+    if ((facts.audioTracks.valueOrNull?.size ?: 0) > 1)
+      return fallback(FallbackReason.UnverifiedAudioSelection)
 
     val conversion = buildConversion(facts, selection, toneMap)
       ?: return fallback(FallbackReason.InsufficientEvidence)

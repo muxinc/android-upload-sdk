@@ -137,9 +137,12 @@ class SdrConversionAdapterTests {
     assertNull(targets(tracks = listOf(audio(2, MediaFact.Unknown))))
     assertTrue(targets(tracks = listOf(audio(6, known(AudioFormat.Aac(AudioChannelLayout.FivePointOne)))))!!.copyAac)
   }
-  @Test fun choosesContainerFirstTrackEvenWhenExtractorOrderDiffers() {
+  @Test fun multipleAudioTracksCannotCreateAnEncoderTarget() {
     val multi = facts.copy(audioTracks = known(listOf(AudioTrack(), AudioTrack())))
-    assertEquals("42", targets(input = multi, tracks = listOf(audio(id = 99, index = 3), audio(id = 42, index = 1)))!!.firstAudioTrackId)
+    assertNull(targets(input = multi, tracks = listOf(audio(id = 99, index = 3), audio(id = 42, index = 1))))
+    assertNull(targets(input = multi))
+    assertNull(targets(tracks = listOf(audio(id = 99, index = 3), audio(id = 42, index = 1))))
+    assertEquals("42", targets(tracks = listOf(audio(id = 42, index = 1)))!!.firstAudioTrackId)
     assertNull(targets(tracks = listOf(audio().copy(sourceTrackId = MediaFact.Unknown))))
   }
   @Test fun permitsOnlyProvenIntegralCadenceReductionAndKeepsVfrTimestamps() {
@@ -205,6 +208,14 @@ class SdrConversionAdapterTests {
     assertEquals(1, run.results.size)
     assertTrue(result.output.delete()); assertTrue(result.output.delete())
     assertEquals(1, run.engine.cancellations)
+  }
+  @Test fun directMultiAudioExportStopsBeforeCreatingEngineOrOutput() {
+    val run = Run(inputMetadata = metadata(listOf(audio(id = 2), audio(id = 3, index = 2))))
+    run.idle()
+    assertEquals(listOf(SdrConversionResult.Failed(SdrConversionFailure.UnsupportedPlan)), run.results)
+    assertEquals(0, run.engine.starts)
+    assertNull(run.engine.output)
+    run.assertInputSafe()
   }
   @Test fun exportFailureDeletesPartialAndPublishesExactlyOnce() {
     val run = Run(); run.idle(); run.engine.failures!!(SdrConversionFailure.Export); run.idle()

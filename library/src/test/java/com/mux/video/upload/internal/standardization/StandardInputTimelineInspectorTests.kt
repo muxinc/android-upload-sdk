@@ -165,7 +165,7 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
     assertEquals(known(3.1), result.timeline.durationSeconds)
     assertEquals(known(AudioVideoStartOffset.Seconds(0.1)), result.timeline.audioVideoStartOffset)
   }
-  @Test fun droppedSecondaryAudioDoesNotExtendTheValidatedTimeline() {
+  @Test fun inspectingAllAudioTimelinesDoesNotAuthorizeDroppingMuxPrimaryTrack() {
     val firstAudio = compliantFacts().audioTracks.valueOrNull!!.single()
     val input = metadata(true, true).copy(facts = compliantFacts().copy(audioTracks = known(listOf(firstAudio, AudioTrack()))),
       isoTracks = known(listOf(IsoTrackMetadata("vide", known(1), listOf("avc1"), false, known(0), true, known(EditList.None)))))
@@ -176,12 +176,17 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
         videoDeltas = List(3) { 200 }, input = input)
       assertEquals(SampleScanStatus.Complete, source.status)
       assertEquals(9, source.sampleCount)
-      val conversion = (StandardInputPlanner().plan(source.facts.copy(averageBitrate = known(9_000_000L)),
+      assertEquals(StandardInputAction.Fallback(FallbackReason.UnverifiedAudioSelection),
+        StandardInputPlanner().plan(source.facts.copy(averageBitrate = known(9_000_000L)), options(), fullCapabilities()).action)
+      // A plan for the first track alone cannot justify dropping another source track.
+      val conversion = (StandardInputPlanner().plan(source.facts.copy(averageBitrate = known(9_000_000L),
+        audioTracks = known(listOf(firstAudio))),
         options(), fullCapabilities()).action as StandardInputAction.Convert).conversion
       val facts = output.facts.copy(rotationDegrees = known(0), encodedDimensions = known(conversion.outputDimensions))
       val validator = StandardInputOutputValidator()
       val result = validator.validateFacts(facts, source.facts, source.timeline, output.timeline, conversion)
-      assertTrue("Secondary audio duration changed acceptance: $result", result is StandardInputOutputValidation.Accepted)
+      val rejection = (result as StandardInputOutputValidation.Rejected).reason as OutputRejection.InsufficientPlanEvidence
+      assertTrue(OutputExpectation.Audio in rejection.expectations)
       assertEquals(known(3.1), source.timeline.durationSeconds)
       val shortened = validator.validateFacts(facts, source.facts, source.timeline,
         output.timeline.copy(firstAudioDurationSeconds = known(2.0)), conversion) as StandardInputOutputValidation.Rejected
