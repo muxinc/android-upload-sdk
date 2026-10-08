@@ -32,14 +32,21 @@ internal fun writeUploadState(uploadInfo: UploadInfo, state: MuxUpload.Progress)
       retriesPerChunk = uploadInfo.retriesPerChunk,
       optOut = uploadInfo.optOut,
       inputStandardization = uploadInfo.inputStandardization,
+      generatedResumeBlocked = uploadInfo.attempt?.preparation?.generatedRequestStarted == true || uploadInfo.generatedResumeBlocked,
     )
   )
 }
 
 @JvmSynthetic
 internal fun readLastByteForFile(upload: UploadInfo): Long {
-  return UploadPersistence.readEntries()[upload.inputFile.absolutePath]?.bytesSent ?: 0
+  val entry = UploadPersistence.readEntries()[upload.inputFile.absolutePath]
+  return entry?.takeIf { it.url == upload.remoteUri.toString() }?.bytesSent ?: 0
 }
+
+internal fun hasOriginalResumeState(upload: UploadInfo): Boolean =
+  UploadPersistence.readEntries()[upload.inputFile.absolutePath]?.let {
+    it.url == upload.remoteUri.toString() && !it.generatedResumeBlocked
+  } == true
 
 @JvmSynthetic
 internal fun forgetUploadState(uploadInfo: UploadInfo) {
@@ -47,9 +54,10 @@ internal fun forgetUploadState(uploadInfo: UploadInfo) {
 }
 
 @JvmSynthetic
-internal fun readAllCachedUploads(): List<UploadInfo> {
+internal fun readAllCachedUploads(includePaused: Boolean = true): List<UploadInfo> {
   return UploadPersistence.readEntries()
     .map { it.value }
+    .filter { includePaused || it.state == UploadPersistence.WAS_RUNNING }
     .map {
       UploadInfo(
         inputStandardization = it.inputStandardization,
@@ -60,6 +68,8 @@ internal fun readAllCachedUploads(): List<UploadInfo> {
         optOut = it.optOut,
         uploadJob = null,
         statusFlow = null,
+        restoredFromOriginal = true,
+        generatedResumeBlocked = it.generatedResumeBlocked,
       )
   }
 }
@@ -153,11 +163,13 @@ private data class UploadEntry(
   val state: Int,
   val bytesSent: Long,
   val inputStandardization: InputStandardization,
+  val generatedResumeBlocked: Boolean = false,
 ) {
   fun toJson(): JSONObject {
     return JSONObject().apply {
       put("file", file.absolutePath)
       put("data", JSONObject().apply {
+        put("generated_resume_blocked", generatedResumeBlocked)
         put("url", url)
         put("chunk_size", chunkSize)
         put("retries_per_chunk", retriesPerChunk)
@@ -187,6 +199,7 @@ private fun JSONObject.parsePersistenceEntry(): UploadEntry {
     savedAtLocalMs = data.optLong("saved_at_local_ms"),
     state = data.optInt("state"),
     bytesSent = data.optLong("bytes_sent"),
+    generatedResumeBlocked = data.optBoolean("generated_resume_blocked", false),
     inputStandardization = data.optJSONObject("input_standardization").let { options ->
       InputStandardization(
         standardizationRequested = options?.optBoolean("requested", true) ?: true,

@@ -71,7 +71,7 @@ object MuxUploadSdk {
     initializeUploadPersistence(realAppContext)
     UploadMetrics.initialize(realAppContext)
     if (resumeStoppedUploads) {
-      MuxUploadManager.resumeAllCachedJobs()
+      MuxUploadManager.resumeCachedJobs(includePaused = false)
     }
   }
 

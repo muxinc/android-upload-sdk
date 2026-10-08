@@ -1,15 +1,15 @@
 package com.mux.video.upload.api
 
 import android.net.Uri
-import android.util.Log
 import androidx.annotation.MainThread
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload.Builder
 import com.mux.video.upload.internal.MaximumResolution
 import com.mux.video.upload.internal.UploadInfo
 import com.mux.video.upload.internal.update
+import com.mux.video.upload.internal.writeUploadState
+import com.mux.video.upload.internal.forgetUploadState
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.distinctUntilChangedBy
 import java.io.File
 
 /**
@@ -86,6 +86,8 @@ class MuxUpload private constructor(
   private var progressListener: UploadEventListener<Progress>? = null
   private var statusListener: UploadEventListener<UploadStatus>? = null
   private var observerJob: Job? = null
+  private var cancelled = false
+  private var deliveredResultStatus: UploadStatus? = null
   private val currentStatus: UploadStatus get() =
     uploadInfo.statusFlow?.value ?: lastKnownStatus ?: UploadStatus.Ready
   private var lastKnownStatus: UploadStatus? = null
@@ -125,12 +127,27 @@ class MuxUpload private constructor(
     forceRestart: Boolean = false,
     coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Default)
   ) {
+    if (cancelled) return
+    if (!forceRestart && uploadInfo.uploadJob?.isActive == true && uploadInfo.attempt?.isStopped() != true) {
+      observeUpload(uploadInfo)
+      return
+    }
+    _successful = false
+    _error = null
     // Get an updated UploadInfo with a job & event channels
     uploadInfo = if (autoManage) {
       // We may or may not get a fresh worker, depends on if the upload is already going
       /*uploadInfo =*/ MuxUploadManager.startJob(uploadInfo, forceRestart)
     } else {
       // If we're not managing the worker, the job is purely internal to this object
+      if (forceRestart) {
+        val blocked = uploadInfo.generatedResumeBlocked || uploadInfo.attempt?.preparation?.generatedRequestStarted == true
+        uploadInfo.attempt?.cancel { if (!blocked) forgetUploadState(uploadInfo) }
+        uploadInfo.uploadJob?.cancel()
+        if (!blocked) forgetUploadState(uploadInfo)
+        uploadInfo = uploadInfo.update(attempt = null, statusFlow = null,
+          restoredFromOriginal = false, generatedResumeBlocked = blocked)
+      }
       /*uploadInfo =*/ MuxUploadSdk.uploadJobFactory().createUploadJob(uploadInfo, coroutineScope)
     }
 
@@ -174,13 +191,11 @@ class MuxUpload private constructor(
       /*uploadInfo =*/ MuxUploadManager.pauseJob(uploadInfo)
     } else {
       observerJob?.cancel("user requested pause")
+      uploadInfo.attempt?.pause { writeUploadState(uploadInfo, it) }
       uploadInfo.uploadJob?.cancel()
-      /*uploadInfo =*/ uploadInfo.update(
-        uploadJob = null,
-        statusFlow = null,
-      )
+      uploadInfo
     }
-    lastKnownProgress?.let { state -> progressListener?.onEvent(state) }
+    observeUpload(uploadInfo)
   }
 
   /**
@@ -189,9 +204,12 @@ class MuxUpload private constructor(
    */
   @Suppress("MemberVisibilityCanBePrivate")
   fun cancel() {
+    if (cancelled) return
+    cancelled = true
     if (autoManage) {
       MuxUploadManager.cancelJob(uploadInfo)
     } else {
+      uploadInfo.attempt?.cancel { forgetUploadState(uploadInfo) }
       uploadInfo.uploadJob?.cancel("user requested cancel")
     }
     observerJob?.cancel("user requested cancel")
@@ -212,7 +230,7 @@ class MuxUpload private constructor(
     }
 
     progressListener = listener
-    lastKnownProgress?.let { listener?.onEvent(it) }
+    if (!cancelled && uploadInfo.attempt?.isCancelled() != true) lastKnownProgress?.let { listener?.onEvent(it) }
     observeUpload(uploadInfo)
   }
 
@@ -230,12 +248,9 @@ class MuxUpload private constructor(
       observeUpload(uploadInfo)
     }
 
+    if (resultListener !== listener) deliveredResultStatus = null
     resultListener = listener
-    lastKnownProgress?.let {
-      if (it.bytesUploaded >= it.totalBytes) {
-        listener?.onEvent(Result.success(it))
-      }
-    }
+    notifyResult(currentStatus)
   }
 
   /**
@@ -253,7 +268,7 @@ class MuxUpload private constructor(
     }
 
     statusListener = listener
-    listener?.onEvent(currentStatus)
+    if (!cancelled && uploadInfo.attempt?.isCancelled() != true) listener?.onEvent(currentStatus)
   }
 
   /**
@@ -273,10 +288,14 @@ class MuxUpload private constructor(
     return upload.statusFlow?.let { flow ->
       callbackScope.launch {
         flow.collect { status ->
+          if (cancelled || uploadInfo.attempt !== upload.attempt || upload.attempt?.isCancelled() == true) return@collect
           // Update the status of our upload
           lastKnownStatus = status
 
           statusListener?.onEvent(status)
+          // A listener can synchronously pause, cancel, or start a replacement attempt.
+          if (cancelled || uploadInfo.attempt !== upload.attempt || upload.attempt?.isCancelled() == true ||
+            (upload.attempt?.isStopped() == true && status !is UploadStatus.UploadPaused)) return@collect
           // Notify the specific listeners
           when (status) {
             is UploadStatus.Uploading -> { progressListener?.onEvent(status.uploadProgress) }
@@ -284,19 +303,36 @@ class MuxUpload private constructor(
             is UploadStatus.UploadSuccess -> {
               _successful = true
               progressListener?.onEvent(status.uploadProgress)
-              resultListener?.onEvent(Result.success(status.uploadProgress))
+              if (!cancelled && upload.attempt?.isCancelled() != true && uploadInfo.attempt === upload.attempt)
+                notifyResult(status)
             }
             is UploadStatus.UploadFailed -> {
               progressListener?.onEvent(status.uploadProgress) // Make sure we're most up-to-date
-              if (status.exception !is CancellationException) {
+              if (status.exception !is CancellationException && upload.attempt?.isCancelled() != true &&
+                uploadInfo.attempt === upload.attempt) {
                 _error = status.exception
-                resultListener?.onEvent(Result.failure(status.exception))
+                notifyResult(status)
               }
             }
             else -> { } // no relevant info
           }
         }
       }
+    }
+  }
+
+  private fun notifyResult(status: UploadStatus) {
+    if (cancelled || uploadInfo.attempt?.isCancelled() == true || resultListener == null || deliveredResultStatus === status) return
+    when (status) {
+      is UploadStatus.UploadSuccess -> {
+        deliveredResultStatus = status
+        resultListener?.onEvent(Result.success(status.uploadProgress))
+      }
+      is UploadStatus.UploadFailed -> if (status.exception !is CancellationException) {
+        deliveredResultStatus = status
+        resultListener?.onEvent(Result.failure(status.exception))
+      }
+      else -> {}
     }
   }
 
@@ -372,9 +408,8 @@ class MuxUpload private constructor(
 
     /**
      * If requested, the Upload SDK will try to standardize the input file in order to optimize it
-     * for use with Mux Video. The retained resolution is passed to the legacy transcoder.
-     * This requests on-device output limits; the legacy transcoder does not guarantee successful
-     * conversion or output within those dimensions. Configure the matching Direct Upload
+     * for use with Mux Video. These are requested on-device output limits; if safe local
+     * conversion is unavailable, the original file is uploaded. Configure the matching Direct Upload
      * `new_asset_settings.max_resolution_tier` separately.
      */
     @Suppress("unused")
@@ -399,8 +434,8 @@ class MuxUpload private constructor(
     }
 
     /**
-     * Store the requested HDR behavior. Defaults to [HdrHandling.Preserve]. The legacy transcoder
-     * does not yet apply this option; HDR handling is part of the new Standard Input pipeline.
+     * Store the requested HDR behavior. Defaults to [HdrHandling.Preserve].
+     * Unsupported local HDR conversion falls back to uploading the original file.
      */
     fun hdrHandling(handling: HdrHandling): Builder {
       uploadInfo = uploadInfo.update(inputStandardization = uploadInfo.inputStandardization.copy(
@@ -449,7 +484,7 @@ class MuxUpload private constructor(
     /**
      * Creates a new [MuxUpload] with the given configuration.
      */
-    fun build() = MuxUpload(uploadInfo)
+    fun build() = MuxUpload(uploadInfo, manageTask)
   }
 
   internal companion object {
