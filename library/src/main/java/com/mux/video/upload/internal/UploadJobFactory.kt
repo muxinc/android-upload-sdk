@@ -15,8 +15,8 @@ import java.io.FileInputStream
 import java.util.UUID
 
 @JvmSynthetic
-internal fun startUploadJob(upload: UploadInfo): UploadInfo = MuxUploadSdk.uploadJobFactory()
-  .createUploadJob(upload, CoroutineScope(Dispatchers.Default))
+internal fun startUploadJob(upload: UploadInfo, saved: UploadResumeState? = null): UploadInfo = MuxUploadSdk.uploadJobFactory()
+  .createUploadJob(upload, CoroutineScope(Dispatchers.Default), saved)
 
 /** Owns payload selection and the transition from cancellable preparation to transport. */
 internal class UploadJobFactory internal constructor(
@@ -33,16 +33,12 @@ internal class UploadJobFactory internal constructor(
       ChunkWorker.create(chunk, uploadInfo, "video/*", progressFlow)
   }
 
-  fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope): UploadInfo {
+  fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope, resumeState: UploadResumeState? = null): UploadInfo {
     uploadInfo.attempt?.supersede()
-    val saved = readUploadResumeState(uploadInfo)
-    val preparation = uploadInfo.attempt?.preparation ?: UploadPreparationState().apply {
-      originalSelected = uploadInfo.restoredFromOriginal || saved.originalSelected
-    }
-    val startTime = System.currentTimeMillis()
-    val attempt = UploadAttempt(preparation, MuxUpload.Progress(
-      bytesUploaded = if (saved.generatedResumeBlocked) 0 else saved.bytesSent, totalBytes = uploadInfo.inputFile.length(),
-      startTime = startTime, updatedTime = startTime), previousPersistenceOwnerId = saved.attemptId)
+    val saved = resumeState ?: readUploadResumeState(uploadInfo)
+    val attempt = createUploadAttempt(uploadInfo, saved)
+    val preparation = attempt.preparation
+    val startTime = attempt.confirmedProgress().startTime
     var runningInfo = uploadInfo.update(attempt = attempt, statusFlow = attempt.status.asStateFlow())
     // Lazy startup lets the returned identity be installed before any completion callback.
     val job = outerScope.async(start = CoroutineStart.LAZY) {
@@ -149,7 +145,7 @@ internal class UploadJobFactory internal constructor(
         }
         Result.failure(e)
       } finally {
-        if (!attempt.isStopped() || attempt.isCancelled()) preparation.deleteOwnedFile()
+        if (!attempt.isStopped() || attempt.isCancelled() || attempt.replacementFailure() != null) preparation.deleteOwnedFile()
       }
     }
     runningInfo = runningInfo.update(uploadJob = job)

@@ -63,20 +63,16 @@ object MuxUploadManager {
   @JvmSynthetic
   @MainThread
   internal fun resumeCachedJobs(includePaused: Boolean): List<MuxUpload> {
-    val restored = readAllCachedUploads().filter { upload ->
-      upload.inputFile.exists().also { if (!it) forgetUploadState(upload) }
-    }.map { upload ->
-      if (!includePaused && readUploadResumeState(upload).paused) {
+    val restored = readCachedUploadSnapshots().filter { cached ->
+      cached.upload.inputFile.exists().also { if (!it) forgetUploadState(cached.upload) }
+    }.map { (upload, saved) ->
+      if (!includePaused && saved.paused) {
         uploadsByFilename.getOrPut(upload.inputFile.absolutePath) {
-          val saved = readUploadResumeState(upload)
-          val preparation = UploadPreparationState().apply { originalSelected = saved.originalSelected }
-          val attempt = UploadAttempt(preparation, MuxUpload.Progress(
-            bytesUploaded = if (saved.generatedResumeBlocked) 0 else saved.bytesSent,
-            totalBytes = upload.inputFile.length()), previousPersistenceOwnerId = saved.attemptId)
+          val attempt = createUploadAttempt(upload, saved)
           attempt.pause {}
           upload.update(attempt = attempt, statusFlow = attempt.status).also { it.session.current.value = it }
         }
-      } else startJob(upload, restart = false)
+      } else startJob(upload, restart = false, resumeState = saved)
     }
     notifyListListeners()
     return restored.map { MuxUpload.create(it) }
@@ -108,9 +104,9 @@ object MuxUploadManager {
    */
   @JvmSynthetic
   @MainThread
-  internal fun startJob(upload: UploadInfo, restart: Boolean = false): UploadInfo {
+  internal fun startJob(upload: UploadInfo, restart: Boolean = false, resumeState: UploadResumeState? = null): UploadInfo {
     assertMainThread()
-    val updatedInfo = insertOrUpdateUpload(upload, restart)
+    val updatedInfo = insertOrUpdateUpload(upload, restart, resumeState)
     notifyListListeners()
     return updatedInfo
   }
@@ -173,13 +169,14 @@ object MuxUploadManager {
     upload.uploadJob?.cancel()
   }
 
-  private fun cancelAttempt(upload: UploadInfo) {
+  private fun cancelAttempt(upload: UploadInfo, forgetUnstarted: Boolean = false) {
     val attempt = upload.attempt
-    if (attempt == null) forgetUploadState(upload) else attempt.cancel { forgetUploadState(upload) }
+    if (attempt != null) attempt.cancel { forgetUploadState(upload) }
+    else if (forgetUnstarted) forgetUploadState(upload)
     upload.uploadJob?.cancel()
   }
 
-  private fun insertOrUpdateUpload(upload: UploadInfo, restart: Boolean): UploadInfo {
+  private fun insertOrUpdateUpload(upload: UploadInfo, restart: Boolean, resumeState: UploadResumeState?): UploadInfo {
     val filename = upload.inputFile.absolutePath
     val previous = uploadsByFilename[filename]
     val newDestination = previous != null && previous.remoteUri != upload.remoteUri
@@ -189,13 +186,16 @@ object MuxUploadManager {
     if (restart || newDestination) {
       val generatedMayExistRemotely = !newDestination && (source.generatedResumeBlocked ||
         source.attempt?.preparation?.generatedRequestStarted == true || readUploadResumeState(upload).generatedResumeBlocked)
-      cancelAttempt(source)
+      if (newDestination) {
+        source.attempt?.replace { forgetUploadState(source) }
+        source.uploadJob?.cancel()
+      } else cancelAttempt(source, forgetUnstarted = true)
       source = upload.update(attempt = null, uploadJob = source.uploadJob,
         statusFlow = null, restoredFromOriginal = false, generatedResumeBlocked = generatedMayExistRemotely).also {
         it.session = if (newDestination) upload.session else source.session
       }
     }
-    val newUpload = startUploadJob(source)
+    val newUpload = startUploadJob(source, resumeState.takeIf { previous == null && !restart })
     uploadsByFilename += upload.inputFile.absolutePath to newUpload
     observerJobsByFilename[upload.inputFile.absolutePath]?.cancel()
     observerJobsByFilename += upload.inputFile.absolutePath to newObserveProgressJob(newUpload)

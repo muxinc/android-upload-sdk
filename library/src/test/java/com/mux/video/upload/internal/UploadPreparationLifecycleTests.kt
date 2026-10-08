@@ -52,7 +52,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
       mockk<ChunkWorker> { coEvery { upload() } coAnswers { work(chunk, info, flow) } }
     })
     val factory = mockk<UploadJobFactory>()
-    every { factory.createUploadJob(any(), any()) } answers { real.createUploadJob(firstArg(), scope) }
+    every { factory.createUploadJob(any(), any(), any()) } answers { real.createUploadJob(firstArg(), scope, thirdArg()) }
     mockkObject(MuxUploadSdk)
     every { MuxUploadSdk.uploadJobFactory() } returns factory
     mockkObject(UploadMetrics.Companion)
@@ -628,6 +628,216 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     resumed.start(); pump { original.isSuccessful && results.size == 2 }
     assertTrue(results.first().isFailure)
     assertTrue(results.last().isSuccess)
+  }
+
+  @Test fun listenerChangeInsideSuccessCallbackDeliversSuccessOnce() {
+    val upload = MuxUpload.create(info())
+    var deliveries = 0
+    var completions = 0
+    upload.setResultListener { completions++ }
+    upload.setStatusListener { status ->
+      if (status is UploadStatus.UploadSuccess) {
+        deliveries++
+        // Bound this regression if a restarted observer replays success again.
+        if (deliveries < 3) upload.setProgressListener(null) else upload.clearListeners()
+      }
+    }
+    upload.start(); pump { upload.isSuccessful && completions > 0 }
+    assertEquals(1, deliveries)
+    assertEquals(1, completions)
+  }
+
+  @Test fun listenerRegistrationOnlyDeliversCurrentStateToThatListenerOnce() {
+    val upload = MuxUpload.create(info())
+    var first = 0
+    var replacement = 0
+    upload.setStatusListener { first++ }
+    dispatcher.scheduler.runCurrent()
+    assertEquals(1, first)
+    upload.setProgressListener { progress += it }
+    upload.setResultListener { results += it }
+    dispatcher.scheduler.runCurrent()
+    assertEquals(1, first)
+    upload.setStatusListener { replacement++ }
+    dispatcher.scheduler.runCurrent()
+    assertEquals(1, replacement)
+    upload.clearListeners()
+    upload.setStatusListener { replacement++ }
+    dispatcher.scheduler.runCurrent()
+    assertEquals(2, replacement)
+  }
+
+  @Test fun neverStartedCancelPreservesAnotherAttemptsPausedRecord() {
+    work = { _, _, _ -> awaitCancellation() }
+    val managed = MuxUpload.create(info())
+    managed.start(); pump { chunks.size == 1 }
+    managed.pause(); dispatcher.scheduler.runCurrent()
+    val saved = readUploadResumeState(info())
+    for (autoManage in listOf(false, true)) {
+      MuxUpload.Builder(info().remoteUri, source).manageUploadTask(autoManage).build().cancel()
+      assertEquals(saved, readUploadResumeState(info()))
+      assertEquals(1, readAllCachedUploads().size)
+      assertTrue(managed.isPaused)
+    }
+  }
+
+  @Test fun neverStartedCancelPreservesDiskRecordButExplicitRestartClearsOffset() {
+    writeUploadState(info(), MuxUpload.Progress(bytesUploaded = 8, totalBytes = 16))
+    for (autoManage in listOf(false, true)) {
+      MuxUpload.Builder(info().remoteUri, source).manageUploadTask(autoManage).build().cancel()
+      assertEquals(8L, readUploadResumeState(info()).bytesSent)
+    }
+    work = { _, _, _ -> awaitCancellation() }
+    val restarted = MuxUpload.create(info())
+    restarted.start(forceRestart = true); pump { chunks.size == 1 }
+    assertEquals(0L, chunks.single().startByte)
+  }
+
+  @Test fun newDestinationFinishesOldHandleAndExistingWaiterWithReplacementFailure() {
+    work = { _, _, _ -> awaitCancellation() }
+    val old = observe(MuxUpload.create(info()))
+    old.start(); pump { chunks.size == 1 }
+    var awaited: Result<UploadStatus>? = null
+    val waiter = scope.launch { awaited = old.awaitSuccess() }
+    dispatcher.scheduler.runCurrent()
+    val replacement = MuxUpload.create(info().copy(remoteUri = Uri.parse("https://example.invalid/replacement")))
+    replacement.start(); pump { chunks.size == 2 && waiter.isCompleted && results.size == 1 }
+    assertFalse(waiter.isCancelled)
+    assertTrue(awaited!!.exceptionOrNull() is UploadReplacedException)
+    assertTrue(old.uploadStatus is UploadStatus.UploadFailed)
+    assertTrue(old.error is UploadReplacedException)
+    assertTrue(results.single().exceptionOrNull() is UploadReplacedException)
+    assertFalse(old.isRunning)
+    old.start(forceRestart = true)
+    var late: Result<UploadStatus>? = null
+    val lateWaiter = scope.launch { late = old.awaitSuccess() }
+    pump { lateWaiter.isCompleted }
+    assertFalse(lateWaiter.isCancelled)
+    assertTrue(late!!.exceptionOrNull() is UploadReplacedException)
+    assertTrue(replacement.isRunning)
+    assertEquals(2, chunks.size)
+    assertEquals(1, results.size)
+  }
+
+  @Test fun replacementPreservesSuccessThatWasPublishedBeforeListenersObservedIt() {
+    work = { _, _, _ -> awaitCancellation() }
+    val old = observe(MuxUpload.create(info()))
+    old.start(); pump { chunks.size == 1 }
+    val completed = UploadStatus.UploadSuccess(old.currentProgress)
+    assertTrue(internalInfo(old).attempt!!.finish(completed))
+    // Replace before the callback observer or awaiting caller can consume success.
+    val replacement = MuxUpload.create(info().copy(remoteUri = Uri.parse("https://example.invalid/replacement")))
+    replacement.start(); pump { chunks.size == 2 && results.size == 1 }
+    assertTrue(results.single().isSuccess)
+    assertTrue(old.isSuccessful)
+    var awaited: Result<UploadStatus>? = null
+    val waiter = scope.launch { awaited = old.awaitSuccess() }
+    pump { waiter.isCompleted }
+    assertSame(completed, awaited!!.getOrThrow())
+    assertTrue(replacement.isRunning)
+  }
+
+  @Test fun replacingPausedDestinationFinishesOldHandleOnce() {
+    work = { _, _, _ -> awaitCancellation() }
+    val old = observe(MuxUpload.create(info()))
+    old.start(); pump { chunks.size == 1 }
+    old.pause(); dispatcher.scheduler.runCurrent()
+    val replacement = MuxUpload.create(info().copy(remoteUri = Uri.parse("https://example.invalid/replacement")))
+    replacement.start(); pump { chunks.size == 2 && results.size == 1 }
+    assertFalse(old.isPaused)
+    assertTrue(old.error is UploadReplacedException)
+    assertTrue(results.single().isFailure)
+    assertTrue(replacement.isRunning)
+  }
+
+  @Test fun replacementWaitsForOldPreparationAndDeletesItsLateOwnedOutput() {
+    val release = CompletableDeferred<Unit>()
+    val generated = generated(8)
+    prepare = { withContext(NonCancellable) { release.await(); PreparedUpload.Generated(generated) } }
+    val old = observe(MuxUpload.create(info()))
+    old.start(); pump { preparations == 1 }
+    prepare = { PreparedUpload.Original() }
+    val replacement = MuxUpload.create(info().copy(remoteUri = Uri.parse("https://example.invalid/replacement")))
+    replacement.start(); pump { results.size == 1 }
+    assertTrue(chunks.isEmpty())
+    assertTrue(old.error is UploadReplacedException)
+    release.complete(Unit)
+    pump { replacement.isSuccessful }
+    assertFalse(generated.file.exists())
+    assertTrue(source.exists()); assertTrue(sibling.exists())
+    assertArrayEquals(source.readBytes(), chunks.flatMap { it.sliceData.toList() }.toByteArray())
+    assertEquals(1, results.size)
+  }
+
+  @Test fun callerCancellationStillThrowsInsteadOfReturningReplacementFailure() {
+    work = { _, _, _ -> awaitCancellation() }
+    val old = MuxUpload.create(info())
+    old.start(); pump { chunks.size == 1 }
+    var returned = false
+    val waiter = scope.launch { old.awaitSuccess(); returned = true }
+    dispatcher.scheduler.runCurrent()
+    waiter.cancel()
+    MuxUpload.create(info().copy(remoteUri = Uri.parse("https://example.invalid/replacement"))).start()
+    pump { chunks.size == 2 && waiter.isCompleted }
+    assertTrue(waiter.isCancelled)
+    assertFalse(returned)
+  }
+
+  @Test fun payloadSelectionIsWrittenOncePerAttemptAndAcknowledgementsRemainPersisted() {
+    val prefs = spyk(context.getSharedPreferences("mux_upload", 0))
+    val persistenceContext = mockk<android.content.Context>()
+    every { persistenceContext.applicationContext } returns persistenceContext
+    every { persistenceContext.getSharedPreferences("mux_upload", 0) } returns prefs
+    initializeUploadPersistence(persistenceContext)
+    work = { chunk, upload, _ ->
+      val saved = readUploadResumeState(upload)
+      assertEquals(chunk.startByte, saved.bytesSent)
+      assertEquals(upload.attempt!!.id, saved.attemptId)
+      assertTrue(saved.originalSelected)
+      MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong())
+    }
+    val upload = MuxUpload.create(info())
+    upload.start(); pump { upload.isSuccessful }
+    // Selection once, four acknowledged chunk checkpoints, and terminal record removal.
+    verify(exactly = 6) { prefs.edit() }
+    assertTrue(readAllCachedUploads().isEmpty())
+  }
+
+  @Test fun resumedAttemptClaimsSavedOwnershipBeforeItsFirstAcknowledgement() {
+    work = { _, _, _ -> awaitCancellation() }
+    val upload = MuxUpload.create(info())
+    upload.start(); pump { chunks.size == 1 }
+    val firstOwner = readUploadResumeState(info()).attemptId
+    upload.pause(); dispatcher.scheduler.runCurrent()
+    upload.start(); pump { chunks.size == 2 }
+    val saved = readUploadResumeState(info())
+    assertNotEquals(firstOwner, saved.attemptId)
+    assertEquals(internalInfo(upload).attempt!!.id, saved.attemptId)
+    assertEquals(0L, saved.bytesSent)
+    assertTrue(saved.originalSelected)
+  }
+
+  @Test fun restorationUsesSnapshotsForPausedAndRunningUploadsWithoutExtraStateReads() {
+    writeUploadState(info(), MuxUpload.Progress(bytesUploaded = 8, totalBytes = 16))
+    val running = info().copy(inputFile = sibling)
+    writeUploadState(running, MuxUpload.Progress(bytesUploaded = 0, totalBytes = sibling.length()))
+    val prefs = context.getSharedPreferences("mux_upload", 0)
+    val entries = org.json.JSONArray(prefs.getString("uploads", null))
+    entries.getJSONObject(1).getJSONObject("data").put("state", 0)
+    prefs.edit().putString("uploads", entries.toString()).commit()
+    mockkStatic(::readUploadResumeState)
+    every { readUploadResumeState(any()) } throws AssertionError("Restoration must use its cached snapshot")
+    work = { _, _, _ -> awaitCancellation() }
+    MuxUploadSdk.initialize(context, true)
+    pump { chunks.size == 1 }
+    val paused = MuxUploadManager.findUploadByFile(source)!!
+    assertTrue(paused.isPaused)
+    assertEquals(8L, paused.currentProgress.bytesUploaded)
+    assertEquals(16L, paused.currentProgress.totalBytes)
+    assertTrue(paused.currentProgress.startTime > 0)
+    assertTrue(paused.currentProgress.updatedTime >= paused.currentProgress.startTime)
+    assertTrue(MuxUploadManager.findUploadByFile(sibling)!!.isRunning)
+    verify(exactly = 0) { readUploadResumeState(any()) }
   }
 
   private fun observe(upload: MuxUpload) = upload.apply {

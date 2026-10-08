@@ -43,8 +43,8 @@ class StandardInputLifecycleTests : AbsRobolectricTest() {
 
     val realFactory = UploadJobFactory.create()
     val factory = mockk<UploadJobFactory>()
-    every { factory.createUploadJob(any(), any()) } answers {
-      realFactory.createUploadJob(firstArg(), scope)
+    every { factory.createUploadJob(any(), any(), any()) } answers {
+      realFactory.createUploadJob(firstArg(), scope, thirdArg())
     }
     mockkObject(MuxUploadSdk)
     every { MuxUploadSdk.uploadJobFactory() } returns factory
