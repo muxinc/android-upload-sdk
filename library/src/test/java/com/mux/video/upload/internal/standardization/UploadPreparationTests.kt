@@ -55,6 +55,18 @@ class UploadPreparationTests : AbsRobolectricTest() {
         preparation.prepare(upload(), context))
     }
   }
+  @Test fun multipleAudioTracksSelectOriginalEvenWhenGeneratedResumeIsVerified() = runBlocking {
+    for (codec in listOf(VideoCodec.H264, VideoCodec.Hevc)) {
+      val facts = source(codec).copy(averageBitrate = known(9_000_000L), audioTracks = known(listOf(
+        AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.Stereo))),
+        AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.Mono))))))
+      val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata(facts)) },
+        inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) },
+        convert = { _, _, _, _, _ -> error("Multi-audio must keep server selection on original bytes") })
+      assertEquals(PreparedUpload.Original(PreparationDiagnostic.UnsupportedPlan),
+        preparation.prepare(upload(), context, generatedResumeVerified = true))
+    }
+  }
 
   @Test fun adapterReceivesPlannedCodecAndOnlyValidatedCompletionCanSelectGenerated() = runBlocking {
     for (codec in listOf(VideoCodec.H264, VideoCodec.Hevc)) {

@@ -8,6 +8,7 @@ import com.mux.video.upload.api.MuxUploadManager
 import com.mux.video.upload.api.UploadStatus
 import com.mux.video.upload.internal.standardization.PreparedUpload
 import com.mux.video.upload.internal.standardization.SdrGeneratedFile
+import com.mux.video.upload.internal.standardization.*
 import io.mockk.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -83,6 +84,24 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     upload.setResultListener { lateResults++ }
     dispatcher.scheduler.runCurrent()
     assertEquals(1, lateResults)
+  }
+  @Test fun multiAudioFallbackUploadsOriginalWithOneSuccessfulResultEvenAfterResumeGateIsVerified() {
+    val facts = compliantFacts().copy(averageBitrate = known(9_000_000L), audioTracks = known(listOf(
+      AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.Stereo))),
+      AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.Mono))))))
+    val metadata = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), emptyList(), MediaFact.Unknown, facts, 0)
+    val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata) },
+      inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete) },
+      convert = { _, _, _, _, _ -> error("Multi-audio export must never select a replacement track") })
+    prepare = { preparation.prepare(it, context, generatedResumeVerified = true) }
+    val upload = observe(MuxUpload.create(info()))
+    upload.start()
+    pump { upload.isSuccessful }
+    assertArrayEquals(source.readBytes(), chunks.flatMap { it.sliceData.toList() }.toByteArray())
+    assertEquals(16L, upload.currentProgress.totalBytes)
+    assertEquals(1, results.size)
+    assertTrue(results.single().isSuccess)
+    assertTrue(source.exists()); assertTrue(sibling.exists())
   }
 
   @Test fun automaticLegacyRestorationUsesOriginalOffsetWithoutPreparation() {
