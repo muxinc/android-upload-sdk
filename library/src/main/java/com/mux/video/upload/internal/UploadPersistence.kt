@@ -60,26 +60,25 @@ internal fun forgetUploadState(uploadInfo: UploadInfo) {
   UploadPersistence.removeForFile(uploadInfo)
 }
 
+internal data class CachedUpload(val upload: UploadInfo, val resumeState: UploadResumeState)
+
+internal fun readCachedUploadSnapshots(): List<CachedUpload> = UploadPersistence.readSnapshots()
+
 @JvmSynthetic
-internal fun readAllCachedUploads(includePaused: Boolean = true): List<UploadInfo> {
-  return UploadPersistence.readEntries()
-    .map { it.value }
-    .filter { includePaused || it.state == UploadPersistence.WAS_RUNNING }
-    .map {
-      UploadInfo(
-        inputStandardization = it.inputStandardization,
-        remoteUri = Uri.parse(it.url),
-        inputFile =  it.file,
-        chunkSize = it.chunkSize,
-        retriesPerChunk = it.retriesPerChunk,
-        optOut = it.optOut,
-        uploadJob = null,
-        statusFlow = null,
-        restoredFromOriginal = it.originalSelected,
-        generatedResumeBlocked = it.generatedResumeBlocked,
-      )
-  }
-}
+internal fun readAllCachedUploads(): List<UploadInfo> = readCachedUploadSnapshots().map { it.upload }
+
+private fun UploadEntry.toUploadInfo(blocked: Boolean) = UploadInfo(
+  inputStandardization = inputStandardization,
+  remoteUri = Uri.parse(url),
+  inputFile = file,
+  chunkSize = chunkSize,
+  retriesPerChunk = retriesPerChunk,
+  optOut = optOut,
+  uploadJob = null,
+  statusFlow = null,
+  restoredFromOriginal = originalSelected,
+  generatedResumeBlocked = blocked,
+)
 
 /**
  * Datastore for uploads that are paused, are running, or should be running. Internally it models
@@ -110,14 +109,7 @@ private object UploadPersistence {
   fun readState(upload: UploadInfo): UploadResumeState {
     checkInitialized()
     val entry = fetchEntries()[upload.inputFile.absolutePath]?.takeIf { it.url == upload.remoteUri.toString() }
-    return UploadResumeState(
-      bytesSent = entry?.bytesSent ?: 0,
-      originalSelected = entry?.originalSelected ?: false,
-      generatedResumeBlocked = entry?.generatedResumeBlocked == true ||
-        destinationKey(upload.remoteUri.toString()) in readBlocks(),
-      paused = entry?.state == WAS_PAUSED,
-      attemptId = entry?.attemptId,
-    )
+    return resumeState(entry, destinationKey(upload.remoteUri.toString()) in readBlocks())
   }
 
   @Throws
@@ -136,12 +128,23 @@ private object UploadPersistence {
     writeEntries(entries, blocks)
   }
 
-  @Throws
   @Synchronized
-  fun readEntries(): MutableMap<String, UploadEntry> {
+  fun readSnapshots(): List<CachedUpload> {
     checkInitialized()
-    return fetchEntries()
+    val blocks = readBlocks()
+    return fetchEntries().values.map { entry ->
+      val saved = resumeState(entry, destinationKey(entry.url) in blocks)
+      CachedUpload(entry.toUploadInfo(saved.generatedResumeBlocked), saved)
+    }
   }
+
+  private fun resumeState(entry: UploadEntry?, blocked: Boolean) = UploadResumeState(
+    bytesSent = entry?.bytesSent ?: 0,
+    originalSelected = entry?.originalSelected ?: false,
+    generatedResumeBlocked = entry?.generatedResumeBlocked == true || blocked,
+    paused = entry?.state == WAS_PAUSED,
+    attemptId = entry?.attemptId,
+  )
 
   @Throws
   @Synchronized

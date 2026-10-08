@@ -95,6 +95,8 @@ class MuxUpload private constructor(
   private var observerJob: Job? = null
   private var cancelled = false
   private var deliveredResultStatus: UploadStatus? = null
+  private var deliveredStatus: UploadStatus? = null
+  private var deliveredProgress: Progress? = null
   private val currentStatus: UploadStatus get() =
     uploadInfo.statusFlow?.value ?: lastKnownStatus ?: UploadStatus.Ready
   private var lastKnownStatus: UploadStatus? = null
@@ -135,7 +137,7 @@ class MuxUpload private constructor(
     forceRestart: Boolean = false,
     coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Default)
   ) {
-    if (cancelled || uploadInfo.attempt?.isCancelled() == true) return
+    if (cancelled || uploadInfo.attempt?.isCancelled() == true || uploadInfo.attempt?.replacementFailure() != null) return
     if (!forceRestart && uploadInfo.uploadJob?.isActive == true && uploadInfo.attempt?.isStopped() != true) {
       observeUpload(uploadInfo)
       return
@@ -172,7 +174,8 @@ class MuxUpload private constructor(
    *
    * If the upload already succeeded, the old result will be returned immediately.
    * After [cancel], this returns a failure without restarting. Cancellation of the calling
-   * coroutine still throws [CancellationException].
+   * coroutine still throws [CancellationException]. Replacement by a new destination returns
+   * a failure to existing waiters and ends this handle.
    */
   @Throws
   @Suppress("unused")
@@ -185,8 +188,25 @@ class MuxUpload private constructor(
     } else {
       coroutineScope {
         startInner(coroutineScope = this)
-        uploadInfo.uploadJob?.await() ?: Result.failure(Exception("Upload failed to start"))
+        val awaited = uploadInfo
+        replacementResult(awaited)?.let { return@coroutineScope it }
+        try {
+          awaited.uploadJob?.await() ?: Result.failure(Exception("Upload failed to start"))
+        } catch (e: CancellationException) {
+          // Replacing the upload ends its job, but must not cancel an active caller.
+          currentCoroutineContext().ensureActive()
+          replacementResult(awaited) ?: throw e
+        }
       }
+    }
+  }
+
+  private fun replacementResult(upload: UploadInfo): Result<UploadStatus>? {
+    val replacement = upload.attempt?.replacementFailure() ?: return null
+    return when (val status = upload.statusFlow?.value) {
+      is UploadStatus.UploadSuccess -> Result.success(status)
+      is UploadStatus.UploadFailed -> Result.failure(status.exception)
+      else -> Result.failure(replacement)
     }
   }
 
@@ -197,12 +217,10 @@ class MuxUpload private constructor(
    */
   @Suppress("MemberVisibilityCanBePrivate")
   fun pause() {
-    if (cancelled || uploadInfo.attempt?.isCancelled() == true || isPaused) return
+    if (cancelled || uploadInfo.attempt?.isCancelled() == true || uploadInfo.attempt?.replacementFailure() != null || isPaused) return
     uploadInfo = if (autoManage) {
-      observerJob?.cancel("user requested pause")
       /*uploadInfo =*/ MuxUploadManager.pauseJob(uploadInfo)
     } else {
-      observerJob?.cancel("user requested pause")
       uploadInfo.attempt?.pause { writeUploadState(uploadInfo, it) }
       uploadInfo.uploadJob?.cancel()
       uploadInfo
@@ -223,7 +241,7 @@ class MuxUpload private constructor(
       MuxUploadManager.cancelJob(uploadInfo)
     } else {
       val current = uploadInfo
-      if (current.attempt == null) forgetUploadState(current) else current.attempt.cancel { forgetUploadState(current) }
+      current.attempt?.cancel { forgetUploadState(current) }
       current.uploadJob?.cancel("user requested cancel")
     }
     observerJob?.cancel("user requested cancel")
@@ -236,9 +254,10 @@ class MuxUpload private constructor(
    */
   @MainThread
   fun setProgressListener(listener: UploadEventListener<Progress>?) {
+    if (progressListener !== listener) deliveredProgress = null
     progressListener = listener
-    if (!cancelled && uploadInfo.attempt?.isCancelled() != true) lastKnownProgress?.let { listener?.onEvent(it) }
     observeUpload(uploadInfo)
+    if (!cancelled && uploadInfo.attempt?.isCancelled() != true) lastKnownProgress?.let { notifyProgress(it) }
   }
 
   /**
@@ -261,9 +280,10 @@ class MuxUpload private constructor(
    */
   @MainThread
   fun setStatusListener(listener: UploadEventListener<UploadStatus>?) {
+    if (statusListener !== listener) deliveredStatus = null
     statusListener = listener
     observeUpload(uploadInfo)
-    if (!cancelled && uploadInfo.attempt?.isCancelled() != true) listener?.onEvent(currentStatus)
+    if (!cancelled && uploadInfo.attempt?.isCancelled() != true) notifyStatus(currentStatus)
   }
 
   /**
@@ -285,24 +305,38 @@ class MuxUpload private constructor(
     }.collect { (observed, status) ->
       if (cancelled || uploadInfo.attempt !== observed.attempt || observed.attempt?.isCancelled() == true) return@collect
       lastKnownStatus = status
-      statusListener?.onEvent(status)
+      notifyStatus(status)
       // A listener can synchronously pause, cancel, or replace the attempt.
       if (cancelled || uploadInfo.attempt !== observed.attempt || observed.attempt?.isCancelled() == true ||
-        (observed.attempt?.isStopped() == true && status !is UploadStatus.UploadPaused)) return@collect
+        (observed.attempt?.isStopped() == true && status !is UploadStatus.UploadPaused && status !is UploadStatus.UploadFailed && status !is UploadStatus.UploadSuccess)) return@collect
       when (status) {
-        is UploadStatus.Uploading -> progressListener?.onEvent(status.uploadProgress)
-        is UploadStatus.UploadPaused -> progressListener?.onEvent(status.uploadProgress)
+        is UploadStatus.Uploading -> notifyProgress(status.uploadProgress)
+        is UploadStatus.UploadPaused -> notifyProgress(status.uploadProgress)
         is UploadStatus.UploadSuccess -> {
-          progressListener?.onEvent(status.uploadProgress)
+          notifyProgress(status.uploadProgress)
           if (!cancelled && observed.attempt?.isCancelled() != true && uploadInfo.attempt === observed.attempt) notifyResult(status)
         }
         is UploadStatus.UploadFailed -> {
-          progressListener?.onEvent(status.uploadProgress)
+          notifyProgress(status.uploadProgress)
           if (observed.attempt?.isCancelled() != true && uploadInfo.attempt === observed.attempt) notifyResult(status)
         }
         else -> {}
       }
     }
+  }
+
+  private fun notifyStatus(status: UploadStatus) {
+    val listener = statusListener ?: return
+    if (deliveredStatus === status) return
+    deliveredStatus = status
+    listener.onEvent(status)
+  }
+
+  private fun notifyProgress(progress: Progress) {
+    val listener = progressListener ?: return
+    if (deliveredProgress == progress) return
+    deliveredProgress = progress
+    listener.onEvent(progress)
   }
 
   private fun notifyResult(status: UploadStatus) {
@@ -321,9 +355,12 @@ class MuxUpload private constructor(
   }
 
   private fun observeUpload(uploadInfo: UploadInfo) {
-    observerJob?.cancel("switching observers")
-    observerJob = if (!cancelled && (resultListener != null || progressListener != null || statusListener != null))
-      newObserveProgressJob(uploadInfo) else null
+    if (cancelled || (resultListener == null && progressListener == null && statusListener == null)) {
+      observerJob?.cancel("no listeners")
+      observerJob = null
+    } else if (observerJob?.isActive != true) {
+      observerJob = newObserveProgressJob(uploadInfo)
+    }
   }
 
   /**

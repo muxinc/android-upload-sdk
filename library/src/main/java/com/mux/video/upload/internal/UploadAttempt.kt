@@ -43,15 +43,18 @@ internal class UploadAttempt(
   private var terminal = false
   private var superseded = false
   private var confirmed = initialProgress
+  private var transportPayloadGenerated: Boolean? = null
+  private var replacement: UploadReplacedException? = null
 
   @Synchronized fun isStopped() = stopped
   @Synchronized fun isCancelled() = cancelled
+  @Synchronized fun replacementFailure() = replacement
   @Synchronized fun confirmedProgress() = confirmed
   @Synchronized fun supersede() { superseded = true }
 
   @Synchronized fun retainGenerated(output: SdrGeneratedFile) {
     if (superseded) preparation.discardLateOutput(output)
-    else if (cancelled) {
+    else if (cancelled || replacement != null) {
       preparation.trackCleanup(output)
       preparation.deleteOwnedFile()
     } else preparation.verified = output
@@ -68,11 +71,13 @@ internal class UploadAttempt(
   }
 
   @Synchronized fun beginTransport(generated: Boolean, persist: () -> Unit) {
-    if (stopped) throw kotlinx.coroutines.CancellationException("Upload stopped")
+    if (stopped || terminal || superseded) throw kotlinx.coroutines.CancellationException("Upload stopped")
+    if (transportPayloadGenerated == generated) return
     if (generated) preparation.generatedRequestStarted = true
     else preparation.originalSelected = true
-    // Persist payload selection before the first request, even without an acknowledgement.
+    // Claim persistence ownership before the first request of each attempt/payload choice.
     persist()
+    transportPayloadGenerated = generated
   }
 
   @Synchronized fun publish(value: UploadStatus) {
@@ -103,6 +108,20 @@ internal class UploadAttempt(
     preparation.deleteOwnedFile()
   }
 
+  fun replace(forget: () -> Unit) {
+    synchronized(this) {
+      if (cancelled || replacement != null) return
+      replacement = UploadReplacedException()
+      stopped = true
+      if (!terminal) {
+        terminal = true
+        status.value = UploadStatus.UploadFailed(checkNotNull(replacement), confirmed)
+      }
+      forget()
+    }
+    preparation.deleteOwnedFile()
+  }
+
   @Synchronized fun finish(value: UploadStatus): Boolean {
     if (stopped || terminal || superseded) return false
     terminal = true
@@ -110,6 +129,20 @@ internal class UploadAttempt(
     return true
   }
 }
+
+/** Both paused restoration and transport start with the same progress/ownership rules. */
+internal fun createUploadAttempt(upload: UploadInfo, saved: UploadResumeState): UploadAttempt {
+  val preparation = upload.attempt?.preparation ?: UploadPreparationState().apply {
+    originalSelected = upload.restoredFromOriginal || saved.originalSelected
+  }
+  val now = System.currentTimeMillis()
+  return UploadAttempt(preparation, MuxUpload.Progress(
+    bytesUploaded = if (saved.generatedResumeBlocked) 0 else saved.bytesSent,
+    totalBytes = upload.inputFile.length(), startTime = now, updatedTime = now),
+    previousPersistenceOwnerId = saved.attemptId)
+}
+
+internal class UploadReplacedException : IllegalStateException("Upload was replaced by a new destination.")
 
 internal class GeneratedResumeBlockedException : IllegalStateException(
   "Generated payload identity or server offset is unverified. Create a new Direct Upload."
