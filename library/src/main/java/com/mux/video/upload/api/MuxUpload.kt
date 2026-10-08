@@ -6,6 +6,7 @@ import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload.Builder
 import com.mux.video.upload.internal.MaximumResolution
 import com.mux.video.upload.internal.UploadInfo
+import com.mux.video.upload.internal.UploadSession
 import com.mux.video.upload.internal.update
 import com.mux.video.upload.internal.writeUploadState
 import com.mux.video.upload.internal.forgetUploadState
@@ -93,6 +94,7 @@ class MuxUpload private constructor(
   private var progressListener: UploadEventListener<Progress>? = null
   private var statusListener: UploadEventListener<UploadStatus>? = null
   private var observerJob: Job? = null
+  private var observedSession: UploadSession? = null
   private var cancelled = false
   private var deliveredResultStatus: UploadStatus? = null
   private var deliveredStatus: UploadStatus? = null
@@ -358,7 +360,9 @@ class MuxUpload private constructor(
     if (cancelled || (resultListener == null && progressListener == null && statusListener == null)) {
       observerJob?.cancel("no listeners")
       observerJob = null
-    } else if (observerJob?.isActive != true) {
+    } else if (observerJob?.isActive != true || observedSession !== uploadInfo.session) {
+      observerJob?.cancel("switching upload session")
+      observedSession = uploadInfo.session
       observerJob = newObserveProgressJob(uploadInfo)
     }
   }

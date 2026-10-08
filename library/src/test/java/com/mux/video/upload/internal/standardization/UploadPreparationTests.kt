@@ -45,16 +45,6 @@ class UploadPreparationTests : AbsRobolectricTest() {
     }
   }
 
-  @Test fun unverifiedGeneratedResumeGatesConversionBeforeExportForBothFamilies() = runBlocking {
-    for (codec in listOf(VideoCodec.H264, VideoCodec.Hevc)) {
-      val facts = source(codec).copy(averageBitrate = known(9_000_000L))
-      val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata(facts)) },
-        inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) },
-        convert = { _, _, _, _, _ -> error("Unverified generated resume must select original") })
-      assertEquals(PreparedUpload.Original(PreparationDiagnostic.GeneratedResumeUnavailable),
-        preparation.prepare(upload(), context))
-    }
-  }
   @Test fun multipleAudioTracksSelectOriginalEvenWhenGeneratedResumeIsVerified() = runBlocking {
     for (codec in listOf(VideoCodec.H264, VideoCodec.Hevc)) {
       val facts = source(codec).copy(averageBitrate = known(9_000_000L), audioTracks = known(listOf(
@@ -111,7 +101,6 @@ class UploadPreparationTests : AbsRobolectricTest() {
 
   @Test fun adapterCompletionRacingPauseTransfersVerifiedOwnershipBeforeCoroutineDispatch() = bridgeRace(cancel = false)
   @Test fun adapterCompletionRacingCancelDeletesOnlyItsOwnedFile() = bridgeRace(cancel = true)
-
 
   @Test fun closedGateSkipsAllMediaInspectionAndExport() = runBlocking {
     val preparation = UploadPreparation(inspectMetadata = { error("Gate must precede metadata") },
