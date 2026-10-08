@@ -78,6 +78,13 @@ class StandardInputOutputValidatorTests {
     assertTrue(validate(output.copy(frameRate = known(5.0)), outputTime = timeline(3.2), conversion = low) is StandardInputOutputValidation.Accepted)
     mismatch(OutputExpectation.Duration, validate(output.copy(frameRate = known(5.0)), outputTime = timeline(3.200001), conversion = low))
   }
+  @Test fun matchingFirstTrackFormatDoesNotProveMuxAudioSelection() {
+    val multi = source.copy(audioTracks = known(listOf(
+      AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.Stereo))),
+      AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.Mono))))))
+    val rejection = reason(validate(input = multi)) as OutputRejection.InsufficientPlanEvidence
+    assertTrue(rejection.expectations.contains(OutputExpectation.Audio))
+  }
   @Test fun avStartToleranceIs50msAndAbsenceIsExplicit() {
     assertTrue(validate(outputTime = timeline(offset = AudioVideoStartOffset.Seconds(-0.05))) is StandardInputOutputValidation.Accepted)
     mismatch(OutputExpectation.AudioVideoStartOffset, validate(outputTime = timeline(offset = AudioVideoStartOffset.Seconds(0.050001))))

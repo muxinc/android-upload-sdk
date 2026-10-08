@@ -1,11 +1,14 @@
 package com.mux.video.upload.internal.standardization
 
+import kotlinx.coroutines.CompletableDeferred
 import android.content.Context
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import androidx.media3.common.MimeTypes
 import java.io.File
+import java.io.RandomAccessFile
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal sealed interface SdrConversionResult {
@@ -17,6 +20,32 @@ internal sealed interface SdrConversionResult {
 
 /** The only deletion authority returned to orchestration; never accepts an arbitrary path. */
 internal class SdrGeneratedFile private constructor(val file: File) {
+  private var validatedIdentity: FileIdentity? = null
+  internal fun recordValidation(): Boolean {
+    validatedIdentity = identity()
+    return validatedIdentity != null
+  }
+  internal fun matchesValidation(): Boolean = validatedIdentity?.let { it == identity() } == true
+
+  private data class FileIdentity(val size: Long, val modified: Long, val edgeHash: List<Byte>)
+  private fun identity(): FileIdentity? = try {
+    val size = file.length()
+    val modified = file.lastModified()
+    if (!file.isFile || !file.canRead() || size <= 0) null else {
+      val digest = MessageDigest.getInstance("SHA-256")
+      RandomAccessFile(file, "r").use { input ->
+        val first = ByteArray(minOf(size, 64 * 1024L).toInt())
+        input.readFully(first); digest.update(first)
+        if (size > first.size) {
+          val last = ByteArray(minOf(size - first.size, 64 * 1024L).toInt())
+          input.seek(size - last.size); input.readFully(last); digest.update(last)
+        }
+      }
+      if (file.length() != size || file.lastModified() != modified) null
+      else FileIdentity(size, modified, digest.digest().toList())
+    }
+  } catch (_: Exception) { null }
+
   fun delete(): Boolean = !file.exists() || file.delete()
 
   companion object {
@@ -44,6 +73,7 @@ internal class SdrConversionAdapter(
     StandardInputOutputValidator()::validateGeneratedOutput,
   private val createEngine: (Context, Looper, StandardInputConversion, SdrEncodingTargets, SdrEncoderCapability) -> SdrExportEngine =
     ::Media3SdrExportEngine,
+  private val onPendingCleanup: (SdrGeneratedFile) -> Unit = {},
 ) {
   private val appContext = context.applicationContext
 
@@ -62,6 +92,7 @@ internal class SdrConversionAdapter(
     private val cancelled = AtomicBoolean(false)
     private val terminalLock = Any()
     private var terminal = false
+    private val released = CompletableDeferred<Unit>()
     private var engine: SdrExportEngine? = null
     private var output: SdrGeneratedFile? = null
     /** Exact deletion authority retained if the OS refuses cleanup, including cancellation. */
@@ -77,6 +108,8 @@ internal class SdrConversionAdapter(
       }
       handler.post { finish(SdrConversionResult.Cancelled) }
     }
+
+    suspend fun awaitRelease() { released.await() }
 
     internal fun begin() { handler.post {
       guarded {
@@ -110,6 +143,7 @@ internal class SdrConversionAdapter(
                 val expectedLayout = CodecMetadataReader.aacChannelLayout(targets.audioChannels)
                 if (validation.facts.videoProfile != MediaFact.Known(targets.profile) ||
                   (targets.audioChannels != null && audio?.layout != expectedLayout)) fail(SdrConversionFailure.OutputInvalid)
+                else if (!owned.recordValidation()) fail(SdrConversionFailure.OutputInvalid)
                 else finish(SdrConversionResult.Completed(owned, validation.facts))
               }
               is StandardInputOutputValidation.Rejected -> fail(SdrConversionFailure.OutputInvalid)
@@ -141,6 +175,7 @@ internal class SdrConversionAdapter(
         runCatching { engine?.cancel() }
         if (result !is SdrConversionResult.Completed && output?.delete() == false) {
           pendingCleanup = output
+          output?.let(onPendingCleanup)
           // Keep ownership at its exact path if the OS refuses deletion; never sweep a directory.
           if (result !is SdrConversionResult.Cancelled) {
             onResult(SdrConversionResult.Failed(SdrConversionFailure.FileOwnership))
@@ -152,6 +187,7 @@ internal class SdrConversionAdapter(
         engine = null
         handler.removeCallbacksAndMessages(null)
         thread.quitSafely()
+        released.complete(Unit)
       }
     }
   }

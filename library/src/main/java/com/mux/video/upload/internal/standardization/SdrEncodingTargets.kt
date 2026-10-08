@@ -71,6 +71,8 @@ internal data class SdrEncodingTargets(
       } else if (sourceRate != rate || facts.cadence == MediaFact.Unknown) return null
       val audioFacts = facts.audioTracks.valueOrNull ?: return null
       val audio = metadata.tracks.filter { it.kind == TrackKind.Audio }.sortedBy { it.containerIndex.valueOrNull ?: Int.MAX_VALUE }
+      // Direct adapter callers must also preserve Mux's audio choice for multi-track inputs.
+      if (audioFacts.size > 1 || audio.size > 1) return null
       if (audio.size != audioFacts.size || audio.any { it.containerIndex == MediaFact.Unknown }) return null
       if ((conversion.outputAudio == OutputAudio.None) != audio.isEmpty() &&
         conversion.outputAudio != OutputAudio.AacFromFirstTrackIfPresent) return null

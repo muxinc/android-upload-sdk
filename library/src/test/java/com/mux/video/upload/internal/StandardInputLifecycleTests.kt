@@ -5,6 +5,8 @@ import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.HdrHandling
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
+import com.mux.video.upload.internal.standardization.UploadPreparation
+import com.mux.video.upload.internal.standardization.PreparedUpload
 import io.mockk.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.*
@@ -18,8 +20,7 @@ import java.io.File
 
 /**
  * Configuration retention through the public lifecycle, using unchanged original bytes.
- * This test does not validate media conversion or generated-payload resume safety.
- * That integration coverage remains to be implemented with the new preparation and resume pipeline.
+ * Generated payload ownership and resume blocking are covered in UploadPreparationLifecycleTests.
  */
 @Config(sdk = [28])
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -42,19 +43,15 @@ class StandardInputLifecycleTests : AbsRobolectricTest() {
 
     val realFactory = UploadJobFactory.create()
     val factory = mockk<UploadJobFactory>()
-    every { factory.createUploadJob(any(), any()) } answers {
-      realFactory.createUploadJob(firstArg(), scope)
+    every { factory.createUploadJob(any(), any(), any()) } answers {
+      realFactory.createUploadJob(firstArg(), scope, thirdArg())
     }
     mockkObject(MuxUploadSdk)
     every { MuxUploadSdk.uploadJobFactory() } returns factory
-    mockkObject(TranscoderContext.Companion)
-    every { TranscoderContext.create(any(), any(), any()) } answers {
-      val upload = firstArg<UploadInfo>()
-      // Always select the original file. Repeating this stub never regenerates payload bytes.
-      mockk<TranscoderContext> {
-        every { fileTranscoded } returns false
-        coEvery { process() } coAnswers { preparations++; upload }
-      }
+    mockkConstructor(UploadPreparation::class)
+    coEvery { anyConstructed<UploadPreparation>().prepare(any(), any(), any()) } coAnswers {
+      preparations++
+      PreparedUpload.Original()
     }
     mockkObject(UploadMetrics.Companion)
     every { UploadMetrics.create() } returns mockk(relaxed = true)
@@ -66,7 +63,8 @@ class StandardInputLifecycleTests : AbsRobolectricTest() {
         coEvery { upload() } coAnswers {
           workerOptions += upload.inputStandardization
           chunkOffsets += chunk.startByte
-          writeUploadState(upload, MuxUpload.Progress(bytesUploaded = 3, totalBytes = 16))
+          val acknowledged = MuxUpload.Progress(bytesUploaded = 3, totalBytes = 16)
+          upload.attempt!!.acknowledge(acknowledged) { writeUploadState(upload, acknowledged) }
           awaitCancellation()
         }
       }
