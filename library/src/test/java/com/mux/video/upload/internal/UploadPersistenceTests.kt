@@ -88,7 +88,7 @@ class UploadPersistenceTests : AbsRobolectricTest() {
     )
     assertEquals(
       "upload A should be read as written",
-      uploadInfoInA,
+      uploadInfoInA.update(restoredFromOriginal = true),
       uploadOutA
     )
   }

@@ -1,7 +1,5 @@
 package com.mux.video.upload.internal
 
-import android.net.Uri
-import android.util.Log
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.internal.network.asCountingRequestBody
@@ -9,6 +7,9 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
+import okhttp3.Call
+import okhttp3.Callback
+import kotlin.coroutines.resumeWithException
 import okhttp3.Response
 import java.io.IOException
 
@@ -48,24 +49,16 @@ internal class ChunkWorker private constructor(
     val moreRetries = { triesSoFar: Int -> triesSoFar < uploadInfo.retriesPerChunk }
     suspend fun tryUpload(triesSoFar: Int): Result<MuxUpload.Progress> {
       try {
+        currentCoroutineContext().ensureActive()
         val (finalState, httpResponse) = doUpload()
-        if (ACCEPTABLE_STATUS_CODES.contains(httpResponse.code)) {
-          // End Case: Chunk success!
-          return Result.success(finalState)
-        } else if (RETRYABLE_STATUS_CODES.contains(httpResponse.code)) {
-          return if (moreRetries(triesSoFar)) {
-            // Still have more retries so try again
-            tryUpload(triesSoFar + 1)
-          } else {
-            Result.failure(
-              IOException("Upload request failed: ${httpResponse.code}/${httpResponse.message}")
-            )
-          }
-        } else {
-          return Result.failure(
-            IOException("Upload request failed: ${httpResponse.code}/${httpResponse.message}")
-          )
+        httpResponse.use {
+          if (ACCEPTABLE_STATUS_CODES.contains(it.code)) return Result.success(finalState)
+          val failure = IOException("Upload request failed: ${it.code}/${it.message}")
+          if (it.code !in RETRYABLE_STATUS_CODES || !moreRetries(triesSoFar)) return Result.failure(failure)
         }
+        return tryUpload(triesSoFar + 1)
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         return if (moreRetries(triesSoFar)) {
           // Still have more retries so try again
@@ -76,7 +69,8 @@ internal class ChunkWorker private constructor(
       }
     }
 
-    return tryUpload(0).getOrThrow().also { writeUploadState(uploadInfo, it) }
+    currentCoroutineContext().ensureActive()
+    return tryUpload(0).getOrThrow()
   }
 
   @Throws
@@ -125,20 +119,32 @@ internal class ChunkWorker private constructor(
         .build()
 
       logger.v("MuxUpload", "Uploading with request $request")
-      val httpResponse = withContext(Dispatchers.IO) {
-        httpClient.newCall(request).execute()
+      val call = httpClient.newCall(request)
+      val httpResponse = suspendCancellableCoroutine<Response> { continuation ->
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+          override fun onFailure(call: Call, e: IOException) { continuation.resumeWithException(e) }
+          override fun onResponse(call: Call, response: Response) {
+            continuation.resume(response) { _, value, _ -> value.close() }
+          }
+        })
       }
-      logger.v("MuxUpload", "Chunk Response: $httpResponse")
-      val finalState = MuxUpload.Progress(
-        bytesUploaded = chunkSize,
-        totalBytes = chunkSize,
-        startTime = startTime,
-        updatedTime = System.currentTimeMillis()
-      )
-      // Cancel progress updates and make sure no one is stuck listening for more
-      updateCallersJob?.cancel()
-      progressFlow.emit(finalState)
-      Pair(finalState, httpResponse)
+      try {
+        logger.v("MuxUpload", "Chunk Response: $httpResponse")
+        val finalState = MuxUpload.Progress(
+          bytesUploaded = chunkSize,
+          totalBytes = chunkSize,
+          startTime = startTime,
+          updatedTime = System.currentTimeMillis()
+        )
+        // Cancel progress updates and make sure no one is stuck listening for more
+        updateCallersJob?.cancel()
+        progressFlow.emit(finalState)
+        Pair(finalState, httpResponse)
+        } catch (e: Exception) {
+        httpResponse.close()
+        throw e
+      }
     } // supervisorScope
   } // suspend fun doUpload
 
