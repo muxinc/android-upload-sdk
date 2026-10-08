@@ -169,9 +169,9 @@ object MuxUploadManager {
     upload.uploadJob?.cancel()
   }
 
-  private fun cancelAttempt(upload: UploadInfo, forgetUnstarted: Boolean = false) {
+  private fun cancelAttempt(upload: UploadInfo, forgetUnstarted: Boolean = false, forRestart: Boolean = false) {
     val attempt = upload.attempt
-    if (attempt != null) attempt.cancel { forgetUploadState(upload) }
+    if (attempt != null) attempt.cancel(forRestart = forRestart) { forgetUploadState(upload) }
     else if (forgetUnstarted) forgetUploadState(upload)
     upload.uploadJob?.cancel()
   }
@@ -189,7 +189,7 @@ object MuxUploadManager {
       if (newDestination) {
         source.attempt?.replace { forgetUploadState(source) }
         source.uploadJob?.cancel()
-      } else cancelAttempt(source, forgetUnstarted = true)
+      } else cancelAttempt(source, forgetUnstarted = true, forRestart = true)
       source = upload.update(attempt = null, uploadJob = source.uploadJob,
         statusFlow = null, restoredFromOriginal = false, generatedResumeBlocked = generatedMayExistRemotely).also {
         it.session = if (newDestination) upload.session else source.session

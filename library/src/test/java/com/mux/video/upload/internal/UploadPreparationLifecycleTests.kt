@@ -30,6 +30,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
   private lateinit var source: File
   private lateinit var sibling: File
   private var preparations = 0
+  private var beforeCreateJob: () -> Unit = {}
   private var prepare: suspend (UploadInfo) -> PreparedUpload = { PreparedUpload.Original() }
   private var work: suspend (ChunkWorker.Chunk, UploadInfo, MutableSharedFlow<MuxUpload.Progress>) -> MuxUpload.Progress =
     { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
@@ -52,7 +53,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
       mockk<ChunkWorker> { coEvery { upload() } coAnswers { work(chunk, info, flow) } }
     })
     val factory = mockk<UploadJobFactory>()
-    every { factory.createUploadJob(any(), any(), any()) } answers { real.createUploadJob(firstArg(), scope, thirdArg()) }
+    every { factory.createUploadJob(any(), any(), any()) } answers { beforeCreateJob(); real.createUploadJob(firstArg(), scope, thirdArg()) }
     mockkObject(MuxUploadSdk)
     every { MuxUploadSdk.uploadJobFactory() } returns factory
     mockkObject(UploadMetrics.Companion)
@@ -333,17 +334,27 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
   }
 
   @Test fun unmanagedForceRestartStopsPreviousWorkerBeforeStartingAnother() {
-    work = { _, _, _ -> awaitCancellation() }
+    val release = CompletableDeferred<Unit>()
+    work = { chunk, _, _ -> release.await(); MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
     val upload = MuxUpload.Builder("https://example.invalid/upload", source)
       .manageUploadTask(false).standardizationRequested(false).build()
     upload.start()
     pump { chunks.size == 1 }
     val old = internalInfo(upload).uploadJob!!
+    var result: Result<UploadStatus>? = null
+    val waiter = scope.launch { result = upload.awaitSuccess() }
+    dispatcher.scheduler.runCurrent()
+    // Run the old waiter after teardown but before the new job is published.
+    beforeCreateJob = { dispatcher.scheduler.runCurrent(); assertTrue(waiter.isActive); assertNull(result) }
     upload.start(forceRestart = true)
     pump { chunks.size == 2 }
     assertTrue(old.isCancelled)
     assertEquals(0L, chunks.last().startByte)
-    upload.cancel()
+    assertTrue(waiter.isActive); assertNull(result)
+    release.complete(Unit)
+    pump { waiter.isCompleted && upload.isSuccessful }
+    assertFalse(waiter.isCancelled)
+    assertTrue(result!!.getOrThrow() is UploadStatus.UploadSuccess)
   }
 
   @Test fun newDirectUploadUsesOriginalFallbackWithoutOldOffsetOrGeneratedPayload() {
@@ -542,15 +553,25 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
   }
 
   @Test fun forceRestartWithoutManagerEntryCancelsItsPreviousJob() {
-    work = { _, _, _ -> awaitCancellation() }
+    val release = CompletableDeferred<Unit>()
+    work = { chunk, _, _ -> release.await(); MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
     val unmanaged = MuxUpload.Builder(info().remoteUri, source).manageUploadTask(false).build()
     unmanaged.start(); pump { chunks.size == 1 }
     val previous = internalInfo(unmanaged).uploadJob!!
+    var result: Result<UploadStatus>? = null
+    val waiter = scope.launch { result = unmanaged.awaitSuccess() }
+    dispatcher.scheduler.runCurrent()
     val managed = MuxUpload.create(internalInfo(unmanaged))
+    beforeCreateJob = { dispatcher.scheduler.runCurrent(); assertTrue(waiter.isActive); assertNull(result) }
     managed.start(forceRestart = true)
     pump { chunks.size == 2 }
     assertTrue(previous.isCancelled)
     assertTrue(managed.isRunning)
+    assertTrue(waiter.isActive); assertNull(result)
+    release.complete(Unit)
+    pump { waiter.isCompleted && managed.isSuccessful }
+    assertFalse(waiter.isCancelled)
+    assertTrue(result!!.getOrThrow() is UploadStatus.UploadSuccess)
   }
 
   @Test fun failedHandleFollowsManagerRetryAndReceivesItsNewResult() {
