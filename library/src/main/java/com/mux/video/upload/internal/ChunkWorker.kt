@@ -46,12 +46,19 @@ internal class ChunkWorker private constructor(
 
   @Throws
   suspend fun upload(): MuxUpload.Progress {
-    val moreRetries = { triesSoFar: Int -> triesSoFar < uploadInfo.retriesPerChunk }
+    val generated = uploadInfo.attempt?.preparation?.verified != null
+    // An uncertain generated response is reconciled by the next attempt's status query.
+    val moreRetries = { triesSoFar: Int -> !generated && triesSoFar < uploadInfo.retriesPerChunk }
     suspend fun tryUpload(triesSoFar: Int): Result<MuxUpload.Progress> {
       try {
         currentCoroutineContext().ensureActive()
         val (finalState, httpResponse) = doUpload()
         httpResponse.use {
+          if (generated) {
+            val acknowledged = finalState.copy(bytesUploaded = GeneratedUploadProtocol.acknowledge(it, chunk))
+            progressFlow.emit(acknowledged)
+            return Result.success(acknowledged)
+          }
           if (ACCEPTABLE_STATUS_CODES.contains(it.code)) return Result.success(finalState)
           val failure = IOException("Upload request failed: ${it.code}/${it.message}")
           if (it.code !in RETRYABLE_STATUS_CODES || !moreRetries(triesSoFar)) return Result.failure(failure)
@@ -80,10 +87,14 @@ internal class ChunkWorker private constructor(
     return supervisorScope {
       val stream = chunk.sliceData
       val chunkSize = chunk.endByte - chunk.startByte + 1
-      val httpClient = MuxUploadSdk.httpClient()
+      val httpClient = MuxUploadSdk.httpClient().let { client ->
+        if (uploadInfo.attempt?.preparation?.verified != null)
+          client.newBuilder().followRedirects(false).followSslRedirects(false).build() else client
+      }
 
       val putBody =
         stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), chunkSize) { bytes ->
+          if (uploadInfo.attempt?.preparation?.verified != null) return@asCountingRequestBody
           val elapsedRealtime = System.currentTimeMillis()
           // This process happens really fast, so we debounce the callbacks using a coroutine.
           // If there's no job to update callers, create one. That job delays for a set duration
@@ -118,7 +129,7 @@ internal class ChunkWorker private constructor(
         )
         .build()
 
-      logger.v("MuxUpload", "Uploading with request $request")
+      if (uploadInfo.attempt?.preparation?.verified == null) logger.v("MuxUpload", "Uploading with request $request")
       val call = httpClient.newCall(request)
       val httpResponse = suspendCancellableCoroutine<Response> { continuation ->
         continuation.invokeOnCancellation { call.cancel() }
@@ -130,7 +141,7 @@ internal class ChunkWorker private constructor(
         })
       }
       try {
-        logger.v("MuxUpload", "Chunk Response: $httpResponse")
+        if (uploadInfo.attempt?.preparation?.verified == null) logger.v("MuxUpload", "Chunk Response: $httpResponse")
         val finalState = MuxUpload.Progress(
           bytesUploaded = chunkSize,
           totalBytes = chunkSize,
@@ -139,7 +150,7 @@ internal class ChunkWorker private constructor(
         )
         // Cancel progress updates and make sure no one is stuck listening for more
         updateCallersJob?.cancel()
-        progressFlow.emit(finalState)
+        if (uploadInfo.attempt?.preparation?.verified == null) progressFlow.emit(finalState)
         Pair(finalState, httpResponse)
         } catch (e: Exception) {
         httpResponse.close()

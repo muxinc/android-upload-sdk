@@ -36,7 +36,12 @@ internal class UploadPreparation(
     { context, upload, metadata, source, conversion ->
       var export: SdrConversionAdapter.Attempt? = null
       try { suspendCancellableCoroutine { continuation ->
-        val attempt = SdrConversionAdapter(context, onPendingCleanup = { upload.attempt?.trackCleanup(it) })
+        val attempt = SdrConversionAdapter(context, onAllocated = { owned ->
+          val preparation = checkNotNull(upload.attempt).preparation
+          val saved = checkNotNull(preparation.generatedState).copy(ownedPath = owned.file.absolutePath)
+          preparation.generatedState = saved
+          com.mux.video.upload.internal.UploadPersistence.writeGenerated(upload, saved)
+        }, onPendingCleanup = { upload.attempt?.trackCleanup(it) })
           .start(upload.inputFile, metadata, source, conversion) { result ->
           // Transfer ownership before dispatch: completion can race pause or cancellation.
           if (result is SdrConversionResult.Completed) upload.attempt?.retainGenerated(result.output)
@@ -47,7 +52,15 @@ internal class UploadPreparation(
         export = attempt
         continuation.invokeOnCancellation { attempt.cancel() }
       } } finally {
-        if (!coroutineContext.isActive) withContext(NonCancellable) { export?.awaitRelease() }
+        if (!coroutineContext.isActive) withContext(NonCancellable) {
+          export?.let { attempt ->
+            if (kotlinx.coroutines.withTimeoutOrNull(com.mux.video.upload.internal.PREPARATION_RELEASE_TIMEOUT_MS) {
+                attempt.awaitRelease(); true } != true) {
+              // A deadline must not permit another export while Media3 still owns resources.
+              upload.attempt?.preparation?.releaseBarrier = attempt::awaitRelease
+            }
+          }
+        }
       }
     },
 ) {
