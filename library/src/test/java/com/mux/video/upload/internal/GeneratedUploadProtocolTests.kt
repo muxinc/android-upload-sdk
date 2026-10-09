@@ -68,7 +68,7 @@ class GeneratedUploadProtocolTests : AbsRobolectricTest() {
     val chunk = ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7))
     try {
       for ((code, ranges, expected) in listOf(Triple(308, arrayOf("bytes=0-5"), 2L),
-        Triple(308, emptyArray<String>(), null), Triple(308, arrayOf("bytes=0-3"), null),
+        Triple(308, emptyArray<String>(), null),
         Triple(308, arrayOf("bytes=0-8"), null), Triple(200, emptyArray(), null),
         Triple(204, emptyArray(), null))) {
         var requests = 0
@@ -156,7 +156,7 @@ class GeneratedUploadProtocolTests : AbsRobolectricTest() {
     val state = UploadPreparationState().apply { verified = owned }
     try {
       for (code in listOf(408, 503)) for (isQuery in listOf(true, false)) {
-        val server = java.net.ServerSocket(0, 0, java.net.InetAddress.getLoopbackAddress())
+        val server = java.net.ServerSocket(0, 0, java.net.InetAddress.getByName("127.0.0.1"))
         val requests = java.util.concurrent.atomic.AtomicInteger()
         val serverFailure = java.util.concurrent.atomic.AtomicReference<Throwable>()
         val thread = Thread {
@@ -179,19 +179,23 @@ class GeneratedUploadProtocolTests : AbsRobolectricTest() {
             }
           } catch (e: Throwable) { if (!server.isClosed) serverFailure.set(e) }
         }.apply { isDaemon = true; start() }
-        val upload = info().copy(remoteUri = Uri.parse("http://127.0.0.1:${server.localPort}/upload"),
+        val upload = info().copy(remoteUri = Uri.parse("http://upload.test.invalid:${server.localPort}/upload"),
           attempt = UploadAttempt(state, MuxUpload.Progress()))
-        MuxUploadSdk.useOkHttpClient(OkHttpClient.Builder().callTimeout(3, java.util.concurrent.TimeUnit.SECONDS).build())
+        MuxUploadSdk.useOkHttpClient(OkHttpClient.Builder().proxy(java.net.Proxy.NO_PROXY).dns(object : Dns {
+          override fun lookup(hostname: String) = listOf(java.net.InetAddress.getByName("127.0.0.2"), java.net.InetAddress.getByName("127.0.0.1"))
+        }).connectTimeout(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+          .callTimeout(3, java.util.concurrent.TimeUnit.SECONDS).build())
+        var failure: java.io.IOException? = null
         try {
           try {
             if (isQuery) GeneratedUploadProtocol.query(upload, 12)
             else ChunkWorker.create(ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7)),
               upload, "video/*", MutableSharedFlow(replay = 1)).upload()
             fail("Expected retryable $code")
-          } catch (_: java.io.IOException) {}
+          } catch (e: java.io.IOException) { failure = e }
         } finally { server.close(); thread.join(1000) }
         assertNull(serverFailure.get())
-        assertEquals("$code query=$isQuery must require owner reconciliation", 1, requests.get())
+        assertEquals("$code query=$isQuery: $failure", 1, requests.get())
       }
     } finally { owned.delete() }
   }
@@ -212,6 +216,33 @@ class GeneratedUploadProtocolTests : AbsRobolectricTest() {
     assertEquals(2L, ChunkWorker.create(ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7)),
       upload, "video/*", flow).upload().bytesUploaded)
     assertEquals(listOf(2L), flow.replayCache.map { it.bytesUploaded })
+  }
+
+  @Test fun zeroProgressAcknowledgementsAreRetryableWhileRegressingOffsetsStillBlock() {
+    val chunk = ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7))
+    response(308, "bytes=0-3").use { assertThrows(GeneratedUploadRetryException::class.java) {
+      GeneratedUploadProtocol.acknowledge(it, chunk) } }
+    response(308).use { assertThrows(GeneratedUploadRetryException::class.java) {
+      GeneratedUploadProtocol.acknowledge(it, chunk.copy(startByte = 0, endByte = 3)) } }
+    response(308, "bytes=0-2").use { assertThrows(GeneratedResumeBlockedException::class.java) {
+      GeneratedUploadProtocol.acknowledge(it, chunk) } }
+  }
+
+  @Test fun retryAfterCarriesBoundedDelayForSecondsAndHttpDates() {
+    val chunk = ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7))
+    val format = java.text.SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US).apply {
+      timeZone = java.util.TimeZone.getTimeZone("GMT")
+    }
+    val future = format.format(java.util.Date(System.currentTimeMillis() + 30_000))
+    for ((header, low, high) in listOf(Triple("30", 30_000L, 30_000L), Triple("0", 0L, 0L),
+      Triple("999999999999999999999999", 60_000L, 60_000L), Triple("-1", 0L, 0L),
+      Triple("invalid", 0L, 0L), Triple(future, 28_000L, 30_000L),
+      Triple("Mon, 01 Jan 2001 00:00:00 GMT", 0L, 0L))) {
+      response(503).newBuilder().header("Retry-After", header).build().use {
+        val error = assertThrows(GeneratedUploadRetryException::class.java) { GeneratedUploadProtocol.acknowledge(it, chunk) }
+        assertTrue("$header: ${error.retryAfterMs}", error.retryAfterMs in low..high)
+      }
+    }
   }
 
 }
