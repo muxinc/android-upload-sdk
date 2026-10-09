@@ -63,6 +63,20 @@ internal class UploadJobFactory internal constructor(
         // An old export or request must finish cancellation before another attempt uses its files.
         uploadInfo.uploadJob?.join()
         ensureActive()
+        // A fresh handle may reuse an untouched destination after cancellation removed its manager entry.
+        UploadPersistence.hiddenGeneratedOwner(uploadInfo)?.let { previous ->
+          val owner = previous.attempt?.preparation
+          val release: suspend () -> Unit = { previous.uploadJob?.join(); owner?.releaseBarrier?.invoke(); Unit }
+          preparation.releaseBarrier = release
+          if (withTimeoutOrNull(PREPARATION_RELEASE_TIMEOUT_MS) { release(); true } != true)
+            throw PreparationReleasePendingException()
+          preparation.releaseBarrier = null
+          owner?.releaseBarrier = null
+          withContext(Dispatchers.IO) {
+            owner?.deleteOwnedFile()
+            UploadPersistence.retireGenerated(previous)
+          }
+        }
         for (owner in listOfNotNull(uploadInfo.predecessorPreparation, preparation).distinct()) {
           owner.releaseBarrier?.let { barrier ->
             if (withTimeoutOrNull(PREPARATION_RELEASE_TIMEOUT_MS) { barrier(); true } != true)
@@ -71,7 +85,19 @@ internal class UploadJobFactory internal constructor(
           }
         }
         var offset: Long? = null
-        val restored = preparation.generatedState
+        var restored = preparation.generatedState
+        // Abandonment describes local cleanup, not remote bytes. Never adopt the cancelled export.
+        if (restored?.abandoned == true && !restored.networkStarted) {
+          val abandoned = restored
+          withContext(Dispatchers.IO) {
+            abandoned.ownedPath?.let { SdrGeneratedFile.restore(checkNotNull(MuxUploadManager.appContext).cacheDir, it) }
+              ?.let(preparation::trackCleanup)
+            preparation.deleteOwnedFile()
+            UploadPersistence.retireGenerated(runningInfo)
+          }
+          preparation.generatedState = null
+          restored = null
+        }
         if (restored != null) {
           if (preparation.verified == null && restored.ownedPath != null) {
             val owned = SdrGeneratedFile.restore(checkNotNull(MuxUploadManager.appContext).cacheDir,
