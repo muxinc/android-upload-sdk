@@ -112,7 +112,7 @@ internal object UploadPersistence {
   fun reconcileHiddenGenerated() {
     val records = readGenerated()
     hiddenGenerated.forEach { (key, owner) ->
-      if (records[key]?.attemptId != owner) hiddenGenerated.remove(key, owner)
+      if (records[key]?.attemptId != owner.attemptId) hiddenGenerated.remove(key, owner)
     }
   }
 
@@ -135,18 +135,21 @@ internal object UploadPersistence {
       }
     }
   }
-  private val hiddenGenerated = java.util.concurrent.ConcurrentHashMap<String, String>()
+  private data class HiddenGenerated(val attemptId: String, val upload: UploadInfo)
+  private val hiddenGenerated = java.util.concurrent.ConcurrentHashMap<String, HiddenGenerated>()
+  fun hiddenGeneratedOwner(upload: UploadInfo): UploadInfo? =
+    hiddenGenerated[destinationKey(upload.remoteUri.toString())]?.upload
   private fun isHidden(entry: UploadEntry) = entry.attemptId != null &&
-    hiddenGenerated[destinationKey(entry.url)] == entry.attemptId
+    hiddenGenerated[destinationKey(entry.url)]?.attemptId == entry.attemptId
   private fun ownsGenerated(upload: UploadInfo, entry: UploadEntry) =
     entry.attemptId == upload.attempt?.id || entry.attemptId == upload.attempt?.previousPersistenceOwnerId
   fun hideGenerated(upload: UploadInfo) {
     val key = destinationKey(upload.remoteUri.toString())
     val entry = readGenerated()[key] ?: return
     if (ownsGenerated(upload, entry)) {
-      entry.attemptId?.let { hiddenGenerated[key] = it }
+      entry.attemptId?.let { hiddenGenerated[key] = HiddenGenerated(it, upload) }
       // Hiding a cancelled preparation must not permanently block an untouched destination.
-      if (entry.generated?.networkStarted == true || entry.generated?.abandoned == true || entry.generatedResumeBlocked)
+      if (entry.generated?.networkStarted == true || entry.generatedResumeBlocked)
         blockDestination(entry.url)
     }
   }
@@ -194,7 +197,7 @@ internal object UploadPersistence {
       records[destinationKey(entry.url)] = entry
       val editor = prefs.edit().putString(GENERATED_KEY, JSONArray(records.values.map { it.toJson() }).toString())
       if (!editor.commit()) throw GeneratedResumeBlockedException()
-      hiddenGenerated[destinationKey(entry.url)]?.takeIf { it != entry.attemptId }?.let {
+      hiddenGenerated[destinationKey(entry.url)]?.takeIf { it.attemptId != entry.attemptId }?.let {
         hiddenGenerated.remove(destinationKey(entry.url), it)
       }
     }
@@ -209,12 +212,12 @@ internal object UploadPersistence {
       val blocks = readGeneratedBlocks()
       // Keep only the destination hash after terminal cleanup, not paths/URLs/identities.
       // No time-based eviction: without known URL expiry, reuse could splice different bytes.
-      if (entry.generated?.networkStarted == true || entry.generated?.abandoned == true || entry.generatedResumeBlocked) blocks += key
+      if (entry.generated?.networkStarted == true || entry.generatedResumeBlocked) blocks += key
       records.remove(key)
       if (!prefs.edit().putString(GENERATED_KEY, JSONArray(records.values.map { it.toJson() }).toString())
           .putString(GENERATED_BLOCKS_KEY, JSONArray(blocks.toList()).toString()).commit())
         throw GeneratedResumeBlockedException()
-      entry.attemptId?.let { hiddenGenerated.remove(key, it) }
+      hiddenGenerated[key]?.takeIf { it.attemptId == entry.attemptId }?.let { hiddenGenerated.remove(key, it) }
     }
   }
 
@@ -251,8 +254,7 @@ internal object UploadPersistence {
     if (key in readBlocks() || key in readGeneratedBlocks()) return UploadResumeState(generatedResumeBlocked = true)
     val generated = readGenerated()[key]
     if (generated?.let(::isHidden) == true) return UploadResumeState(attemptId = generated?.attemptId,
-      generatedResumeBlocked = generated?.let { it.generated?.networkStarted == true ||
-        it.generated?.abandoned == true || it.generatedResumeBlocked } == true)
+      generatedResumeBlocked = generated?.let { it.generated?.networkStarted == true || it.generatedResumeBlocked } == true)
     if (generated != null) {
       if (generated.file.absoluteFile != upload.inputFile.absoluteFile) return UploadResumeState(generatedResumeBlocked = true)
       return resumeState(generated, false).copy(paused = entry?.state == WAS_PAUSED,
