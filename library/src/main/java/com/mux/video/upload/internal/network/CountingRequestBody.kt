@@ -30,6 +30,20 @@ internal fun ByteArray.asCountingRequestBody(
   callback = callback
 )
 
+@JvmSynthetic
+internal fun ByteArray.asCountingRequestBody(
+  mediaType: MediaType?,
+  contentLength: Long,
+  oneShot: Boolean,
+  callback: (Long) -> Unit
+): RequestBody = CountingRequestBody(
+  bodyData = this,
+  mediaType = mediaType,
+  contentLength = contentLength,
+  oneShot = oneShot,
+  callback = callback
+)
+
 /**
  * A RequestBody that reads its content from a file and reports its progress (in bytes) as it goes
  */
@@ -39,6 +53,7 @@ private class CountingRequestBody constructor(
   private val mediaType: MediaType?,
   private val contentLength: Long,
   private val readLength: Int = DEFAULT_READ_LENGTH,
+  private val oneShot: Boolean = false,
   private val callback: (Long) -> Unit,
 ) : RequestBody() {
   private var dead = false
@@ -51,7 +66,7 @@ private class CountingRequestBody constructor(
 
   override fun contentType(): MediaType? = mediaType
 
-  override fun isOneShot(): Boolean = false
+  override fun isOneShot(): Boolean = oneShot
 
   override fun writeTo(sink: BufferedSink) {
     var totalBytes = 0

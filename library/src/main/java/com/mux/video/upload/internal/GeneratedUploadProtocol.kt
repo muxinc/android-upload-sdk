@@ -5,27 +5,46 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.RequestBody
+import okhttp3.MediaType
+import okhttp3.OkHttpClient
+import okio.BufferedSink
 import okhttp3.Response
 import java.io.IOException
 import kotlin.coroutines.resumeWithException
 
 /** Verified on small Mux test Direct Uploads; never follows an ambiguous response. */
 internal object GeneratedUploadProtocol {
+  private var originalClient: OkHttpClient? = null
+  private var transportClient: OkHttpClient? = null
+
+  @Synchronized internal fun httpClient(): OkHttpClient {
+    val client = MuxUploadSdk.httpClient()
+    if (originalClient !== client) {
+      transportClient = client.newBuilder().followRedirects(false).followSslRedirects(false)
+        .retryOnConnectionFailure(false).build()
+      originalClient = client
+    }
+    return checkNotNull(transportClient)
+  }
+
   suspend fun query(upload: UploadInfo, total: Long): Long {
     require(total > 0)
+    val body = object : RequestBody() {
+      override fun contentType(): MediaType? = null
+      override fun contentLength() = 0L
+      override fun writeTo(sink: BufferedSink) {}
+      override fun isOneShot() = true
+    }
     val request = Request.Builder().url(upload.remoteUri.toString())
-      .put(ByteArray(0).toRequestBody()).header("Content-Range", "bytes */$total").build()
-    try {
-      return execute(request).use { response ->
-        when (response.code) {
-          308 -> acknowledgedOffset(response, total)
-          200, 201 -> if (response.headers.values("Range").isEmpty()) total else blocked()
-          else -> blocked()
-        }
+      .put(body).header("Content-Range", "bytes */$total").build()
+    return executeUploadRequest(request, httpClient()).use { response ->
+      when (response.code) {
+        308 -> acknowledgedOffset(response, total)
+        200, 201 -> if (response.headers.values("Range").isEmpty()) total else blocked()
+        else -> failedResponse(response.code)
       }
-    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-      catch (_: Exception) { blocked() }
+    }
   }
 
   fun acknowledge(response: Response, chunk: ChunkWorker.Chunk): Long {
@@ -33,7 +52,7 @@ internal object GeneratedUploadProtocol {
       308 -> acknowledgedOffset(response, chunk.totalFileSize)
       200, 201 -> if (chunk.endByte + 1 == chunk.totalFileSize &&
         response.headers.values("Range").isEmpty()) chunk.totalFileSize else blocked()
-      else -> blocked()
+      else -> failedResponse(response.code)
     }
     if (next <= chunk.startByte || next > chunk.endByte + 1) blocked()
     return next - chunk.startByte
@@ -50,11 +69,17 @@ internal object GeneratedUploadProtocol {
     return end + 1
   }
 
+  private fun failedResponse(code: Int): Nothing {
+    if (code == 408 || code == 429 || code in 500..599)
+      throw IOException("Generated upload request failed: $code")
+    blocked()
+  }
+
   private fun blocked(): Nothing = throw GeneratedResumeBlockedException()
 }
 
-internal suspend fun execute(request: Request): Response = suspendCancellableCoroutine { continuation ->
-  val call = MuxUploadSdk.httpClient().newBuilder().followRedirects(false).followSslRedirects(false).build().newCall(request)
+internal suspend fun executeUploadRequest(request: Request, client: OkHttpClient): Response = suspendCancellableCoroutine { continuation ->
+  val call = client.newCall(request)
   continuation.invokeOnCancellation { call.cancel() }
   call.enqueue(object : Callback {
     override fun onFailure(call: Call, e: IOException) { continuation.resumeWithException(e) }
