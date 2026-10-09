@@ -32,7 +32,7 @@ class CountingRequestBodyTests : AbsRobolectricTest() {
     val body = dummyData.asCountingRequestBody(
       mediaType = mockk(relaxed = true),
       contentLength = dummyDataLen,
-      mockReadCallback
+      callback = mockReadCallback
     )
     body.writeTo(mockSink)
 
@@ -76,7 +76,7 @@ class CountingRequestBodyTests : AbsRobolectricTest() {
       mediaType = mockk(relaxed = true),
       contentLength = 26,
       readSize = 20, // Read such that there's a smaller last piece. This is also a case to test
-      mockReadCallback
+      callback = mockReadCallback
     )
     body.writeTo(mockSink)
 

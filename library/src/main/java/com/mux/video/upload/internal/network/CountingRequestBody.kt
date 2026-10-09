@@ -8,38 +8,14 @@ import okio.BufferedSink
 internal fun ByteArray.asCountingRequestBody(
   mediaType: MediaType?,
   contentLength: Long,
-  callback: (Long) -> Unit
-): RequestBody = CountingRequestBody(
-  bodyData = this,
-  mediaType = mediaType,
-  contentLength = contentLength,
-  callback = callback
-)
-
-@JvmSynthetic
-internal fun ByteArray.asCountingRequestBody(
-  mediaType: MediaType?,
-  contentLength: Long,
   readSize: Int = CountingRequestBody.DEFAULT_READ_LENGTH,
+  oneShot: Boolean = false,
   callback: (Long) -> Unit
 ): RequestBody = CountingRequestBody(
   bodyData = this,
   mediaType = mediaType,
   contentLength = contentLength,
   readLength = readSize,
-  callback = callback
-)
-
-@JvmSynthetic
-internal fun ByteArray.asCountingRequestBody(
-  mediaType: MediaType?,
-  contentLength: Long,
-  oneShot: Boolean,
-  callback: (Long) -> Unit
-): RequestBody = CountingRequestBody(
-  bodyData = this,
-  mediaType = mediaType,
-  contentLength = contentLength,
   oneShot = oneShot,
   callback = callback
 )

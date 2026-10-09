@@ -202,6 +202,7 @@ internal class UploadJobFactory internal constructor(
                 generatedRetries.retry(e)
                 val reconciled = query(fileSize, generatedRetries)
                 if (reconciled !in totalBytesSent..(chunk.endByte + 1)) throw GeneratedResumeBlockedException()
+                if (reconciled > totalBytesSent) generatedRetries = GeneratedRetryBudget(runningInfo.retriesPerChunk)
                 totalBytesSent = reconciled
                 val acknowledged = attempt.confirmedProgress().copy(bytesUploaded = reconciled,
                   updatedTime = System.currentTimeMillis())
@@ -281,7 +282,7 @@ private class GeneratedRetryBudget(private val limit: Int) {
   private var used = 0
   suspend fun retry(failure: IOException) {
     if (used >= limit) throw failure
-    val waitMs = 1_000L shl used.coerceAtMost(3)
+    val waitMs = maxOf(1_000L shl used.coerceAtMost(3), (failure as? GeneratedUploadRetryException)?.retryAfterMs ?: 0)
     used++
     delay(waitMs)
   }

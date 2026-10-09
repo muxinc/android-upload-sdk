@@ -110,30 +110,41 @@ internal object UploadPersistence {
   private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
   fun reconcileHiddenGenerated() {
-    hiddenGenerated.retainAll(readGenerated().keys + readGeneratedBlocks())
+    val records = readGenerated()
+    hiddenGenerated.forEach { (key, owner) ->
+      if (records[key]?.attemptId != owner) hiddenGenerated.remove(key, owner)
+    }
   }
 
-  fun scheduleGeneratedRetirement(upload: UploadInfo) {
+  fun scheduleGeneratedRetirement(upload: UploadInfo): kotlinx.coroutines.Job {
     val ownerStore = prefs
-    cleanupScope.launch {
+    return cleanupScope.launch {
       try {
         upload.uploadJob?.join()
         if (prefs !== ownerStore) return@launch
         val preparation = upload.attempt?.preparation
         if (preparation?.releaseBarrier != null) {
-          preparation.generatedState?.let { writeGenerated(upload, it.copy(abandoned = true)) }
+          synchronized(generatedWriteLock) {
+            val entry = readGenerated()[destinationKey(upload.remoteUri.toString())]
+            if (entry != null && ownsGenerated(upload, entry))
+              preparation.generatedState?.let { writeGenerated(upload, it.copy(abandoned = true)) }
+          }
         } else retireGenerated(upload)
       } catch (_: Exception) {
         com.mux.video.upload.MuxUploadSdk.logger.e("MuxUpload", "Generated persistence cleanup failed")
       }
     }
   }
-  val hiddenGenerated = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+  private val hiddenGenerated = java.util.concurrent.ConcurrentHashMap<String, String>()
+  private fun isHidden(entry: UploadEntry) = entry.attemptId != null &&
+    hiddenGenerated[destinationKey(entry.url)] == entry.attemptId
+  private fun ownsGenerated(upload: UploadInfo, entry: UploadEntry) =
+    entry.attemptId == upload.attempt?.id || entry.attemptId == upload.attempt?.previousPersistenceOwnerId
   fun hideGenerated(upload: UploadInfo) {
     val key = destinationKey(upload.remoteUri.toString())
     val entry = readGenerated()[key] ?: return
-    if (entry.attemptId == upload.attempt?.id || entry.attemptId == upload.attempt?.previousPersistenceOwnerId) {
-      hiddenGenerated += key
+    if (ownsGenerated(upload, entry)) {
+      entry.attemptId?.let { hiddenGenerated[key] = it }
       // Hiding a cancelled preparation must not permanently block an untouched destination.
       if (entry.generated?.networkStarted == true || entry.generated?.abandoned == true || entry.generatedResumeBlocked)
         blockDestination(entry.url)
@@ -183,6 +194,9 @@ internal object UploadPersistence {
       records[destinationKey(entry.url)] = entry
       val editor = prefs.edit().putString(GENERATED_KEY, JSONArray(records.values.map { it.toJson() }).toString())
       if (!editor.commit()) throw GeneratedResumeBlockedException()
+      hiddenGenerated[destinationKey(entry.url)]?.takeIf { it != entry.attemptId }?.let {
+        hiddenGenerated.remove(destinationKey(entry.url), it)
+      }
     }
   }
 
@@ -191,7 +205,7 @@ internal object UploadPersistence {
       val records = readGenerated()
       val key = destinationKey(upload.remoteUri.toString())
       val entry = records[key] ?: return
-      if (entry.attemptId != upload.attempt?.id && entry.attemptId != upload.attempt?.previousPersistenceOwnerId) return
+      if (!ownsGenerated(upload, entry)) return
       val blocks = readGeneratedBlocks()
       // Keep only the destination hash after terminal cleanup, not paths/URLs/identities.
       // No time-based eviction: without known URL expiry, reuse could splice different bytes.
@@ -200,7 +214,7 @@ internal object UploadPersistence {
       if (!prefs.edit().putString(GENERATED_KEY, JSONArray(records.values.map { it.toJson() }).toString())
           .putString(GENERATED_BLOCKS_KEY, JSONArray(blocks.toList()).toString()).commit())
         throw GeneratedResumeBlockedException()
-      hiddenGenerated -= key
+      entry.attemptId?.let { hiddenGenerated.remove(key, it) }
     }
   }
 
@@ -236,7 +250,7 @@ internal object UploadPersistence {
     val key = destinationKey(upload.remoteUri.toString())
     if (key in readBlocks() || key in readGeneratedBlocks()) return UploadResumeState(generatedResumeBlocked = true)
     val generated = readGenerated()[key]
-    if (key in hiddenGenerated) return UploadResumeState(attemptId = generated?.attemptId,
+    if (generated?.let(::isHidden) == true) return UploadResumeState(attemptId = generated?.attemptId,
       generatedResumeBlocked = generated?.let { it.generated?.networkStarted == true ||
         it.generated?.abandoned == true || it.generatedResumeBlocked } == true)
     if (generated != null) {
@@ -270,7 +284,7 @@ internal object UploadPersistence {
     val entries = fetchEntries()
     val generated = readGenerated()
     val hints = entries.toMap()
-    generated.values.filter { destinationKey(it.url) !in hiddenGenerated && destinationKey(it.url) !in blocks }
+    generated.values.filter { !isHidden(it) && destinationKey(it.url) !in blocks }
       .groupBy { it.file.absolutePath }.values.forEach { candidates ->
         val entry = candidates.maxBy { it.savedAtLocalMs }
         val hint = hints[entry.file.absolutePath]
@@ -282,9 +296,9 @@ internal object UploadPersistence {
             bytesSent = matching?.bytesSent ?: 0)
         }
       }
-    return entries.values.map { entry ->
+    return entries.values.filter { generated[destinationKey(it.url)]?.let(::isHidden) != true }.map { entry ->
       val record = generated[destinationKey(entry.url)]
-      val blocked = destinationKey(entry.url) in blocks || destinationKey(entry.url) in hiddenGenerated ||
+      val blocked = destinationKey(entry.url) in blocks ||
         (record != null && record.file.absoluteFile != entry.file.absoluteFile)
       val saved = resumeState(entry, blocked)
       CachedUpload(entry.toUploadInfo(saved.generatedResumeBlocked), saved)
