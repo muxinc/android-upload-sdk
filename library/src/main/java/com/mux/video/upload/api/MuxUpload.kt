@@ -153,12 +153,13 @@ class MuxUpload private constructor(
       // If we're not managing the worker, the job is purely internal to this object
       if (forceRestart) {
         val blocked = uploadInfo.generatedResumeBlocked || uploadInfo.attempt?.preparation?.generatedRequestStarted == true ||
-          readUploadResumeState(uploadInfo).generatedResumeBlocked
+          readUploadResumeState(uploadInfo).let { it.generatedResumeBlocked || it.generated?.networkStarted == true }
         val previous = uploadInfo
         if (previous.attempt == null) forgetUploadState(previous)
         else previous.attempt.cancel(forRestart = true) { forgetUploadState(previous) }
         previous.uploadJob?.cancel()
         uploadInfo = uploadInfo.update(attempt = null, statusFlow = null,
+          predecessorPreparation = previous.attempt?.preparation ?: previous.predecessorPreparation,
           restoredFromOriginal = false, generatedResumeBlocked = blocked)
       }
       /*uploadInfo =*/ MuxUploadSdk.uploadJobFactory().createUploadJob(uploadInfo, coroutineScope)

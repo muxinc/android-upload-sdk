@@ -7,9 +7,6 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
-import okhttp3.Call
-import okhttp3.Callback
-import kotlin.coroutines.resumeWithException
 import okhttp3.Response
 import java.io.IOException
 
@@ -41,17 +38,25 @@ internal class ChunkWorker private constructor(
 
   private val logger get() = MuxUploadSdk.logger
 
+  // Cancellation can clear ownership while a request is still completing.
+  private val generated = uploadInfo.attempt?.isGeneratedTransport() == true
   private var mostRecentUploadState: RecentState? = null
   private var updateCallersJob: Job? = null
 
   @Throws
   suspend fun upload(): MuxUpload.Progress {
-    val moreRetries = { triesSoFar: Int -> triesSoFar < uploadInfo.retriesPerChunk }
+    // The job owner reconciles uncertain generated responses before retrying.
+    val moreRetries = { triesSoFar: Int -> !generated && triesSoFar < uploadInfo.retriesPerChunk }
     suspend fun tryUpload(triesSoFar: Int): Result<MuxUpload.Progress> {
       try {
         currentCoroutineContext().ensureActive()
         val (finalState, httpResponse) = doUpload()
         httpResponse.use {
+          if (generated) {
+            val acknowledged = finalState.copy(bytesUploaded = GeneratedUploadProtocol.acknowledge(it, chunk))
+            progressFlow.emit(acknowledged)
+            return Result.success(acknowledged)
+          }
           if (ACCEPTABLE_STATUS_CODES.contains(it.code)) return Result.success(finalState)
           val failure = IOException("Upload request failed: ${it.code}/${it.message}")
           if (it.code !in RETRYABLE_STATUS_CODES || !moreRetries(triesSoFar)) return Result.failure(failure)
@@ -80,10 +85,11 @@ internal class ChunkWorker private constructor(
     return supervisorScope {
       val stream = chunk.sliceData
       val chunkSize = chunk.endByte - chunk.startByte + 1
-      val httpClient = MuxUploadSdk.httpClient()
+      val httpClient = if (generated) GeneratedUploadProtocol.httpClient() else MuxUploadSdk.httpClient()
 
       val putBody =
-        stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), chunkSize) { bytes ->
+        stream.asCountingRequestBody(videoMimeType.toMediaTypeOrNull(), chunkSize, oneShot = generated) { bytes ->
+          if (generated) return@asCountingRequestBody
           val elapsedRealtime = System.currentTimeMillis()
           // This process happens really fast, so we debounce the callbacks using a coroutine.
           // If there's no job to update callers, create one. That job delays for a set duration
@@ -118,19 +124,10 @@ internal class ChunkWorker private constructor(
         )
         .build()
 
-      logger.v("MuxUpload", "Uploading with request $request")
-      val call = httpClient.newCall(request)
-      val httpResponse = suspendCancellableCoroutine<Response> { continuation ->
-        continuation.invokeOnCancellation { call.cancel() }
-        call.enqueue(object : Callback {
-          override fun onFailure(call: Call, e: IOException) { continuation.resumeWithException(e) }
-          override fun onResponse(call: Call, response: Response) {
-            continuation.resume(response) { _, value, _ -> value.close() }
-          }
-        })
-      }
+      if (!generated) logger.v("MuxUpload", "Uploading with request $request")
+      val httpResponse = executeUploadRequest(request, httpClient)
       try {
-        logger.v("MuxUpload", "Chunk Response: $httpResponse")
+        if (!generated) logger.v("MuxUpload", "Chunk Response: $httpResponse")
         val finalState = MuxUpload.Progress(
           bytesUploaded = chunkSize,
           totalBytes = chunkSize,
@@ -139,7 +136,7 @@ internal class ChunkWorker private constructor(
         )
         // Cancel progress updates and make sure no one is stuck listening for more
         updateCallersJob?.cancel()
-        progressFlow.emit(finalState)
+        if (!generated) progressFlow.emit(finalState)
         Pair(finalState, httpResponse)
         } catch (e: Exception) {
         httpResponse.close()

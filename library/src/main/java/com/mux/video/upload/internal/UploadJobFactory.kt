@@ -4,14 +4,15 @@ import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
 import com.mux.video.upload.api.UploadStatus
+import com.mux.video.upload.internal.standardization.SdrGeneratedFile
 import com.mux.video.upload.internal.standardization.PreparedUpload
 import com.mux.video.upload.internal.standardization.UploadPreparation
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.io.BufferedInputStream
-import java.io.FileInputStream
+import java.io.RandomAccessFile
+import java.io.IOException
 import java.util.UUID
 
 @JvmSynthetic
@@ -21,8 +22,9 @@ internal fun startUploadJob(upload: UploadInfo, saved: UploadResumeState? = null
 /** Owns payload selection and the transition from cancellable preparation to transport. */
 internal class UploadJobFactory internal constructor(
   private val prepare: suspend (UploadInfo) -> PreparedUpload = {
-    UploadPreparation().prepare(it, checkNotNull(MuxUploadManager.appContext))
+    UploadPreparation().prepare(it, checkNotNull(MuxUploadManager.appContext), generatedResumeVerified = true)
   },
+  private val queryOffset: suspend (UploadInfo, Long) -> Long = GeneratedUploadProtocol::query,
   val createWorker: (ChunkWorker.Chunk, UploadInfo, MutableSharedFlow<MuxUpload.Progress>) -> ChunkWorker =
     ::createWorkerForSlice,
 ) {
@@ -39,56 +41,156 @@ internal class UploadJobFactory internal constructor(
     val attempt = createUploadAttempt(uploadInfo, saved)
     val preparation = attempt.preparation
     val startTime = attempt.confirmedProgress().startTime
-    var runningInfo = uploadInfo.update(attempt = attempt, statusFlow = attempt.status.asStateFlow())
+    var runningInfo = uploadInfo.update(inputStandardization = saved.generatedOptions ?: uploadInfo.inputStandardization, attempt = attempt, statusFlow = attempt.status.asStateFlow())
     // Lazy startup lets the returned identity be installed before any completion callback.
     val job = outerScope.async(start = CoroutineStart.LAZY) {
       val sessionId = UUID.randomUUID().toString()
       val metrics = UploadMetrics.create()
+      var mustRetireGenerated = false
+      suspend fun query(total: Long, retries: GeneratedRetryBudget = GeneratedRetryBudget(runningInfo.retriesPerChunk)): Long {
+        // Keep the payload and possible-remote-bytes marker when the network is unavailable.
+        preparation.generatedState = checkNotNull(preparation.generatedState).copy(networkStarted = true)
+        withContext(Dispatchers.IO) { UploadPersistence.writeGenerated(runningInfo, checkNotNull(preparation.generatedState)) }
+        while (true) {
+          try {
+            return queryOffset(runningInfo, total).also {
+              if (it !in 0..total) throw GeneratedResumeBlockedException()
+            }
+          } catch (e: IOException) { retries.retry(e) }
+        }
+      }
       try {
         // An old export or request must finish cancellation before another attempt uses its files.
         uploadInfo.uploadJob?.join()
         ensureActive()
-        if (uploadInfo.generatedResumeBlocked || saved.generatedResumeBlocked || preparation.generatedRequestStarted)
+        // A fresh handle may reuse an untouched destination after cancellation removed its manager entry.
+        UploadPersistence.hiddenGeneratedOwner(uploadInfo)?.let { previous ->
+          val owner = previous.attempt?.preparation
+          val release: suspend () -> Unit = { previous.uploadJob?.join(); owner?.releaseBarrier?.invoke(); Unit }
+          preparation.releaseBarrier = release
+          if (withTimeoutOrNull(PREPARATION_RELEASE_TIMEOUT_MS) { release(); true } != true)
+            throw PreparationReleasePendingException()
+          preparation.releaseBarrier = null
+          owner?.releaseBarrier = null
+          withContext(Dispatchers.IO) {
+            owner?.deleteOwnedFile()
+            UploadPersistence.retireGenerated(previous)
+          }
+        }
+        for (owner in listOfNotNull(uploadInfo.predecessorPreparation, preparation).distinct()) {
+          owner.releaseBarrier?.let { barrier ->
+            if (withTimeoutOrNull(PREPARATION_RELEASE_TIMEOUT_MS) { barrier(); true } != true)
+              throw PreparationReleasePendingException()
+            owner.releaseBarrier = null
+          }
+        }
+        var offset: Long? = null
+        var restored = preparation.generatedState
+        // Abandonment describes local cleanup, not remote bytes. Never adopt the cancelled export.
+        if (restored?.abandoned == true && !restored.networkStarted) {
+          val abandoned = restored
+          withContext(Dispatchers.IO) {
+            abandoned.ownedPath?.let { SdrGeneratedFile.restore(checkNotNull(MuxUploadManager.appContext).cacheDir, it) }
+              ?.let(preparation::trackCleanup)
+            preparation.deleteOwnedFile()
+            UploadPersistence.retireGenerated(runningInfo)
+          }
+          preparation.generatedState = null
+          restored = null
+        }
+        if (restored != null) {
+          if (preparation.verified == null && restored.ownedPath != null) {
+            val owned = SdrGeneratedFile.restore(checkNotNull(MuxUploadManager.appContext).cacheDir,
+              restored.ownedPath, restored.payload) ?: throw GeneratedResumeBlockedException()
+            if (restored.payload != null) preparation.verified = owned else preparation.trackCleanup(owned)
+          }
+          if (restored.abandoned || uploadInfo.generatedResumeBlocked || saved.generatedResumeBlocked)
+            throw GeneratedResumeBlockedException()
+          if (restored.payload != null) {
+            offset = query(restored.payload.size)
+            val valid = withContext(Dispatchers.IO) { preparation.verified?.matchesValidation() == true }
+            if (!valid) {
+              if (offset != 0L || !withContext(Dispatchers.IO) { restored.source.matches(uploadInfo.inputFile) })
+                throw GeneratedResumeBlockedException()
+              withContext(Dispatchers.IO) { preparation.deleteOwnedFile() }
+              preparation.generatedState = restored.copy(phase = PreparationPhase.Preparing, ownedPath = null,
+                payload = null, networkStarted = false)
+              preparation.generatedRequestStarted = false
+              withContext(Dispatchers.IO) { UploadPersistence.writeGenerated(runningInfo, checkNotNull(preparation.generatedState)) }
+            }
+          } else {
+            offset = 0L // A durable preparing marker proves this attempt sent no payload bytes.
+            if (restored.networkStarted || !withContext(Dispatchers.IO) { restored.source.matches(uploadInfo.inputFile) })
+              throw GeneratedResumeBlockedException()
+            withContext(Dispatchers.IO) { preparation.deleteOwnedFile() }
+          }
+        } else if (uploadInfo.generatedResumeBlocked || saved.generatedResumeBlocked || preparation.generatedRequestStarted)
           throw GeneratedResumeBlockedException()
-        if (!preparation.originalSelected && preparation.verified == null && uploadInfo.isStandardizationRequested()) {
+        if (!preparation.originalSelected && preparation.verified == null && runningInfo.isStandardizationRequested()) {
+          val source = withContext(Dispatchers.IO) { PayloadIdentity.capture(uploadInfo.inputFile) }
+          if (source != null) {
+            preparation.generatedState = GeneratedResumeState(source)
+          }
           attempt.publish(UploadStatus.Preparing)
           when (val result = prepare(runningInfo)) {
             is PreparedUpload.Original -> {
               preparation.originalSelected = true
+              preparation.generatedState = null
+              withContext(Dispatchers.IO) { UploadPersistence.retireGenerated(runningInfo) }
               MuxUploadSdk.logger.d("MuxUploadPreparation", result.diagnostic.toString())
             }
-            is PreparedUpload.Generated -> attempt.retainGenerated(result.output)
+            is PreparedUpload.Generated -> {
+              attempt.retainGenerated(result.output)
+              offset = null // A newly prepared payload must confirm zero bytes for its own total.
+            }
           }
         }
         ensureActive()
-        // A retained validated file can be replaced or modified while paused, before transport.
-        val verified = preparation.verified?.takeIf { it.matchesValidation() }
-        if (preparation.verified != null && verified == null) {
-          preparation.deleteOwnedFile()
+        var verified = preparation.verified
+        if (verified != null && !withContext(Dispatchers.IO) { verified!!.matchesValidation() }) {
+          if (preparation.generatedRequestStarted) throw GeneratedResumeBlockedException()
+          withContext(Dispatchers.IO) { preparation.deleteOwnedFile() }
           preparation.originalSelected = true
+          preparation.generatedState = null
+          withContext(Dispatchers.IO) { UploadPersistence.retireGenerated(runningInfo) }
+          verified = null
         }
-        val selected = verified?.file ?: uploadInfo.inputFile
-        val fileSize = selected.length()
-        check(selected.isFile && selected.canRead() && fileSize > 0) { "Upload payload is unreadable or empty" }
-        attempt.selectPayload(fileSize)
-        var totalBytesSent = attempt.confirmedProgress().bytesUploaded
-        check(totalBytesSent in 0..fileSize) { "Saved original offset is outside the payload" }
-        withContext(Dispatchers.IO) { BufferedInputStream(FileInputStream(selected)) }.use { stream ->
-          withContext(Dispatchers.IO) {
-            var remaining = totalBytesSent
-            while (remaining > 0) {
-              val skipped = stream.skip(remaining)
-              check(skipped > 0) { "Unable to seek to saved original offset" }
-              remaining -= skipped
+        if (verified != null) {
+          val identity = checkNotNull(verified.validatedIdentity)
+          if (offset == null) {
+            offset = query(identity.size)
+            // A new generated selection cannot adopt bytes sent by an unrelated attempt.
+            if (offset != 0L) {
+              throw GeneratedResumeBlockedException()
             }
           }
+          preparation.generatedState = checkNotNull(preparation.generatedState).copy(phase = PreparationPhase.Validated,
+            ownedPath = verified.file.absolutePath, payload = identity)
+          withContext(Dispatchers.IO) { UploadPersistence.writeGenerated(runningInfo, checkNotNull(preparation.generatedState)) }
+        }
+        val selected = verified?.file ?: uploadInfo.inputFile
+        val fileSize = withContext(Dispatchers.IO) { selected.length().also {
+          check(selected.isFile && selected.canRead() && it > 0) { "Upload payload is unreadable or empty" }
+        } }
+        attempt.selectPayload(fileSize, bytesUploaded = offset)
+        var totalBytesSent = if (verified != null) checkNotNull(offset) else attempt.confirmedProgress().bytesUploaded
+        check(totalBytesSent in 0..fileSize) { "Saved offset is outside the payload" }
+        if (verified != null) {
+          val reconciled = attempt.confirmedProgress().copy(bytesUploaded = totalBytesSent,
+            updatedTime = System.currentTimeMillis())
+          attempt.acknowledge(reconciled) { writeUploadState(runningInfo, reconciled) }
+        }
+        withContext(Dispatchers.IO) { RandomAccessFile(selected, "r") }.use { stream ->
           attempt.publish(UploadStatus.Uploading(attempt.confirmedProgress()))
           val buffer = ByteArray(uploadInfo.chunkSize)
+          var generatedTransportSaved = false
+          var generatedRetries = GeneratedRetryBudget(runningInfo.retriesPerChunk)
           while (totalBytesSent < fileSize) {
             ensureActive()
-            check(verified?.matchesValidation() != false) { "Validated payload changed. Create a new Direct Upload." }
+            check(withContext(Dispatchers.IO) { verified?.matchesValidation() != false }) { "Validated payload changed. Create a new Direct Upload." }
             val count = minOf(buffer.size.toLong(), fileSize - totalBytesSent).toInt()
             withContext(Dispatchers.IO) {
+              stream.seek(totalBytesSent)
               var read = 0
               while (read < count) {
                 val size = stream.read(buffer, read, count - read)
@@ -106,12 +208,36 @@ internal class UploadJobFactory internal constructor(
                 bytesUploaded = value.bytesUploaded + offset, totalBytes = fileSize, startTime = startTime))) }
             }
             try {
-              // Save the generated request marker before transport, even if no response arrives.
+              // commit() runs off the UI thread, outside the attempt monitor. No request may
+              // start unless the complete identity and possible-remote-bytes marker are durable.
+              if (verified != null && !generatedTransportSaved) {
+                preparation.generatedState = checkNotNull(preparation.generatedState).copy(
+                  phase = PreparationPhase.Uploading, networkStarted = true)
+                withContext(Dispatchers.IO) { UploadPersistence.writeGenerated(runningInfo, checkNotNull(preparation.generatedState)) }
+                generatedTransportSaved = true
+              }
+              ensureActive()
               attempt.beginTransport(verified != null) {
                 writeUploadState(runningInfo, attempt.confirmedProgress())
               }
-              val final = createWorker(chunk, runningInfo, progress).upload()
+              val final = try {
+                createWorker(chunk, runningInfo, progress).upload()
+              } catch (e: IOException) {
+                if (verified == null) throw e
+                // Never replay uncertain generated bytes without asking the server first.
+                generatedRetries.retry(e)
+                val reconciled = query(fileSize, generatedRetries)
+                if (reconciled !in totalBytesSent..(chunk.endByte + 1)) throw GeneratedResumeBlockedException()
+                if (reconciled > totalBytesSent) generatedRetries = GeneratedRetryBudget(runningInfo.retriesPerChunk)
+                totalBytesSent = reconciled
+                val acknowledged = attempt.confirmedProgress().copy(bytesUploaded = reconciled,
+                  updatedTime = System.currentTimeMillis())
+                attempt.acknowledge(acknowledged) { writeUploadState(runningInfo, acknowledged) }
+                continue
+              }
+              generatedRetries = GeneratedRetryBudget(runningInfo.retriesPerChunk)
               ensureActive()
+              if (verified != null && final.bytesUploaded !in 1..count.toLong()) throw GeneratedResumeBlockedException()
               totalBytesSent += final.bytesUploaded
               val acknowledged = final.copy(bytesUploaded = totalBytesSent, totalBytes = fileSize, startTime = startTime)
               attempt.acknowledge(acknowledged) { writeUploadState(runningInfo, acknowledged) }
@@ -121,6 +247,7 @@ internal class UploadJobFactory internal constructor(
         ensureActive()
         val final = attempt.confirmedProgress()
         val success = UploadStatus.UploadSuccess(final)
+        mustRetireGenerated = true
         if (attempt.finish(success)) {
           if (!uploadInfo.optOut) metrics.reportUploadSucceeded(startTime, final.updatedTime, 0, sessionId, uploadInfo)
           withContext(Dispatchers.Main) { MuxUploadManager.jobFinished(runningInfo) }
@@ -130,6 +257,7 @@ internal class UploadJobFactory internal constructor(
         // Pause/cancel owns the public transition. Cancellation is never an upload result.
         throw e
       } catch (e: Exception) {
+        if (e is GeneratedResumeBlockedException) mustRetireGenerated = true
         val failure = UploadStatus.UploadFailed(e, attempt.confirmedProgress())
         if (attempt.finish(failure)) {
           val category = when (e) {
@@ -145,12 +273,43 @@ internal class UploadJobFactory internal constructor(
         }
         Result.failure(e)
       } finally {
-        if (!attempt.isStopped() || attempt.isCancelled() || attempt.replacementFailure() != null) preparation.deleteOwnedFile()
+        withContext(NonCancellable + Dispatchers.IO) {
+          try {
+            if (preparation.releaseBarrier != null) {
+              preparation.generatedState?.let { state ->
+                UploadPersistence.writeGenerated(runningInfo, state.copy(abandoned = attempt.isCancelled() ||
+                  attempt.replacementFailure() != null))
+              }
+            } else if (mustRetireGenerated || attempt.isCancelled() || attempt.replacementFailure() != null ||
+              preparation.verified == null && !attempt.isStopped()) {
+              preparation.generatedState?.takeIf { mustRetireGenerated && it.networkStarted }?.let {
+                UploadPersistence.writeGenerated(runningInfo, it)
+              }
+              preparation.deleteOwnedFile()
+              UploadPersistence.retireGenerated(runningInfo)
+            } else preparation.generatedState?.let { UploadPersistence.writeGenerated(runningInfo, it) }
+          } catch (_: Exception) {
+            // The durable pre-request marker remains authoritative after a cleanup-write failure.
+            // Preserve the pause/cancel/result contract; a later restore still verifies/query-fails.
+            MuxUploadSdk.logger.e("MuxUpload", "Generated persistence cleanup failed")
+          }
+        }
       }
     }
     runningInfo = runningInfo.update(uploadJob = job)
     runningInfo.session.current.value = runningInfo
     job.start()
     return runningInfo
+  }
+}
+
+/** One budget covers uncertain chunk requests and their recovery queries. */
+private class GeneratedRetryBudget(private val limit: Int) {
+  private var used = 0
+  suspend fun retry(failure: IOException) {
+    if (used >= limit) throw failure
+    val waitMs = maxOf(1_000L shl used.coerceAtMost(3), (failure as? GeneratedUploadRetryException)?.retryAfterMs ?: 0)
+    used++
+    delay(waitMs)
   }
 }

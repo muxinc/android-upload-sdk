@@ -11,8 +11,10 @@ internal class UploadSession {
   val current = MutableStateFlow<UploadInfo?>(null)
 }
 
-/** Shared across in-process pause/resume, never reconstructed as a generated payload from disk. */
+/** Shared across in-process pause/resume and reconstructed from durable generated records. */
 internal class UploadPreparationState {
+  @Volatile var releaseBarrier: (suspend () -> Unit)? = null
+  @Volatile var generatedState: GeneratedResumeState? = null
   @Volatile var originalSelected = false
   @Volatile var verified: SdrGeneratedFile? = null
   @Volatile var generatedRequestStarted = false
@@ -52,6 +54,7 @@ internal class UploadAttempt(
   @Synchronized fun isRestarting() = restarting
   @Synchronized fun replacementFailure() = replacement
   @Synchronized fun confirmedProgress() = confirmed
+  @Synchronized fun isGeneratedTransport() = transportPayloadGenerated ?: (preparation.verified != null)
   @Synchronized fun supersede() { superseded = true }
 
   @Synchronized fun retainGenerated(output: SdrGeneratedFile) {
@@ -59,7 +62,11 @@ internal class UploadAttempt(
     else if (cancelled || replacement != null) {
       preparation.trackCleanup(output)
       preparation.deleteOwnedFile()
-    } else preparation.verified = output
+    } else {
+      preparation.verified = output
+      preparation.generatedState = preparation.generatedState?.copy(phase = PreparationPhase.Validated,
+        ownedPath = output.file.absolutePath, payload = output.validatedIdentity)
+    }
   }
 
   @Synchronized fun trackCleanup(output: SdrGeneratedFile) {
@@ -68,8 +75,8 @@ internal class UploadAttempt(
     if (cancelled || terminal) preparation.deleteOwnedFile()
   }
 
-  @Synchronized fun selectPayload(totalBytes: Long) {
-    confirmed = confirmed.copy(totalBytes = totalBytes)
+  @Synchronized fun selectPayload(totalBytes: Long, bytesUploaded: Long? = null) {
+    confirmed = confirmed.copy(totalBytes = totalBytes, bytesUploaded = bytesUploaded ?: confirmed.bytesUploaded)
   }
 
   @Synchronized fun beginTransport(generated: Boolean, persist: () -> Unit) {
@@ -137,11 +144,13 @@ internal class UploadAttempt(
 internal fun createUploadAttempt(upload: UploadInfo, saved: UploadResumeState): UploadAttempt {
   val preparation = upload.attempt?.preparation ?: UploadPreparationState().apply {
     originalSelected = upload.restoredFromOriginal || saved.originalSelected
+    generatedState = saved.generated
+    generatedRequestStarted = saved.generated?.networkStarted == true
   }
   val now = System.currentTimeMillis()
   return UploadAttempt(preparation, MuxUpload.Progress(
     bytesUploaded = if (saved.generatedResumeBlocked) 0 else saved.bytesSent,
-    totalBytes = upload.inputFile.length(), startTime = now, updatedTime = now),
+    totalBytes = saved.generated?.payload?.size ?: upload.inputFile.length(), startTime = now, updatedTime = now),
     previousPersistenceOwnerId = saved.attemptId)
 }
 
@@ -152,3 +161,8 @@ internal class GeneratedResumeBlockedException : IllegalStateException(
 )
 
 internal class UploadCancelledException : IllegalStateException("Upload was cancelled. Create a new upload handle.")
+
+internal const val PREPARATION_RELEASE_TIMEOUT_MS = 5_000L
+internal class PreparationReleasePendingException : IllegalStateException(
+  "Previous preparation has not released its resources. Retry after release completes."
+)

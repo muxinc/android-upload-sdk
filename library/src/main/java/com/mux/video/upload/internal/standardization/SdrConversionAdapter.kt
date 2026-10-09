@@ -1,5 +1,6 @@
 package com.mux.video.upload.internal.standardization
 
+import com.mux.video.upload.internal.PayloadIdentity
 import kotlinx.coroutines.CompletableDeferred
 import android.content.Context
 import android.os.Handler
@@ -7,8 +8,6 @@ import android.os.HandlerThread
 import android.os.Looper
 import androidx.media3.common.MimeTypes
 import java.io.File
-import java.io.RandomAccessFile
-import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal sealed interface SdrConversionResult {
@@ -20,35 +19,28 @@ internal sealed interface SdrConversionResult {
 
 /** The only deletion authority returned to orchestration; never accepts an arbitrary path. */
 internal class SdrGeneratedFile private constructor(val file: File) {
-  private var validatedIdentity: FileIdentity? = null
+  internal var validatedIdentity: PayloadIdentity? = null
+    private set
   internal fun recordValidation(): Boolean {
-    validatedIdentity = identity()
+    validatedIdentity = PayloadIdentity.capture(file)
     return validatedIdentity != null
   }
-  internal fun matchesValidation(): Boolean = validatedIdentity?.let { it == identity() } == true
-
-  private data class FileIdentity(val size: Long, val modified: Long, val edgeHash: List<Byte>)
-  private fun identity(): FileIdentity? = try {
-    val size = file.length()
-    val modified = file.lastModified()
-    if (!file.isFile || !file.canRead() || size <= 0) null else {
-      val digest = MessageDigest.getInstance("SHA-256")
-      RandomAccessFile(file, "r").use { input ->
-        val first = ByteArray(minOf(size, 64 * 1024L).toInt())
-        input.readFully(first); digest.update(first)
-        if (size > first.size) {
-          val last = ByteArray(minOf(size - first.size, 64 * 1024L).toInt())
-          input.seek(size - last.size); input.readFully(last); digest.update(last)
-        }
-      }
-      if (file.length() != size || file.lastModified() != modified) null
-      else FileIdentity(size, modified, digest.digest().toList())
-    }
-  } catch (_: Exception) { null }
-
-  fun delete(): Boolean = !file.exists() || file.delete()
+  internal fun matchesValidation(): Boolean = validatedIdentity?.matches(file) == true
+  fun delete(): Boolean = try {
+    file.canonicalFile == file.absoluteFile && (!file.exists() || file.delete())
+  } catch (_: Exception) { false }
 
   companion object {
+    /** Restoration accepts only the exact tracked file in the dedicated SDK area. */
+    fun restore(cacheDir: File, path: String, identity: PayloadIdentity? = null): SdrGeneratedFile? = try {
+      val area = File(cacheDir.canonicalFile, "mux-upload/standard-input")
+      val file = File(path)
+      if (area.canonicalFile != area.absoluteFile || file.absolutePath != path ||
+        file.parentFile != area || file.canonicalFile != file.absoluteFile ||
+        !file.name.startsWith("sdr-") || !file.name.endsWith(".mp4")) null
+      else SdrGeneratedFile(file).also { it.validatedIdentity = identity }
+    } catch (_: Exception) { null }
+
     fun allocate(cacheDir: File, requiredBytes: Long): SdrGeneratedFile? {
       val area = File(cacheDir.canonicalFile, "mux-upload/standard-input")
       if ((!area.isDirectory && !area.mkdirs()) || area.canonicalFile != area.absoluteFile || area.usableSpace < requiredBytes) return null
@@ -73,6 +65,7 @@ internal class SdrConversionAdapter(
     StandardInputOutputValidator()::validateGeneratedOutput,
   private val createEngine: (Context, Looper, StandardInputConversion, SdrEncodingTargets, SdrEncoderCapability) -> SdrExportEngine =
     ::Media3SdrExportEngine,
+  private val onAllocated: (SdrGeneratedFile) -> Unit = {},
   private val onPendingCleanup: (SdrGeneratedFile) -> Unit = {},
 ) {
   private val appContext = context.applicationContext
@@ -125,6 +118,7 @@ internal class SdrConversionAdapter(
         val owned = SdrGeneratedFile.allocate(appContext.cacheDir, required)
           ?: return@guarded fail(SdrConversionFailure.DiskSpace)
         output = owned
+        onAllocated(owned)
         if (cancelled.get()) return@guarded finish(SdrConversionResult.Cancelled)
         val exporter = createEngine(appContext, looper, conversion, targets, capability)
         engine = exporter
