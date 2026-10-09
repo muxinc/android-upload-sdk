@@ -70,7 +70,7 @@ class GeneratedUploadProtocolTests : AbsRobolectricTest() {
       for ((code, ranges, expected) in listOf(Triple(308, arrayOf("bytes=0-5"), 2L),
         Triple(308, emptyArray<String>(), null), Triple(308, arrayOf("bytes=0-3"), null),
         Triple(308, arrayOf("bytes=0-8"), null), Triple(200, emptyArray(), null),
-        Triple(204, emptyArray(), null), Triple(503, emptyArray(), null))) {
+        Triple(204, emptyArray(), null))) {
         var requests = 0
         MuxUploadSdk.useOkHttpClient(OkHttpClient.Builder().addInterceptor { chain ->
           requests++
@@ -92,4 +92,126 @@ class GeneratedUploadProtocolTests : AbsRobolectricTest() {
       response(200).use { assertEquals(4L, GeneratedUploadProtocol.acknowledge(it, chunk.copy(startByte = 8, endByte = 11))) }
     } finally { owned.delete() }
   }
+  @Test fun queryPreservesTransportFailureAndClassifiesRetryableResponses() = runBlocking {
+    val offline = java.io.IOException("Offline")
+    MuxUploadSdk.useOkHttpClient(OkHttpClient.Builder().addInterceptor { throw offline }.build())
+    try { GeneratedUploadProtocol.query(info(), 12); fail("Expected transport failure") }
+    catch (e: java.io.IOException) { assertEquals(offline.javaClass, e.javaClass); assertEquals(offline.message, e.message) }
+    for (code in listOf(408, 429, 500, 502, 503, 504)) {
+      MuxUploadSdk.useOkHttpClient(OkHttpClient.Builder().addInterceptor { chain ->
+        response(code).newBuilder().request(chain.request()).build()
+      }.build())
+      try { GeneratedUploadProtocol.query(info(), 12); fail("Expected retryable response $code") }
+      catch (_: java.io.IOException) {}
+      response(code).use { assertThrows(java.io.IOException::class.java) {
+        GeneratedUploadProtocol.acknowledge(it, ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7))) } }
+    }
+  }
+
+  @Test fun generatedWorkerLeavesRetryableResponseRecoveryToItsOwner() = runBlocking {
+    val owned = SdrGeneratedFile.allocate(RuntimeEnvironment.getApplication().cacheDir, 1)!!
+    owned.file.writeText("generated payload"); assertTrue(owned.recordValidation())
+    val state = UploadPreparationState().apply { verified = owned }
+    val upload = info().update(attempt = UploadAttempt(state, MuxUpload.Progress()))
+    var requests = 0
+    MuxUploadSdk.useOkHttpClient(OkHttpClient.Builder().addInterceptor { chain ->
+      requests++
+      response(503).newBuilder().request(chain.request()).build()
+    }.build())
+    val flow = MutableSharedFlow<MuxUpload.Progress>(replay = 1)
+    try {
+      try { ChunkWorker.create(ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7)), upload, "video/*", flow).upload()
+        fail("Expected retryable chunk failure") }
+      catch (_: java.io.IOException) {}
+      assertEquals(1, requests); assertTrue(flow.replayCache.isEmpty())
+    } finally { owned.delete() }
+  }
+
+  @Test fun generatedLoggingAndAcknowledgedProgressStayStableWhenOwnershipClears() = runBlocking {
+    val logs = mutableListOf<String>()
+    MuxUploadSdk.useLogger(object : MuxUploadSdk.Logger by MuxUploadSdk.noLogger() {
+      override fun v(tag: String, msg: String, e: Exception?) { logs += msg }
+    })
+    val owned = SdrGeneratedFile.allocate(RuntimeEnvironment.getApplication().cacheDir, 1)!!
+    owned.file.writeText("generated payload"); assertTrue(owned.recordValidation())
+    val state = UploadPreparationState().apply { verified = owned }
+    val upload = info().update(attempt = UploadAttempt(state, MuxUpload.Progress()))
+    val chunk = ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7))
+    MuxUploadSdk.useOkHttpClient(OkHttpClient.Builder().addInterceptor { chain ->
+      state.deleteOwnedFile()
+      val body = Buffer(); chain.request().body!!.writeTo(body)
+      response(308, "bytes=0-5").newBuilder().request(chain.request()).build()
+    }.build())
+    val flow = MutableSharedFlow<MuxUpload.Progress>(replay = 1)
+    try {
+      assertEquals(2L, ChunkWorker.create(chunk, upload, "video/*", flow).upload().bytesUploaded)
+      assertEquals(listOf(2L), flow.replayCache.map { it.bytesUploaded })
+      assertTrue("Generated logs: $logs", logs.isEmpty())
+    } finally { owned.delete() }
+  }
+
+  @Test fun generatedRequestsNeverReplayAutomaticallyOnRetryableHttpResponses() = runBlocking {
+    val owned = SdrGeneratedFile.allocate(RuntimeEnvironment.getApplication().cacheDir, 1)!!
+    owned.file.writeText("generated payload"); assertTrue(owned.recordValidation())
+    val state = UploadPreparationState().apply { verified = owned }
+    try {
+      for (code in listOf(408, 503)) for (isQuery in listOf(true, false)) {
+        val server = java.net.ServerSocket(0, 0, java.net.InetAddress.getLoopbackAddress())
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val serverFailure = java.util.concurrent.atomic.AtomicReference<Throwable>()
+        val thread = Thread {
+          try {
+            while (!server.isClosed) server.accept().use { socket ->
+              val input = socket.getInputStream().bufferedReader()
+              check(input.readLine().startsWith("PUT "))
+              var length = 0
+              while (true) {
+                val header = input.readLine()
+                if (header.isEmpty()) break
+                if (header.startsWith("Content-Length:", true)) length = header.substringAfter(':').trim().toInt()
+              }
+              repeat(length) { check(input.read() >= 0) }
+              requests.incrementAndGet()
+              socket.getOutputStream().apply {
+                write("HTTP/1.1 $code Test\r\nContent-Length: 0\r\nRetry-After: 0\r\nConnection: close\r\n\r\n".toByteArray())
+                flush()
+              }
+            }
+          } catch (e: Throwable) { if (!server.isClosed) serverFailure.set(e) }
+        }.apply { isDaemon = true; start() }
+        val upload = info().copy(remoteUri = Uri.parse("http://127.0.0.1:${server.localPort}/upload"),
+          attempt = UploadAttempt(state, MuxUpload.Progress()))
+        MuxUploadSdk.useOkHttpClient(OkHttpClient.Builder().callTimeout(3, java.util.concurrent.TimeUnit.SECONDS).build())
+        try {
+          try {
+            if (isQuery) GeneratedUploadProtocol.query(upload, 12)
+            else ChunkWorker.create(ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7)),
+              upload, "video/*", MutableSharedFlow(replay = 1)).upload()
+            fail("Expected retryable $code")
+          } catch (_: java.io.IOException) {}
+        } finally { server.close(); thread.join(1000) }
+        assertNull(serverFailure.get())
+        assertEquals("$code query=$isQuery must require owner reconciliation", 1, requests.get())
+      }
+    } finally { owned.delete() }
+  }
+
+  @Test fun generatedTransportClassificationSurvivesOwnershipClearedBeforeWorkerCreation() = runBlocking {
+    val owned = SdrGeneratedFile.allocate(RuntimeEnvironment.getApplication().cacheDir, 1)!!
+    owned.file.writeText("generated payload"); assertTrue(owned.recordValidation())
+    val state = UploadPreparationState().apply { verified = owned }
+    val attempt = UploadAttempt(state, MuxUpload.Progress())
+    attempt.beginTransport(true) {}
+    state.deleteOwnedFile()
+    val upload = info().update(attempt = attempt)
+    MuxUploadSdk.useOkHttpClient(OkHttpClient.Builder().addInterceptor { chain ->
+      assertTrue(chain.request().body!!.isOneShot())
+      response(308, "bytes=0-5").newBuilder().request(chain.request()).build()
+    }.build())
+    val flow = MutableSharedFlow<MuxUpload.Progress>(replay = 1)
+    assertEquals(2L, ChunkWorker.create(ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7)),
+      upload, "video/*", flow).upload().bytesUploaded)
+    assertEquals(listOf(2L), flow.replayCache.map { it.bytesUploaded })
+  }
+
 }

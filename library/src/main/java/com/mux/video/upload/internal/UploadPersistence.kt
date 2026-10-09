@@ -134,7 +134,9 @@ internal object UploadPersistence {
     val entry = readGenerated()[key] ?: return
     if (entry.attemptId == upload.attempt?.id || entry.attemptId == upload.attempt?.previousPersistenceOwnerId) {
       hiddenGenerated += key
-      blockDestination(entry.url)
+      // Hiding a cancelled preparation must not permanently block an untouched destination.
+      if (entry.generated?.networkStarted == true || entry.generated?.abandoned == true || entry.generatedResumeBlocked)
+        blockDestination(entry.url)
     }
   }
 
@@ -198,6 +200,7 @@ internal object UploadPersistence {
       if (!prefs.edit().putString(GENERATED_KEY, JSONArray(records.values.map { it.toJson() }).toString())
           .putString(GENERATED_BLOCKS_KEY, JSONArray(blocks.toList()).toString()).commit())
         throw GeneratedResumeBlockedException()
+      hiddenGenerated -= key
     }
   }
 
@@ -231,8 +234,11 @@ internal object UploadPersistence {
     checkInitialized()
     val entry = fetchEntries()[upload.inputFile.absolutePath]?.takeIf { it.url == upload.remoteUri.toString() }
     val key = destinationKey(upload.remoteUri.toString())
-    if (key in readBlocks() || key in readGeneratedBlocks() || key in hiddenGenerated) return UploadResumeState(generatedResumeBlocked = true)
+    if (key in readBlocks() || key in readGeneratedBlocks()) return UploadResumeState(generatedResumeBlocked = true)
     val generated = readGenerated()[key]
+    if (key in hiddenGenerated) return UploadResumeState(attemptId = generated?.attemptId,
+      generatedResumeBlocked = generated?.let { it.generated?.networkStarted == true ||
+        it.generated?.abandoned == true || it.generatedResumeBlocked } == true)
     if (generated != null) {
       if (generated.file.absoluteFile != upload.inputFile.absoluteFile) return UploadResumeState(generatedResumeBlocked = true)
       return resumeState(generated, false).copy(paused = entry?.state == WAS_PAUSED,

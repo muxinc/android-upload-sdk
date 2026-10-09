@@ -12,6 +12,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.RandomAccessFile
+import java.io.IOException
 import java.util.UUID
 
 @JvmSynthetic
@@ -46,18 +47,17 @@ internal class UploadJobFactory internal constructor(
       val sessionId = UUID.randomUUID().toString()
       val metrics = UploadMetrics.create()
       var mustRetireGenerated = false
-      suspend fun query(total: Long): Long {
-        // Query failures cannot make this destination eligible for original-file fallback.
+      suspend fun query(total: Long, retries: GeneratedRetryBudget = GeneratedRetryBudget(runningInfo.retriesPerChunk)): Long {
+        // Keep the payload and possible-remote-bytes marker when the network is unavailable.
         preparation.generatedState = checkNotNull(preparation.generatedState).copy(networkStarted = true)
         withContext(Dispatchers.IO) { UploadPersistence.writeGenerated(runningInfo, checkNotNull(preparation.generatedState)) }
-        try { return queryOffset(runningInfo, total).also {
-          if (it !in 0..total) throw GeneratedResumeBlockedException()
-        } } catch (e: CancellationException) { throw e }
-          catch (_: Exception) {
-            mustRetireGenerated = true
-            preparation.generatedState = preparation.generatedState?.copy(networkStarted = true)
-            throw GeneratedResumeBlockedException()
-          }
+        while (true) {
+          try {
+            return queryOffset(runningInfo, total).also {
+              if (it !in 0..total) throw GeneratedResumeBlockedException()
+            }
+          } catch (e: IOException) { retries.retry(e) }
+        }
       }
       try {
         // An old export or request must finish cancellation before another attempt uses its files.
@@ -82,7 +82,6 @@ internal class UploadJobFactory internal constructor(
             throw GeneratedResumeBlockedException()
           if (restored.payload != null) {
             offset = query(restored.payload.size)
-            if (offset !in 0..restored.payload.size) throw GeneratedResumeBlockedException()
             val valid = withContext(Dispatchers.IO) { preparation.verified?.matchesValidation() == true }
             if (!valid) {
               if (offset != 0L || !withContext(Dispatchers.IO) { restored.source.matches(uploadInfo.inputFile) })
@@ -114,7 +113,10 @@ internal class UploadJobFactory internal constructor(
               withContext(Dispatchers.IO) { UploadPersistence.retireGenerated(runningInfo) }
               MuxUploadSdk.logger.d("MuxUploadPreparation", result.diagnostic.toString())
             }
-            is PreparedUpload.Generated -> attempt.retainGenerated(result.output)
+            is PreparedUpload.Generated -> {
+              attempt.retainGenerated(result.output)
+              offset = null // A newly prepared payload must confirm zero bytes for its own total.
+            }
           }
         }
         ensureActive()
@@ -129,17 +131,14 @@ internal class UploadJobFactory internal constructor(
         }
         if (verified != null) {
           val identity = checkNotNull(verified.validatedIdentity)
-          val state = preparation.generatedState ?: throw GeneratedResumeBlockedException()
           if (offset == null) {
             offset = query(identity.size)
             // A new generated selection cannot adopt bytes sent by an unrelated attempt.
             if (offset != 0L) {
-              mustRetireGenerated = true
-              preparation.generatedState = state.copy(networkStarted = true)
               throw GeneratedResumeBlockedException()
             }
           }
-          preparation.generatedState = state.copy(phase = PreparationPhase.Validated,
+          preparation.generatedState = checkNotNull(preparation.generatedState).copy(phase = PreparationPhase.Validated,
             ownedPath = verified.file.absolutePath, payload = identity)
           withContext(Dispatchers.IO) { UploadPersistence.writeGenerated(runningInfo, checkNotNull(preparation.generatedState)) }
         }
@@ -159,6 +158,7 @@ internal class UploadJobFactory internal constructor(
           attempt.publish(UploadStatus.Uploading(attempt.confirmedProgress()))
           val buffer = ByteArray(uploadInfo.chunkSize)
           var generatedTransportSaved = false
+          var generatedRetries = GeneratedRetryBudget(runningInfo.retriesPerChunk)
           while (totalBytesSent < fileSize) {
             ensureActive()
             check(withContext(Dispatchers.IO) { verified?.matchesValidation() != false }) { "Validated payload changed. Create a new Direct Upload." }
@@ -194,7 +194,21 @@ internal class UploadJobFactory internal constructor(
               attempt.beginTransport(verified != null) {
                 writeUploadState(runningInfo, attempt.confirmedProgress())
               }
-              val final = createWorker(chunk, runningInfo, progress).upload()
+              val final = try {
+                createWorker(chunk, runningInfo, progress).upload()
+              } catch (e: IOException) {
+                if (verified == null) throw e
+                // Never replay uncertain generated bytes without asking the server first.
+                generatedRetries.retry(e)
+                val reconciled = query(fileSize, generatedRetries)
+                if (reconciled !in totalBytesSent..(chunk.endByte + 1)) throw GeneratedResumeBlockedException()
+                totalBytesSent = reconciled
+                val acknowledged = attempt.confirmedProgress().copy(bytesUploaded = reconciled,
+                  updatedTime = System.currentTimeMillis())
+                attempt.acknowledge(acknowledged) { writeUploadState(runningInfo, acknowledged) }
+                continue
+              }
+              generatedRetries = GeneratedRetryBudget(runningInfo.retriesPerChunk)
               ensureActive()
               if (verified != null && final.bytesUploaded !in 1..count.toLong()) throw GeneratedResumeBlockedException()
               totalBytesSent += final.bytesUploaded
@@ -259,5 +273,16 @@ internal class UploadJobFactory internal constructor(
     runningInfo.session.current.value = runningInfo
     job.start()
     return runningInfo
+  }
+}
+
+/** One budget covers uncertain chunk requests and their recovery queries. */
+private class GeneratedRetryBudget(private val limit: Int) {
+  private var used = 0
+  suspend fun retry(failure: IOException) {
+    if (used >= limit) throw failure
+    val waitMs = 1_000L shl used.coerceAtMost(3)
+    used++
+    delay(waitMs)
   }
 }
