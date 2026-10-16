@@ -172,8 +172,9 @@ internal object MediaTrackMetadataReader {
       positiveCode(format.int(MediaFormat.KEY_COLOR_TRANSFER)),
       positiveCode(format.int(MediaFormat.KEY_COLOR_RANGE)),
     ) else ColorMetadata()
+    val profile = platformProfile(codec.valueOrNull, if (apiLevel >= 24) format.int(MediaFormat.KEY_PROFILE) else null)
     val platformPixels = pixels(format.int(MediaFormat.KEY_COLOR_FORMAT), apiLevel)
-    val fallback = if (platformPixels == MediaFact.Unknown || platformColor.transfer == MediaFact.Unknown)
+    val fallback = if (platformPixels == MediaFact.Unknown || platformColor.transfer == MediaFact.Unknown || profile == MediaFact.Unknown)
       CodecMetadataReader.video(codec.valueOrNull, (0..2).mapNotNull { format.bytes("csd-$it") }) else CodecMetadata()
     val color = ColorMetadata(
       platformColor.standard.takeUnless { it == MediaFact.Unknown } ?: fallback.color.standard,
@@ -183,7 +184,7 @@ internal object MediaTrackMetadataReader {
     val range = if (mime == "video/dolby-vision") MediaFact.Known(DynamicRange.DolbyVision)
       else dynamicRange(color.transfer)
     return VideoTrackMetadata(codec,
-      platformProfile(codec.valueOrNull, if (apiLevel >= 24) format.int(MediaFormat.KEY_PROFILE) else null),
+      profile.takeUnless { it == MediaFact.Unknown } ?: fallback.profile,
       encoded, display(format, encoded, rotation), rotation, platformRotation,
       platformPixels.takeUnless { it == MediaFact.Unknown } ?: fallback.pixelFormat, color, range)
   }

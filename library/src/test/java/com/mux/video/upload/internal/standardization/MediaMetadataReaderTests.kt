@@ -52,6 +52,7 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
     val format = video().apply { setByteBuffer("csd-0", ByteBuffer.wrap(avc)) }
     assertEquals(MediaFact.Known(PixelFormat(8, ChromaSubsampling.Yuv420)), facts(format).pixelFormat)
     assertEquals(MediaFact.Known(DynamicRange.Sdr), facts(format, 23).dynamicRange)
+    assertEquals(MediaFact.Known(VideoProfile.H264Baseline), facts(format, 23).videoProfile)
     format.setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_HLG)
     format.setInteger(MediaFormat.KEY_PROFILE, CodecProfileLevel.AVCProfileHigh)
     format.setInteger(MediaFormat.KEY_COLOR_FORMAT, CodecCapabilities.COLOR_FormatYUVP010)

@@ -4,11 +4,12 @@ import androidx.media3.container.NalUnitUtil
 import androidx.media3.container.ParsableNalUnitBitArray
 
 internal data class CodecMetadata(
+  val profile: MediaFact<VideoProfile> = MediaFact.Unknown,
   val pixelFormat: MediaFact<PixelFormat> = MediaFact.Unknown,
   val color: ColorMetadata = ColorMetadata(),
 )
 
-/** Fills missing pixel/color facts only; platform metadata is authoritative when present. */
+/** Fills missing codec facts only; platform metadata is authoritative when present. */
 internal object CodecMetadataReader {
   const val MAX_CONFIGURATION_BYTES = 64 * 1024
 
@@ -40,6 +41,12 @@ internal object CodecMetadataReader {
       else -> return CodecMetadata()
     }
     return CodecMetadata(
+      profile = MediaFact.Known(when (profile) {
+        66 -> VideoProfile.H264Baseline
+        77 -> VideoProfile.H264Main
+        100 -> VideoProfile.H264High
+        else -> VideoProfile.Other
+      }),
       pixelFormat = pixels(sps.bitDepthLumaMinus8, sps.bitDepthChromaMinus8, chroma),
       color = color(sps.colorSpace, sps.colorTransfer, sps.colorRange),
     )
@@ -50,7 +57,13 @@ internal object CodecMetadataReader {
     if ((nal[0].toInt() and 1) != 0 || (nal[1].toInt() and 248) != 0) return CodecMetadata()
     if (!boundedHevcSyntax(nal)) return CodecMetadata()
     val sps = NalUnitUtil.parseH265SpsNalUnit(nal, 0, nal.size, null)
+    val profile = sps.profileTierLevel ?: return CodecMetadata()
     return CodecMetadata(
+      profile = MediaFact.Known(when (if (profile.generalProfileSpace == 0) profile.generalProfileIdc else -1) {
+        1 -> VideoProfile.HevcMain
+        2 -> VideoProfile.HevcMain10
+        else -> VideoProfile.Other
+      }),
       pixelFormat = pixels(sps.bitDepthLumaMinus8, sps.bitDepthChromaMinus8, sps.chromaFormatIdc),
       color = color(sps.colorSpace, sps.colorTransfer, sps.colorRange),
     )
