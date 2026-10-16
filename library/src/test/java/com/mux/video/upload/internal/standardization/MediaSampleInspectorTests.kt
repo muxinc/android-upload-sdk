@@ -133,7 +133,7 @@ class MediaSampleInspectorTests : AbsRobolectricTest() {
 
   private fun metadata() = MediaMetadataInspection(MediaFact.Known(ContainerKind.Other), listOf(
     TrackMetadata(0, MediaFact.Unknown, MediaFact.Unknown, TrackKind.Video, MediaFact.Known("video/avc"),
-      MediaFact.Known(3.0), MediaFact.Unknown, MediaFact.Unknown)), MediaFact.Unknown,
+      MediaFact.Known(3.0), MediaFact.Unknown, MediaFact.Unknown)),
     MediaFacts(videoCodec = MediaFact.Known(VideoCodec.H264), videoTrackCount = MediaFact.Known(1)), 0)
 
   private fun scan(limits: SampleScanLimits = SampleScanLimits(), cancel: () -> Boolean = { false },
