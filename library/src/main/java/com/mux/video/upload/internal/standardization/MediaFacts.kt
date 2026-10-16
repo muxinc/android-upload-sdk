@@ -51,7 +51,8 @@ internal data class TimestampFacts(
   val firstPresentationSeconds: Double,
   val lastPresentationSeconds: Double,
   val sampleCount: Long,
-  val isMonotonic: Boolean,
+  /** False is normal for B-frame reordering and does not imply invalid presentation timestamps. */
+  val presentationOrderMatchesDecodeOrder: Boolean,
 )
 
 /**
