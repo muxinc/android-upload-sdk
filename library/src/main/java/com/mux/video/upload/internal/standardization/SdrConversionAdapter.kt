@@ -1,14 +1,29 @@
 package com.mux.video.upload.internal.standardization
 
 import com.mux.video.upload.internal.PayloadIdentity
-import kotlinx.coroutines.CompletableDeferred
 import android.content.Context
-import android.os.Handler
-import android.os.HandlerThread
 import android.os.Looper
 import androidx.media3.common.MimeTypes
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.RandomAccessFile
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.resume
 
 internal sealed interface SdrConversionResult {
   /** Caller owns retention until upload/resume reaches its terminal point. */
@@ -56,7 +71,7 @@ internal interface SdrExportEngine {
   fun cancel()
 }
 
-/** Each attempt owns one thread, one Transformer, and one explicitly tracked output file. */
+/** Each attempt owns a coroutine job, one Transformer, and one explicitly tracked output file. */
 internal class SdrConversionAdapter(
   context: Context,
   private val preflight: (StandardInputConversion, MediaMetadataInspection, SdrEncodingTargets, () -> Boolean) -> SdrEncoderCapability? =
@@ -65,6 +80,7 @@ internal class SdrConversionAdapter(
     StandardInputOutputValidator()::validateGeneratedOutput,
   private val createEngine: (Context, Looper, StandardInputConversion, SdrEncodingTargets, SdrEncoderCapability) -> SdrExportEngine =
     ::Media3SdrExportEngine,
+  private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
   private val onAllocated: (SdrGeneratedFile) -> Unit = {},
   private val onPendingCleanup: (SdrGeneratedFile) -> Unit = {},
 ) {
@@ -79,10 +95,8 @@ internal class SdrConversionAdapter(
     private val source: MediaSampleInspection, private val conversion: StandardInputConversion,
     private val onResult: (SdrConversionResult) -> Unit,
   ) {
-    private val thread = HandlerThread("MuxSdrConversion").apply { start() }
-    internal val looper: Looper = thread.looper
-    private val handler = Handler(looper)
-    private val cancelled = AtomicBoolean(false)
+    private val job = Job()
+    private val scope = CoroutineScope(job + Dispatchers.Main)
     private val terminalLock = Any()
     private var terminal = false
     private val released = CompletableDeferred<Unit>()
@@ -97,91 +111,100 @@ internal class SdrConversionAdapter(
     fun cancel() {
       synchronized(terminalLock) {
         if (terminal) return
-        cancelled.set(true)
+        job.cancel()
       }
-      handler.post { finish(SdrConversionResult.Cancelled) }
     }
 
     suspend fun awaitRelease() { released.await() }
 
-    internal fun begin() { handler.post {
-      guarded {
-        if (cancelled.get()) return@guarded finish(SdrConversionResult.Cancelled)
-        val targets = SdrEncodingTargets.from(conversion, metadata, source)
-          ?: return@guarded fail(SdrConversionFailure.UnsupportedPlan)
-        val capability = preflight(conversion, metadata, targets, cancelled::get)
-          ?: return@guarded fail(SdrConversionFailure.CapabilityUnavailable)
-        if (cancelled.get()) return@guarded finish(SdrConversionResult.Cancelled)
-        if (!sourceUnchanged()) return@guarded fail(SdrConversionFailure.SourceChanged)
-        val required = source.timeline.durationSeconds.valueOrNull?.let(targets::estimatedOutputBytes)
-          ?: return@guarded fail(SdrConversionFailure.InsufficientSourceEvidence)
-        val owned = SdrGeneratedFile.allocate(appContext.cacheDir, required)
-          ?: return@guarded fail(SdrConversionFailure.DiskSpace)
-        output = owned
-        onAllocated(owned)
-        if (cancelled.get()) return@guarded finish(SdrConversionResult.Cancelled)
-        val exporter = createEngine(appContext, looper, conversion, targets, capability)
-        engine = exporter
-        exporter.start(input, owned.file, { videoMime, audioMime ->
-          handler.post { guarded {
-            if (isTerminal()) return@guarded
-            if (videoMime != targets.videoMime || audioMime != if (targets.audioChannels != null) MimeTypes.AUDIO_AAC else null)
-              return@guarded fail(SdrConversionFailure.CodecChanged)
-            if (!sourceUnchanged()) return@guarded fail(SdrConversionFailure.SourceChanged)
-            when (val validation = validate(owned.file, source.facts, source.timeline, conversion, cancelled::get)) {
-              is StandardInputOutputValidation.Accepted -> {
-                if (!sourceUnchanged()) return@guarded fail(SdrConversionFailure.SourceChanged)
-                // The shared validator checks policy, pixels, cadence, and effective timeline.
-                // Add this adapter's concrete encoder-profile and non-AAC channel contract.
-                val audio = validation.facts.audioTracks.valueOrNull?.singleOrNull()?.format?.valueOrNull as? AudioFormat.Aac
-                val expectedLayout = aacChannelLayout(targets.audioChannels).valueOrNull
-                if (validation.facts.videoProfile != MediaFact.Known(targets.profile) ||
-                  (targets.audioChannels != null && audio?.layout != expectedLayout)) fail(SdrConversionFailure.OutputInvalid)
-                else if (!owned.recordValidation()) fail(SdrConversionFailure.OutputInvalid)
-                else finish(SdrConversionResult.Completed(owned, validation.facts))
-              }
-              is StandardInputOutputValidation.Rejected -> fail(SdrConversionFailure.OutputInvalid)
-              StandardInputOutputValidation.Cancelled -> finish(SdrConversionResult.Cancelled)
-            }
-          } }
-        }, { reason -> handler.post { guarded { if (!isTerminal()) fail(reason) } } })
+    @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
+    internal fun begin() {
+      // Enter cleanup even when cancellation wins before the initial Main dispatch.
+      scope.launch(start = CoroutineStart.ATOMIC) {
+        val result = try {
+          ensureActive()
+          convert()
+        } catch (_: CancellationException) { SdrConversionResult.Cancelled }
+          catch (_: Exception) { SdrConversionResult.Failed(SdrConversionFailure.Export) }
+          catch (_: LinkageError) { SdrConversionResult.Failed(SdrConversionFailure.Export) }
+        withContext(NonCancellable) { finish(result) }
       }
-    } }
+    }
+
+    private suspend fun convert(): SdrConversionResult {
+      val targets = withContext(ioDispatcher) { SdrEncodingTargets.from(conversion, metadata, source) }
+        ?: return SdrConversionResult.Failed(SdrConversionFailure.UnsupportedPlan)
+      val capability = withContext(ioDispatcher) { preflight(conversion, metadata, targets) { !job.isActive } }
+        ?: return SdrConversionResult.Failed(SdrConversionFailure.CapabilityUnavailable)
+      val preparationFailure = withContext(ioDispatcher) {
+        if (!sourceUnchanged()) return@withContext SdrConversionFailure.SourceChanged
+        val required = source.timeline.durationSeconds.valueOrNull?.let(targets::estimatedOutputBytes)
+          ?: return@withContext SdrConversionFailure.InsufficientSourceEvidence
+        // Record ownership before returning across a cancellable dispatcher boundary.
+        output = SdrGeneratedFile.allocate(appContext.cacheDir, required)
+        output?.let(onAllocated)
+        if (output == null) SdrConversionFailure.DiskSpace else null
+      }
+      if (preparationFailure != null) return SdrConversionResult.Failed(preparationFailure)
+      val owned = checkNotNull(output)
+      val exporter = createEngine(appContext, Looper.getMainLooper(), conversion, targets, capability)
+      engine = exporter
+      val exportFailure = suspendCancellableCoroutine<SdrConversionFailure?> { continuation ->
+        val delivered = AtomicBoolean(false)
+        continuation.invokeOnCancellation { delivered.set(true) }
+        fun complete(reason: SdrConversionFailure?) {
+          if (delivered.compareAndSet(false, true)) continuation.resume(reason)
+        }
+        exporter.start(input, owned.file, { videoMime, audioMime ->
+          complete(if (videoMime != targets.videoMime ||
+            audioMime != if (targets.audioChannels != null) MimeTypes.AUDIO_AAC else null)
+            SdrConversionFailure.CodecChanged else null)
+        }, ::complete)
+      }
+      if (exportFailure != null) return SdrConversionResult.Failed(exportFailure)
+      return withContext(ioDispatcher) {
+        if (!sourceUnchanged()) return@withContext SdrConversionResult.Failed(SdrConversionFailure.SourceChanged)
+        when (val validation = validate(owned.file, source.facts, source.timeline, conversion) { !job.isActive }) {
+          is StandardInputOutputValidation.Accepted -> {
+            if (!sourceUnchanged()) return@withContext SdrConversionResult.Failed(SdrConversionFailure.SourceChanged)
+            // The shared validator checks policy, pixels, cadence, and effective timeline.
+            // Add this adapter's concrete encoder-profile and non-AAC channel contract.
+            val audio = validation.facts.audioTracks.valueOrNull?.singleOrNull()?.format?.valueOrNull as? AudioFormat.Aac
+            val expectedLayout = aacChannelLayout(targets.audioChannels).valueOrNull
+            if (validation.facts.videoProfile != MediaFact.Known(targets.profile) ||
+              (targets.audioChannels != null && audio?.layout != expectedLayout))
+              SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid)
+            else if (!owned.recordValidation()) SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid)
+            else if (!owned.recordValidation()) SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid)
+            else SdrConversionResult.Completed(owned, validation.facts)
+          }
+          is StandardInputOutputValidation.Rejected -> SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid)
+          StandardInputOutputValidation.Cancelled -> SdrConversionResult.Cancelled
+        }
+      }
+    }
 
     private fun sourceUnchanged() = input.isFile && input.canRead() && sourceLength > 0 &&
       input.length() == sourceLength && input.lastModified() == sourceModified
-    private fun isTerminal() = synchronized(terminalLock) { terminal }
-    private fun fail(reason: SdrConversionFailure) = finish(SdrConversionResult.Failed(reason))
-    private fun guarded(block: () -> Unit) {
-      if (isTerminal()) return
-      try { block() }
-      catch (_: Exception) { fail(SdrConversionFailure.Export) }
-      catch (_: LinkageError) { fail(SdrConversionFailure.Export) }
-    }
-
-    private fun finish(proposed: SdrConversionResult) {
-      val result = synchronized(terminalLock) {
+    private suspend fun finish(proposed: SdrConversionResult) {
+      var result = synchronized(terminalLock) {
         if (terminal) return
         terminal = true
-        if (cancelled.get()) SdrConversionResult.Cancelled else proposed
+        if (job.isCancelled) SdrConversionResult.Cancelled else proposed
       }
       try {
         runCatching { engine?.cancel() }
-        if (result !is SdrConversionResult.Completed && output?.delete() == false) {
+        if (result !is SdrConversionResult.Completed && withContext(ioDispatcher) { output?.delete() } == false) {
           pendingCleanup = output
           output?.let(onPendingCleanup)
           // Keep ownership at its exact path if the OS refuses deletion; never sweep a directory.
-          if (result !is SdrConversionResult.Cancelled) {
-            onResult(SdrConversionResult.Failed(SdrConversionFailure.FileOwnership))
-            return
-          }
+          if (result !is SdrConversionResult.Cancelled) result = SdrConversionResult.Failed(SdrConversionFailure.FileOwnership)
         }
-        onResult(result)
+        runCatching { onResult(result) }
       } finally {
         engine = null
-        handler.removeCallbacksAndMessages(null)
-        thread.quitSafely()
         released.complete(Unit)
+        scope.cancel()
       }
     }
   }

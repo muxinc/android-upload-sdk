@@ -2,17 +2,24 @@ package com.mux.video.upload.internal.standardization
 
 import android.content.Context
 import android.media.MediaFormat
+import android.os.Looper
 import androidx.media3.common.MediaItem
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.ExportResult
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.setMain
+import org.junit.After
+import org.junit.Before
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
 import java.io.File
@@ -21,7 +28,11 @@ import java.util.concurrent.CopyOnWriteArrayList
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [28])
 @LooperMode(LooperMode.Mode.PAUSED)
+@OptIn(ExperimentalCoroutinesApi::class)
 class SdrConversionAdapterTests {
+  private val dispatcher = StandardTestDispatcher()
+  @Before fun setUpDispatchers() { Dispatchers.setMain(dispatcher) }
+  @After fun resetDispatchers() { Dispatchers.resetMain() }
   private val context = ApplicationProvider.getApplicationContext<Context>()
   private val facts = compliantFacts().copy(cadence = known(Cadence.Constant), videoProfile = known(VideoProfile.H264Baseline))
   private val conversion = (StandardInputPlanner().plan(facts.copy(averageBitrate = known(9_000_000L)),
@@ -163,10 +174,11 @@ class SdrConversionAdapterTests {
     var starts = 0
     var cancellations = 0
     override fun start(input: File, output: File, completed: (String?, String?) -> Unit, failed: (SdrConversionFailure) -> Unit) {
+      assertEquals(Looper.getMainLooper(), Looper.myLooper())
       starts++; this.output = output; completions = completed; failures = failed
       output.writeText("owned partial bytes")
     }
-    override fun cancel() { cancellations++ }
+    override fun cancel() { assertEquals(Looper.getMainLooper(), Looper.myLooper()); cancellations++ }
     fun complete(video: String? = "video/avc", audio: String? = "audio/mp4a-latm") { completions!!(video, audio) }
   }
   private inner class Run(
@@ -174,30 +186,18 @@ class SdrConversionAdapterTests {
       StandardInputPolicyEvaluator().evaluate(facts, selection())),
     capability: SdrEncoderCapability? = SdrEncoderCapability("fake", 1),
     duringValidation: (() -> Unit)? = null,
+    duringPreflight: (() -> Unit)? = null,
     inputMetadata: MediaMetadataInspection = metadata(),
   ) {
     val sourceFile = File.createTempFile("customer-", ".mp4", context.cacheDir).apply { writeText("original") }
     val unrelated = File(context.cacheDir, "mux-upload/customer-copy.mp4").apply { parentFile!!.mkdirs(); writeText("customer") }
     val engine = FakeEngine()
     val results = CopyOnWriteArrayList<SdrConversionResult>()
-    val adapter = SdrConversionAdapter(context, preflight = { _, _, _, _ -> capability },
-      validate = { _, _, _, _, _ -> duringValidation?.invoke(); validation }, createEngine = { _, _, _, _, _ -> engine })
+    val adapter = SdrConversionAdapter(context, preflight = { _, _, _, _ -> duringPreflight?.invoke(); capability },
+      validate = { _, _, _, _, _ -> duringValidation?.invoke(); validation }, createEngine = { _, _, _, _, _ -> engine },
+      ioDispatcher = dispatcher)
     val attempt = adapter.start(sourceFile, inputMetadata, samples(), conversion, results::add)
-    fun idle() {
-      val thread = attempt.looper.thread
-      if (results.isEmpty() && thread.isAlive) {
-        try { shadowOf(attempt.looper).idle() }
-        catch (error: IllegalStateException) {
-          // PAUSED-mode idle can race a terminal quit before its barrier is posted.
-          thread.join(5_000)
-          if (results.isEmpty() || thread.isAlive) throw error
-        }
-      }
-      if (results.isNotEmpty()) {
-        thread.join(5_000)
-        assertFalse("Terminal attempt thread still running", thread.isAlive)
-      }
-    }
+    fun idle() { dispatcher.scheduler.runCurrent() }
     fun assertInputSafe() { assertEquals("original", sourceFile.readText()); assertEquals("customer", unrelated.readText()) }
   }
   @Test fun successRetainsVerifiedFileUntilOwnerDeletesItAndIgnoresLateEvents() {
@@ -244,6 +244,29 @@ class SdrConversionAdapterTests {
     val run = Run(); run.attempt.cancel(); run.idle()
     assertEquals(listOf(SdrConversionResult.Cancelled), run.results)
     assertEquals(0, run.engine.starts); run.assertInputSafe()
+  }
+  @Test fun cancelWithoutMedia3CallbackStopsExportAndDeletesPartial() {
+    val run = Run(duringValidation = { fail("Cancelled export must not validate") })
+    run.idle()
+    run.attempt.cancel()
+    run.idle()
+    assertEquals(listOf(SdrConversionResult.Cancelled), run.results)
+    assertEquals(1, run.engine.cancellations)
+    assertFalse(run.engine.output!!.exists())
+    run.engine.complete()
+    run.engine.failures!!(SdrConversionFailure.Export)
+    run.idle()
+    assertEquals(1, run.results.size)
+    run.assertInputSafe()
+  }
+  @Test fun cancellationDuringPreflightDoesNotAllocateOrStartExport() {
+    lateinit var run: Run
+    run = Run(duringPreflight = { run.attempt.cancel() })
+    run.idle()
+    assertEquals(listOf(SdrConversionResult.Cancelled), run.results)
+    assertNull(run.engine.output)
+    assertEquals(0, run.engine.starts)
+    run.assertInputSafe()
   }
   @Test fun forbiddenFallbackWinsOverLaterCompletion() {
     val run = Run(); run.idle(); run.engine.failures!!(SdrConversionFailure.ForbiddenFallback); run.engine.complete(); run.idle()
