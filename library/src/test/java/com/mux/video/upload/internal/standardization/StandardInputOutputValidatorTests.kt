@@ -119,7 +119,7 @@ class StandardInputOutputValidatorTests {
   }
   @Test fun partialScansNeverReachComparisonAndLateCancellationWins() {
     val file = File.createTempFile("validation", ".mp4")
-    val metadata = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), emptyList(), MediaFact.Unknown, output, 0)
+    val metadata = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), emptyList(), output, 0)
     try {
       file.writeBytes(byteArrayOf(1))
       for (status in SampleScanStatus.entries.filter { it != SampleScanStatus.Complete }) {
@@ -136,7 +136,7 @@ class StandardInputOutputValidatorTests {
   }
   @Test fun changedFileCannotSelectGeneratedBytesAfterCompleteInspection() {
     val file = File.createTempFile("validation", ".mp4")
-    val metadata = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), emptyList(), MediaFact.Unknown, output, 0)
+    val metadata = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), emptyList(), output, 0)
     fun validator(timelineRead: () -> MediaSampleInspection) = StandardInputOutputValidator(
       inspectMetadata = { MetadataInspectionResult.Success(metadata) },
       inspectTimeline = { _, _, _ -> timelineRead() })
@@ -180,7 +180,7 @@ class StandardInputOutputValidatorTests {
     val file = File.createTempFile("validation", ".mp4")
     try {
       file.writeBytes(byteArrayOf(1))
-      val metadata = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), emptyList(), MediaFact.Unknown, output, 0)
+      val metadata = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), emptyList(), output, 0)
       val validator = StandardInputOutputValidator(inspectMetadata = { MetadataInspectionResult.Success(metadata) },
         inspectTimeline = { _, _, _ -> MediaSampleInspection(MediaFacts(), SampleScanStatus.Complete, timeline = timeline()) })
       assertTrue(reason(validator.validateGeneratedOutput(file, source, timeline(), plan))
