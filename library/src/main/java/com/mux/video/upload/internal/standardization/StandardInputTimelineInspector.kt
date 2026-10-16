@@ -44,9 +44,10 @@ internal class StandardInputTimelineInspector(
         return result(SampleScanStatus.Unsupported)
       val tracks = IsoTimelineReader.read(file, limits.maximumSamples) { reader.checkBudget() }
       val media = metadata.tracks.filter { it.kind == TrackKind.Video || it.kind == TrackKind.Audio }
-      if (media.size != tracks.size || media.any { it.containerIndex.valueOrNull !in tracks.keys })
+      if (media.size != tracks.size || media.any { it.sourceTrackId.valueOrNull !in tracks.keys } ||
+        media.map { it.sourceTrackId }.distinct().size != media.size)
         return result(SampleScanStatus.Unsupported)
-      val timingByExtractor = media.associate { it.extractorIndex to tracks.getValue(it.containerIndex.valueOrNull!!) }
+      val timingByExtractor = media.associate { it.extractorIndex to tracks.getValue(it.sourceTrackId.valueOrNull!!) }
       for (track in media) {
         if (track.kind == TrackKind.Audio && !timingByExtractor.getValue(track.extractorIndex).hasEdit && track.audio?.let {
             (it.encoderDelaySamples.valueOrNull ?: 0) > 0 || (it.encoderPaddingSamples.valueOrNull ?: 0) > 0
@@ -82,13 +83,12 @@ internal class StandardInputTimelineInspector(
           throw SampleScanStop(SampleScanStatus.Unreadable)
       } finally { extractor.release() }
       reader.checkBudget()
-      val firstAudio = media.filter { it.kind == TrackKind.Audio }.minByOrNull { it.containerIndex.valueOrNull!! }
+      val firstAudio = media.filter { it.kind == TrackKind.Audio }.minByOrNull { it.extractorIndex }
       val audioTime = firstAudio?.let { timingByExtractor.getValue(it.extractorIndex) }
       val offset = audioTime?.let { AudioVideoStartOffset.Seconds(it.startSeconds - videoTime.startSeconds) }
         ?: AudioVideoStartOffset.NotApplicable
       val facts = VideoSampleFactsReader.read(samples, videoTime, metadata.facts)
-        .copy(editList = metadata.isoTracks.valueOrNull
-          ?.getOrNull(video.containerIndex.valueOrNull ?: -1)?.editList ?: MediaFact.Unknown)
+        .copy(editList = IsoContainerMetadataReader.videoEdit(file, video.sourceTrackId.valueOrNull))
       reader.checkBudget()
       result(SampleScanStatus.Complete, StandardInputTimelineFacts(
         MediaFact.Known(maxOf(videoTime.endSeconds, audioTime?.endSeconds ?: videoTime.endSeconds)),
@@ -171,7 +171,7 @@ internal object IsoTimelineReader {
       }
       val movieScale = timescale(children.single { it.type == "mvhd" })
       var totalSamples = 0L
-      children.filter { it.type == "trak" }.mapIndexedNotNull { index, track ->
+      children.filter { it.type == "trak" }.mapNotNull { track ->
         checkBudget()
         val trackChildren = children(track)
         val mdia = children(trackChildren.single { it.type == "mdia" })
@@ -179,7 +179,13 @@ internal object IsoTimelineReader {
         require(handler.end - handler.payload >= 12)
         input.seek(handler.payload + 8)
         val kind = ByteArray(4).also { input.readFully(it) }.toString(Charsets.US_ASCII)
-        if (kind !in listOf("vide", "soun")) return@mapIndexedNotNull null
+        if (kind !in listOf("vide", "soun")) return@mapNotNull null
+        val trackHeader = trackChildren.single { it.type == "tkhd" }
+        input.seek(trackHeader.payload)
+        val idOffset = when (input.readUnsignedByte()) { 0 -> 12; 1 -> 20; else -> error("Unsupported track header") }
+        require(trackHeader.end - trackHeader.payload >= idOffset + 4)
+        input.seek(trackHeader.payload + idOffset)
+        val trackId = input.readInt().also { require(it > 0) }
         val scale = timescale(mdia.single { it.type == "mdhd" })
         val tables = children(children(mdia.single { it.type == "minf" }).single { it.type == "stbl" })
         fun runs(box: IsoMetadataBox, composition: Boolean): List<Pair<Int, Long>> {
@@ -266,7 +272,7 @@ internal object IsoTimelineReader {
         val effectiveIndices = starts.indices.filter { ends[it].toDouble() / scale > mediaStart && platformTimes[it] < end }
         val effectiveTimes = effectiveIndices.map { maxOf(start, platformTimes[it]) }.sorted()
         require(effectiveTimes.isNotEmpty())
-        index to IsoTrackTimeline(platformTimes, start, end, rawEnd - mediaStart, effectiveTimes, editDuration != null, scale, mediaStart, effectiveIndices)
-      }.toMap()
+        trackId to IsoTrackTimeline(platformTimes, start, end, rawEnd - mediaStart, effectiveTimes, editDuration != null, scale, mediaStart, effectiveIndices)
+      }.also { require(it.map { track -> track.first }.distinct().size == it.size) }.toMap()
     }
 }

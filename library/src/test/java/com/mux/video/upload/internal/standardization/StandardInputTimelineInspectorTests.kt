@@ -22,18 +22,18 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
       (if (version == 0) int(duration.toInt()) + int(start.toInt()) else long(duration) + long(start)) + int(rate)))
   private fun track(deltas: List<Int> = listOf(1000, 1000, 1000), offsets: List<Int>? = null,
     edits: ByteArray = byteArrayOf(), kind: String = "vide", scale: Int = 1000,
-    timingVersion: Int = 0, headerVersion: Int = 0): ByteArray {
+    timingVersion: Int = 0, headerVersion: Int = 0, id: Int = if (kind == "vide") 1 else 2): ByteArray {
     val stts = box("stts", ByteArray(4) + int(deltas.size) + deltas.flatMap { (int(1) + int(it)).toList() }.toByteArray())
     val ctts = offsets?.let { box("ctts", byteArrayOf(timingVersion.toByte(), 0, 0, 0) + int(it.size) +
       it.flatMap { offset -> (int(1) + int(offset)).toList() }.toByteArray()) } ?: byteArrayOf()
-    return box("trak", edits + box("mdia", box("hdlr", ByteArray(8) + kind.toByteArray()) +
+    return box("trak", box("tkhd", ByteArray(12) + int(id)) + edits + box("mdia", box("hdlr", ByteArray(8) + kind.toByteArray()) +
       box("mdhd", header(scale, headerVersion)) + box("minf", box("stbl", stts + ctts))))
   }
   private fun file(tracks: ByteArray = track(), scale: Int = 1000, extra: ByteArray = byteArrayOf()): File =
     File.createTempFile("timeline", ".mp4").apply { writeBytes(box("moov", box("mvhd", header(scale)) + tracks) + extra) }
   private fun read(tracks: ByteArray = track(), scale: Int = 1000, maximum: Int = 250000): IsoTrackTimeline {
     val file = file(tracks, scale)
-    return try { IsoTimelineReader.read(file, maximum).getValue(0) } finally { file.delete() }
+    return try { IsoTimelineReader.read(file, maximum).getValue(1) } finally { file.delete() }
   }
   private fun invalid(tracks: ByteArray, scale: Int = 1000, maximum: Int = 250000) {
     try { read(tracks, scale, maximum); fail("Unproven timeline was published") } catch (_: IllegalArgumentException) { } catch (stop: SampleScanStop) { assertEquals(SampleScanStatus.LimitExceeded, stop.status) }
@@ -90,7 +90,7 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
     return MediaMetadataInspection(known(ContainerKind.IsoBaseMedia),
       listOf(track(0, TrackKind.Video)) + (if (audio) listOf(track(1, TrackKind.Audio)) else emptyList()) +
         (if (secondaryAudio) listOf(track(2, TrackKind.Audio)) else emptyList()),
-      MediaFact.Unknown, MediaFacts(videoTrackCount = known(1),
+      MediaFacts(videoTrackCount = known(1),
         audioTracks = known(List(if (secondaryAudio) 2 else if (audio) 1 else 0) { AudioTrack() })), 0)
   }
   private fun inspect(audio: Boolean = false, audioOffset: Int = 0, secondaryAudioDelta: Int? = null, sampleLimit: Int = 250000,
@@ -105,7 +105,7 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
     val file = file(track(deltas = videoDeltas, edits = videoEdit?.let { edit(editDuration, it) } ?: byteArrayOf()) +
       (if (audio) track(kind = "soun", offsets = List(3) { audioOffset },
         edits = audioEdit?.let { edit(2000, it) } ?: byteArrayOf()) else byteArrayOf()) +
-      (secondaryAudioDelta?.let { delta -> track(kind = "soun", deltas = List(3) { delta }) } ?: byteArrayOf()))
+      (secondaryAudioDelta?.let { delta -> track(kind = "soun", deltas = List(3) { delta }, id = 3) } ?: byteArrayOf()))
     mockkConstructor(MediaExtractor::class)
     var position = 0; var cancelled = false; var releases = 0; var sources = 0; var reads = 0
     val selected = mutableSetOf<Int>()
@@ -159,6 +159,11 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
     assertEquals(known(3.0), result.timeline.durationSeconds)
     assertEquals(known(AudioVideoStartOffset.NotApplicable), result.timeline.audioVideoStartOffset)
   }
+  @Test fun timelineRequiresThePlatformTrackIdentityToMatch() {
+    val input = metadata(false)
+    assertEquals(SampleScanStatus.Unsupported, inspect(input = input.copy(
+      tracks = input.tracks.map { it.copy(sourceTrackId = known(99)) })).status)
+  }
   @Test fun offsetComesFromEffectiveAudioAndVideoStarts() {
     val result = inspect(audio = true, audioOffset = 100)
     assertEquals(SampleScanStatus.Complete, result.status)
@@ -167,8 +172,7 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
   }
   @Test fun droppedSecondaryAudioDoesNotExtendTheValidatedTimeline() {
     val firstAudio = compliantFacts().audioTracks.valueOrNull!!.single()
-    val input = metadata(true, true).copy(facts = compliantFacts().copy(audioTracks = known(listOf(firstAudio, AudioTrack()))),
-      isoTracks = known(listOf(IsoTrackMetadata("vide", known(1), listOf("avc1"), false, known(0), true, known(EditList.None)))))
+    val input = metadata(true, true).copy(facts = compliantFacts().copy(audioTracks = known(listOf(firstAudio, AudioTrack()))))
     val output = inspect(audio = true, audioOffset = 100, videoDeltas = List(3) { 200 },
       input = input.copy(tracks = input.tracks.take(2), facts = input.facts.copy(audioTracks = known(listOf(firstAudio)))))
     for (secondaryDelta in listOf(500, 2000)) {
@@ -265,8 +269,6 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
 
   @Test fun editedIsoSourceCadencePlansAndValidatesOnlyThePresentedWindow() {
     val input = metadata(false).copy(
-      isoTracks = known(listOf(IsoTrackMetadata("vide", known(1), listOf("avc1"), false,
-        known(0), true, known(EditList.Simple)))),
       facts = compliantFacts(dimensions = Dimensions(2560,1440)).copy(audioTracks = known(emptyList())))
     val source = inspect(videoDeltas = listOf(25,200,200,200), videoEdit = 25,
       editDuration = 600, platformMode = "raw", input = input)
