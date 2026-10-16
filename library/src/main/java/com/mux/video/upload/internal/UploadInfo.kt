@@ -34,16 +34,14 @@ enum class MaximumResolution(val width: Int, val height: Int) {
 
   /**
    * Requested maximum generated dimensions of 3840x2160 (2160p/4K), without upscaling.
-   * The legacy transcoder uses a broader source-size limit for this preset and does not
-   * guarantee output within these dimensions. Exact output limits remain pending in the new
-   * Standard Input pipeline.
+   * If safe local conversion is unavailable, the original file is uploaded.
+   * Configure the matching Direct Upload asset tier separately.
    */
   Preset3840x2160(3840, 2160), // 2160p
 
   /**
    * Requested maximum generated dimensions of 2560x1440 (1440p), without upscaling.
-   * The legacy transcoder uses these size limits with its existing media rules. Reliable resizing
-   * and the updated tier policy remain pending in the new Standard Input pipeline.
+   * If safe local conversion is unavailable, the original file is uploaded.
    * Configure the matching Direct Upload asset tier separately.
    */
   Preset2560x1440(2560, 1440) // 1440p
@@ -84,17 +82,21 @@ internal data class UploadInfo(
   @JvmSynthetic internal val inputStandardization: InputStandardization = InputStandardization(),
   @JvmSynthetic internal val remoteUri: Uri,
   @JvmSynthetic internal val inputFile: File,
-  @JvmSynthetic internal val standardizedFile: File? = null,
   @JvmSynthetic internal val chunkSize: Int,
   @JvmSynthetic internal val retriesPerChunk: Int,
   @JvmSynthetic internal val optOut: Boolean,
   @JvmSynthetic internal val uploadJob: Deferred<Result<UploadStatus>>?,
   @JvmSynthetic internal val statusFlow: StateFlow<UploadStatus>?,
+  @JvmSynthetic internal val attempt: UploadAttempt? = null,
+  @JvmSynthetic internal val restoredFromOriginal: Boolean = false,
+  @JvmSynthetic internal val generatedResumeBlocked: Boolean = false,
 ) {
-  fun isRunning(): Boolean = 
-    statusFlow?.value?.let {
+  internal var session = UploadSession()
+
+  fun isRunning(): Boolean = attempt?.isStopped() != true &&
+    (statusFlow?.value?.let {
       it is UploadStatus.Uploading || it is UploadStatus.Started || it is UploadStatus.Preparing
-    } ?: false
+    } ?: false)
   fun isStandardizationRequested(): Boolean = inputStandardization.standardizationRequested
 }
 
@@ -107,20 +109,24 @@ internal fun UploadInfo.update(
   inputStandardization: InputStandardization = this.inputStandardization,
   remoteUri: Uri = this.remoteUri,
   file: File = this.inputFile,
-  standardizedFile: File? = this.standardizedFile,
   chunkSize: Int = this.chunkSize,
   retriesPerChunk: Int = this.retriesPerChunk,
   optOut: Boolean = this.optOut,
   uploadJob: Deferred<Result<UploadStatus>>? = this.uploadJob,
   statusFlow: StateFlow<UploadStatus>? = this.statusFlow,
+  attempt: UploadAttempt? = this.attempt,
+  restoredFromOriginal: Boolean = this.restoredFromOriginal,
+  generatedResumeBlocked: Boolean = this.generatedResumeBlocked,
 ) = UploadInfo(
   inputStandardization,
   remoteUri,
   file,
-  standardizedFile,
   chunkSize,
   retriesPerChunk,
   optOut,
   uploadJob,
   statusFlow,
-)
+  attempt,
+  restoredFromOriginal,
+  generatedResumeBlocked,
+).also { it.session = session }

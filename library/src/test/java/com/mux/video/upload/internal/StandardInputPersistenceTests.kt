@@ -31,7 +31,7 @@ class StandardInputPersistenceTests : AbsRobolectricTest() {
           val original = upload(InputStandardization(requested, resolution, handling))
           writeUploadState(original, MuxUpload.Progress(bytesUploaded = 5, totalBytes = 10))
           initializeUploadPersistence(context)
-          assertEquals(original, readAllCachedUploads().single())
+          assertEquals(original.update(restoredFromOriginal = true), readAllCachedUploads().single())
           assertEquals(5L, readLastByteForFile(original))
         }
       }
