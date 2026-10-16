@@ -92,7 +92,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     val facts = compliantFacts().copy(averageBitrate = known(9_000_000L), audioTracks = known(listOf(
       AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.Stereo))),
       AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.Mono))))))
-    val metadata = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), emptyList(), MediaFact.Unknown, facts, 0)
+    val metadata = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), emptyList(), facts, 0)
     val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata) },
       inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete) },
       convert = { _, _, _, _, _ -> error("Multi-audio export must never select a replacement track") })

@@ -24,7 +24,7 @@ class UploadPreparationTests : AbsRobolectricTest() {
   private fun source(codec: VideoCodec = VideoCodec.H264) = compliantFacts(codec).copy(
     audioTracks = known(emptyList()), cadence = known(Cadence.Constant))
   private fun metadata(facts: MediaFacts) = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia),
-    emptyList(), MediaFact.Unknown, facts, 0)
+    emptyList(), facts, 0)
   private fun upload() = UploadInfo(remoteUri = Uri.parse("https://example.invalid/upload"),
     inputFile = File("unused"), chunkSize = 4, retriesPerChunk = 3, optOut = true, uploadJob = null, statusFlow = null)
 
