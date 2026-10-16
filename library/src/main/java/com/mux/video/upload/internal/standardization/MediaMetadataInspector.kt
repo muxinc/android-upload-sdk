@@ -8,6 +8,7 @@ import android.media.MediaFormat
 import android.os.Build
 import java.io.File
 import java.io.IOException
+import java.nio.ByteBuffer
 
 internal enum class ContainerKind { IsoBaseMedia, Matroska, Other }
 internal enum class TrackKind { Video, Audio, Other, Unknown }
@@ -32,7 +33,7 @@ internal data class VideoTrackMetadata(
   val rotationDegrees: MediaFact<Int>,
   val reportedPlatformRotationDegrees: MediaFact<Int>,
   val pixelFormat: MediaFact<PixelFormat>,
-  val platformColor: ColorMetadata,
+  val color: ColorMetadata,
   val dynamicRange: MediaFact<DynamicRange>,
 )
 
@@ -171,12 +172,20 @@ internal object MediaTrackMetadataReader {
       positiveCode(format.int(MediaFormat.KEY_COLOR_TRANSFER)),
       positiveCode(format.int(MediaFormat.KEY_COLOR_RANGE)),
     ) else ColorMetadata()
+    val platformPixels = pixels(format.int(MediaFormat.KEY_COLOR_FORMAT), apiLevel)
+    val fallback = if (platformPixels == MediaFact.Unknown || platformColor.transfer == MediaFact.Unknown)
+      CodecMetadataReader.video(codec.valueOrNull, (0..2).mapNotNull { format.bytes("csd-$it") }) else CodecMetadata()
+    val color = ColorMetadata(
+      platformColor.standard.takeUnless { it == MediaFact.Unknown } ?: fallback.color.standard,
+      platformColor.transfer.takeUnless { it == MediaFact.Unknown } ?: fallback.color.transfer,
+      platformColor.range.takeUnless { it == MediaFact.Unknown } ?: fallback.color.range,
+    )
     val range = if (mime == "video/dolby-vision") MediaFact.Known(DynamicRange.DolbyVision)
-      else dynamicRange(platformColor.transfer)
+      else dynamicRange(color.transfer)
     return VideoTrackMetadata(codec,
       platformProfile(codec.valueOrNull, if (apiLevel >= 24) format.int(MediaFormat.KEY_PROFILE) else null),
       encoded, display(format, encoded, rotation), rotation, platformRotation,
-      pixels(format.int(MediaFormat.KEY_COLOR_FORMAT), apiLevel), platformColor, range)
+      platformPixels.takeUnless { it == MediaFact.Unknown } ?: fallback.pixelFormat, color, range)
   }
 
   private fun audio(format: MediaFormat, mime: String?): AudioTrackMetadata {
@@ -262,6 +271,12 @@ private fun MediaFormat.long(key: String): Long? = try { if (containsKey(key)) g
 private fun MediaFormat.string(key: String): String? = try { if (containsKey(key)) getString(key) else null } catch (_: RuntimeException) { null }
 private fun MediaFormat.number(key: String): Double? = try { if (containsKey(key)) getFloat(key).toDouble() else null }
   catch (_: RuntimeException) { int(key)?.toDouble() }
+private fun MediaFormat.bytes(key: String): ByteArray? = try {
+  val buffer: ByteBuffer? = getByteBuffer(key)?.duplicate()
+  if (buffer == null || buffer.remaining() !in 1..CodecMetadataReader.MAX_CONFIGURATION_BYTES) null
+  else ByteArray(buffer.remaining()).also { buffer.get(it) }
+} catch (_: RuntimeException) { null }
+
 private fun nonNegative(value: Int?): MediaFact<Int> =
   if (value != null && value >= 0) MediaFact.Known(value) else MediaFact.Unknown
 

@@ -4,6 +4,10 @@ import android.media.AudioFormat as PlatformAudioFormat
 import android.media.MediaCodecInfo.CodecCapabilities
 import android.media.MediaCodecInfo.CodecProfileLevel
 import android.media.MediaFormat
+import androidx.media3.container.NalUnitUtil
+import io.mockk.every
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
 import com.mux.exoplayeradapter.AbsRobolectricTest
 import org.junit.Assert.*
 import org.junit.Test
@@ -42,6 +46,34 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
     assertEquals(0, bytes.position())
   }
 
+  @Test fun missingPixelAndColorFactsUseHeadersWithoutOverridingPlatformValues() {
+    val avc = "000000016742c028da01e0089f97016a02020280000003008000001e078c1950"
+      .chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    val format = video().apply { setByteBuffer("csd-0", ByteBuffer.wrap(avc)) }
+    assertEquals(MediaFact.Known(PixelFormat(8, ChromaSubsampling.Yuv420)), facts(format).pixelFormat)
+    assertEquals(MediaFact.Known(DynamicRange.Sdr), facts(format, 23).dynamicRange)
+    format.setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_HLG)
+    format.setInteger(MediaFormat.KEY_PROFILE, CodecProfileLevel.AVCProfileHigh)
+    format.setInteger(MediaFormat.KEY_COLOR_FORMAT, CodecCapabilities.COLOR_FormatYUVP010)
+    assertEquals(MediaFact.Known(DynamicRange.Hlg), facts(format, 33).dynamicRange)
+    assertEquals(MediaFact.Known(VideoProfile.H264High), facts(format, 33).videoProfile)
+    assertEquals(MediaFact.Known(PixelFormat(10, ChromaSubsampling.Yuv420)), facts(format, 33).pixelFormat)
+  }
+
+  @Test fun missingFactFallbackSurvivesIncompatibleMedia3() {
+    mockkStatic(NalUnitUtil::class)
+    try {
+      every { NalUnitUtil.findNalUnit(any(), any(), any(), any()) } throws NoSuchMethodError()
+      val f = facts(video().apply {
+        setByteBuffer("csd-0", ByteBuffer.wrap(byteArrayOf(0, 0, 1, 0x67)))
+        setInteger(MediaFormat.KEY_PROFILE, CodecProfileLevel.AVCProfileHigh)
+      })
+      assertEquals(MediaFact.Unknown, f.pixelFormat)
+      assertEquals(MediaFact.Unknown, f.dynamicRange)
+      assertEquals(MediaFact.Known(VideoProfile.H264High), f.videoProfile)
+    } finally { unmockkStatic(NalUnitUtil::class) }
+  }
+
   @Test fun readsHdrAndProfileFromPlatformProperties() {
     for ((transfer, expected) in listOf(MediaFormat.COLOR_TRANSFER_HLG to DynamicRange.Hlg,
       MediaFormat.COLOR_TRANSFER_ST2084 to DynamicRange.Pq)) {
@@ -55,7 +87,7 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
     }
   }
 
-  @Test fun api23AndMissingPlatformColorRemainUnknownRatherThanAssumingSdr() {
+  @Test fun api23AndMissingPlatformColorRemainUnknownWithoutHeaderEvidence() {
     val format = video("video/hevc").apply {
       setInteger(MediaFormat.KEY_PROFILE, CodecProfileLevel.HEVCProfileMain10)
       setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_HLG)
@@ -157,4 +189,24 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
     assertEquals(MetadataFailure.LimitExceeded, MediaMetadataInspector.trackCountFailure(65))
     assertNull(MediaMetadataInspector.trackCountFailure(64))
   }
+  @Test fun boundsAllocationDrivingHevcReferenceCounts() {
+    fun ue(value: Int): String {
+      val binary = (value + 1).toString(2)
+      return "0".repeat(binary.length - 1) + binary
+    }
+    val bits = "00000001" + "00000001" + "0".repeat(88) + ue(0) + ue(1) +
+      ue(1920) + ue(1080) + "0" + ue(0).repeat(3) + "0" + ue(0).repeat(9) +
+      "0000" + ue(1) + ue(100000000) + ue(0)
+    val raw = bits.padEnd((bits.length + 7) / 8 * 8, '0').chunked(8).map { it.toInt(2).toByte() }
+    val escaped = mutableListOf<Byte>(0x42, 1)
+    var zeroCount = 0
+    for (byte in raw) {
+      if (zeroCount == 2 && byte.toInt() and 255 <= 3) { escaped.add(3); zeroCount = 0 }
+      escaped.add(byte)
+      zeroCount = if (byte == 0.toByte()) zeroCount + 1 else 0
+    }
+    val csd = byteArrayOf(0, 0, 0, 1) + escaped.toByteArray()
+    assertEquals(CodecMetadata(), CodecMetadataReader.video(VideoCodec.Hevc, listOf(csd)))
+  }
+
 }
