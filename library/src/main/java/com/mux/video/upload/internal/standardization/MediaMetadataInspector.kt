@@ -1,12 +1,13 @@
 package com.mux.video.upload.internal.standardization
 
+import android.media.AudioFormat as PlatformAudioFormat
+import android.media.MediaCodecInfo.CodecCapabilities
 import android.media.MediaCodecInfo.CodecProfileLevel
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.os.Build
 import java.io.File
 import java.io.IOException
-import java.nio.ByteBuffer
 
 internal enum class ContainerKind { IsoBaseMedia, Matroska, Other }
 internal enum class TrackKind { Video, Audio, Other, Unknown }
@@ -17,6 +18,12 @@ internal sealed interface MetadataInspectionResult {
   data class Failure(val reason: MetadataFailure) : MetadataInspectionResult
 }
 
+internal data class ColorMetadata(
+  val standard: MediaFact<Int> = MediaFact.Unknown,
+  val transfer: MediaFact<Int> = MediaFact.Unknown,
+  val range: MediaFact<Int> = MediaFact.Unknown,
+)
+
 internal data class VideoTrackMetadata(
   val codec: MediaFact<VideoCodec>,
   val profile: MediaFact<VideoProfile>,
@@ -24,7 +31,7 @@ internal data class VideoTrackMetadata(
   val displayDimensions: MediaFact<Dimensions>,
   val rotationDegrees: MediaFact<Int>,
   val reportedPlatformRotationDegrees: MediaFact<Int>,
-  val configuration: CodecMetadata,
+  val pixelFormat: MediaFact<PixelFormat>,
   val platformColor: ColorMetadata,
   val dynamicRange: MediaFact<DynamicRange>,
 )
@@ -40,6 +47,7 @@ internal data class AudioTrackMetadata(
 /** Reported metadata, not sample measurements or an effective presentation timeline. */
 internal data class TrackMetadata(
   val extractorIndex: Int,
+  /** Track order reported by MediaExtractor; ISO timing identity is checked separately. */
   val containerIndex: MediaFact<Int>,
   val sourceTrackId: MediaFact<Int>,
   val kind: TrackKind,
@@ -55,7 +63,6 @@ internal data class TrackMetadata(
 internal data class MediaMetadataInspection(
   val container: MediaFact<ContainerKind>,
   val tracks: List<TrackMetadata>,
-  val isoTracks: MediaFact<List<IsoTrackMetadata>>,
   val facts: MediaFacts,
   val elapsedNanos: Long,
 )
@@ -71,28 +78,12 @@ internal class MediaMetadataInspector {
       val container = container(file)
       extractor.setDataSource(file.absolutePath)
       trackCountFailure(extractor.trackCount)?.let { return MetadataInspectionResult.Failure(it) }
-      val iso = if (container == MediaFact.Known(ContainerKind.IsoBaseMedia))
-        IsoContainerMetadataReader.read(file) else MediaFact.Unknown
       val tracks = (0 until extractor.trackCount).map { index ->
-        val format = extractor.getTrackFormat(index)
-        val containers = iso.valueOrNull
-        val orientation = if (format.string(MediaFormat.KEY_MIME)?.startsWith("video/") == true)
-          containers?.filter { it.handler == "vide" }?.singleOrNull() else null
-        val track = MediaTrackMetadataReader.read(index, format,
-          containerRotation = orientation?.rotationDegrees
-            ?: if (container == MediaFact.Known(ContainerKind.IsoBaseMedia)) MediaFact.Unknown else null)
-        val id = track.sourceTrackId.valueOrNull
-        val match = if (id != null) containers?.indexOfFirst { it.trackId.valueOrNull == id } else null
-        val containerIndex = when {
-          match != null && match >= 0 && containers!![match].matches(track.kind) -> MediaFact.Known(match)
-          id == null && containers?.size == extractor.trackCount && containers[index].matches(track.kind) -> MediaFact.Known(index)
-          else -> MediaFact.Unknown
-        }
-        track.copy(containerIndex = containerIndex)
+        MediaTrackMetadataReader.read(index, extractor.getTrackFormat(index))
       }
-      val containerFacts = MediaContainerMetadataReader.facts(container, iso, tracks)
+      val facts = MediaTrackMetadataReader.facts(tracks)
       MetadataInspectionResult.Success(MediaMetadataInspection(
-        container, tracks, iso, containerFacts, System.nanoTime() - started))
+        container, tracks, facts, System.nanoTime() - started))
     } catch (_: IOException) {
       MetadataInspectionResult.Failure(MetadataFailure.Unreadable)
     } catch (_: RuntimeException) {
@@ -125,51 +116,8 @@ internal class MediaMetadataInspector {
   }
 }
 
-/** Container identities establish physical track count and audio order; ambiguous views stay unknown. */
-internal object MediaContainerMetadataReader {
-  fun facts(container: MediaFact<ContainerKind>, iso: MediaFact<List<IsoTrackMetadata>>,
-    tracks: List<TrackMetadata>): MediaFacts {
-    val dolby = iso.valueOrNull?.any { it.hasDolbyVisionConfiguration } == true ||
-      tracks.any { it.video?.dynamicRange == MediaFact.Known(DynamicRange.DolbyVision) }
-    fun fallback(): MediaFacts {
-      val facts = MediaTrackMetadataReader.facts(tracks,
-        audioOrderKnown = container != MediaFact.Known(ContainerKind.IsoBaseMedia))
-      return if (dolby) facts.copy(dynamicRange = MediaFact.Known(DynamicRange.DolbyVision)) else facts
-    }
-    if (container != MediaFact.Known(ContainerKind.IsoBaseMedia)) return fallback()
-    val containers = iso.valueOrNull ?: return fallback()
-    if (containers.any { it.handler == null }) return fallback().copy(videoTrackCount = MediaFact.Unknown, audioTracks = MediaFact.Unknown)
-    val videoIndices = containers.indices.filter { containers[it].handler == "vide" }
-    val audioIndices = containers.indices.filter { containers[it].handler == "soun" }
-    val audioViews = tracks.filter { it.kind == TrackKind.Audio }.groupBy { it.containerIndex.valueOrNull }
-    val orderedAudio = if (audioViews.keys == audioIndices.toSet() && audioViews.values.all { it.size == 1 }) {
-      MediaFact.Known(audioIndices.map { index ->
-        val format = if (containers[index].sampleEntries.size == 1) audioViews[index]!!.single().audio!!.format
-          else MediaFact.Unknown
-        AudioTrack(format)
-      })
-    } else MediaFact.Unknown
-    val base = MediaFacts(videoTrackCount = MediaFact.Known(videoIndices.size), audioTracks = orderedAudio,
-      dynamicRange = if (dolby) MediaFact.Known(DynamicRange.DolbyVision) else MediaFact.Unknown)
-    val index = videoIndices.singleOrNull() ?: return base
-    val description = containers[index]
-    if (description.sampleEntries.size != 1) return base
-    val views = tracks.filter { it.kind == TrackKind.Video }
-    if (views.any { it.containerIndex.valueOrNull != index }) return base
-    val selected = views.singleOrNull() ?: return base
-    val video = selected.video ?: return base
-    return video.toFacts(base).copy(
-      displayDimensions = if (description.hasSimpleOrientation && description.hasSimpleSampleGeometry)
-        video.displayDimensions else MediaFact.Unknown,
-      rotationDegrees = if (description.hasSimpleOrientation) video.rotationDegrees else MediaFact.Unknown,
-      dynamicRange = if (dolby) MediaFact.Known(DynamicRange.DolbyVision) else video.dynamicRange,
-    )
-  }
-}
-
 internal object MediaTrackMetadataReader {
-  fun read(index: Int, format: MediaFormat, apiLevel: Int = Build.VERSION.SDK_INT,
-    containerRotation: MediaFact<Int>? = null): TrackMetadata {
+  fun read(index: Int, format: MediaFormat, apiLevel: Int = Build.VERSION.SDK_INT): TrackMetadata {
     val mime = format.string(MediaFormat.KEY_MIME)
     val kind = when {
       mime == null -> TrackKind.Unknown
@@ -178,16 +126,16 @@ internal object MediaTrackMetadataReader {
       else -> TrackKind.Other
     }
     return TrackMetadata(
-      index, MediaFact.Unknown, positiveCode(format.int("track-id")), kind, mime?.let { MediaFact.Known(it) } ?: MediaFact.Unknown,
+      index, MediaFact.Known(index), positiveCode(format.int("track-id")), kind, mime?.let { MediaFact.Known(it) } ?: MediaFact.Unknown,
       positive(format.long(MediaFormat.KEY_DURATION)?.toDouble()?.div(1_000_000)),
       positive(format.number(MediaFormat.KEY_FRAME_RATE)),
       positiveCode(format.int(MediaFormat.KEY_BIT_RATE)),
-      video = if (kind == TrackKind.Video) video(format, mime, apiLevel, containerRotation) else null,
+      video = if (kind == TrackKind.Video) video(format, mime, apiLevel) else null,
       audio = if (kind == TrackKind.Audio) audio(format, mime) else null,
     )
   }
 
-  fun facts(tracks: List<TrackMetadata>, audioOrderKnown: Boolean = true): MediaFacts {
+  fun facts(tracks: List<TrackMetadata>): MediaFacts {
     val dolby = tracks.any { it.video?.dynamicRange == MediaFact.Known(DynamicRange.DolbyVision) }
     if (tracks.any { it.kind == TrackKind.Unknown }) return MediaFacts(
       dynamicRange = if (dolby) MediaFact.Known(DynamicRange.DolbyVision) else MediaFact.Unknown)
@@ -198,50 +146,54 @@ internal object MediaTrackMetadataReader {
     val ambiguousViews = dolby && videos.size > 1 && (ids.any { it == null } || ids.distinct().size != ids.size)
     val base = MediaFacts(
       videoTrackCount = if (ambiguousViews) MediaFact.Unknown else MediaFact.Known(videos.size),
-      audioTracks = if (audioOrderKnown || audio.size <= 1) MediaFact.Known(audio) else MediaFact.Unknown,
+      audioTracks = MediaFact.Known(audio),
       dynamicRange = if (dolby) MediaFact.Known(DynamicRange.DolbyVision) else MediaFact.Unknown,
     )
     return videos.singleOrNull()?.video?.toFacts(base) ?: base
   }
 
-  private fun video(format: MediaFormat, mime: String?, apiLevel: Int,
-    containerRotation: MediaFact<Int>?): VideoTrackMetadata {
+  private fun video(format: MediaFormat, mime: String?, apiLevel: Int): VideoTrackMetadata {
     val codec = when (mime) {
       "video/avc" -> MediaFact.Known(VideoCodec.H264)
       "video/hevc" -> MediaFact.Known(VideoCodec.Hevc)
       null -> MediaFact.Unknown
       else -> MediaFact.Known(VideoCodec.Other)
     }
-    val csd = (0..2).mapNotNull { format.bytes("csd-$it") }
-    val config = CodecMetadataReader.video(codec.valueOrNull, csd)
     val encoded = dimensions(format.int(MediaFormat.KEY_WIDTH), format.int(MediaFormat.KEY_HEIGHT))
     val platformRotation = format.int(MediaFormat.KEY_ROTATION)?.let {
       if (it % 90 == 0) MediaFact.Known((it % 360 + 360) % 360) else MediaFact.Unknown
     } ?: MediaFact.Unknown
     // Match the shared transform convention while retaining Android's raw angle as an observation.
-    val normalizedPlatform = platformRotation.valueOrNull?.let { MediaFact.Known((360 - it) % 360) }
-      ?: if (!format.containsKey(MediaFormat.KEY_ROTATION) && containerRotation == null) MediaFact.Known(0) else MediaFact.Unknown
-    val rotation = if (format.containsKey(MediaFormat.KEY_ROTATION) && platformRotation == MediaFact.Unknown)
-      MediaFact.Unknown else reconcile(containerRotation ?: MediaFact.Unknown, normalizedPlatform)
+    val rotation = platformRotation.valueOrNull?.let { MediaFact.Known((360 - it) % 360) }
+      ?: if (!format.containsKey(MediaFormat.KEY_ROTATION)) MediaFact.Known(0) else MediaFact.Unknown
     val platformColor = if (apiLevel >= 24) ColorMetadata(
       positiveCode(format.int(MediaFormat.KEY_COLOR_STANDARD)),
       positiveCode(format.int(MediaFormat.KEY_COLOR_TRANSFER)),
       positiveCode(format.int(MediaFormat.KEY_COLOR_RANGE)),
     ) else ColorMetadata()
-    val transfer = reconcile(platformColor.transfer, config.color.transfer)
     val range = if (mime == "video/dolby-vision") MediaFact.Known(DynamicRange.DolbyVision)
-      else dynamicRange(transfer)
+      else dynamicRange(platformColor.transfer)
     return VideoTrackMetadata(codec,
-      reconcile(platformProfile(codec.valueOrNull, format.int(MediaFormat.KEY_PROFILE)), config.profile),
-      encoded, display(format, encoded, rotation, config.pixelAspectRatio), rotation, platformRotation,
-      config, platformColor, range)
+      platformProfile(codec.valueOrNull, if (apiLevel >= 24) format.int(MediaFormat.KEY_PROFILE) else null),
+      encoded, display(format, encoded, rotation), rotation, platformRotation,
+      pixels(format.int(MediaFormat.KEY_COLOR_FORMAT), apiLevel), platformColor, range)
   }
 
   private fun audio(format: MediaFormat, mime: String?): AudioTrackMetadata {
     val count = positiveCode(format.int(MediaFormat.KEY_CHANNEL_COUNT))
     val audio = when (mime) {
-      "audio/mp4a-latm" -> CodecMetadataReader.aacLayout(format.bytes("csd-0"), count.valueOrNull)
-        .valueOrNull?.let { MediaFact.Known(AudioFormat.Aac(it)) } ?: MediaFact.Unknown
+      "audio/mp4a-latm" -> {
+        val mask = format.int(MediaFormat.KEY_CHANNEL_MASK)?.takeIf { it != 0 }
+        val expected = when (count.valueOrNull) {
+          1 -> setOf(PlatformAudioFormat.CHANNEL_OUT_MONO)
+          2 -> setOf(PlatformAudioFormat.CHANNEL_OUT_STEREO)
+          6 -> setOf(PlatformAudioFormat.CHANNEL_OUT_5POINT1)
+          else -> emptySet()
+        }
+        val layout = if ((mask != null && mask !in expected) || (count.valueOrNull == 6 && mask == null))
+          MediaFact.Unknown else aacChannelLayout(count.valueOrNull)
+        layout.valueOrNull?.let { MediaFact.Known(AudioFormat.Aac(it)) } ?: MediaFact.Unknown
+      }
       null -> MediaFact.Unknown
       else -> MediaFact.Known(AudioFormat.OtherCodec)
     }
@@ -249,8 +201,7 @@ internal object MediaTrackMetadataReader {
       nonNegative(format.int(MediaFormat.KEY_ENCODER_DELAY)), nonNegative(format.int(MediaFormat.KEY_ENCODER_PADDING)))
   }
 
-  private fun display(format: MediaFormat, encoded: MediaFact<Dimensions>, rotation: MediaFact<Int>,
-    headerAspect: MediaFact<Double>): MediaFact<Dimensions> {
+  private fun display(format: MediaFormat, encoded: MediaFact<Dimensions>, rotation: MediaFact<Int>): MediaFact<Dimensions> {
     val size = encoded.valueOrNull ?: return MediaFact.Unknown
     val degrees = rotation.valueOrNull ?: return MediaFact.Unknown
     val crop = listOf("crop-left", "crop-right", "crop-top", "crop-bottom").map { format.int(it) }
@@ -263,12 +214,18 @@ internal object MediaTrackMetadataReader {
     }
     val sarWidth = format.int("sar-width")
     val sarHeight = format.int("sar-height")
-    val platformAspect = if (sarWidth != null && sarHeight != null && sarWidth > 0 && sarHeight > 0)
-      MediaFact.Known(sarWidth.toDouble() / sarHeight) else MediaFact.Unknown
-    if ((sarWidth != null || sarHeight != null) && platformAspect == MediaFact.Unknown) return MediaFact.Unknown
-    // Phone recordings use square pixels. Do not infer display geometry for unusual aspect ratios.
-    if (reconcile(platformAspect, headerAspect) != MediaFact.Known(1.0)) return MediaFact.Unknown
+    if ((sarWidth != null || sarHeight != null) &&
+      (sarWidth == null || sarHeight == null || sarWidth <= 0 || sarWidth != sarHeight)) return MediaFact.Unknown
     return MediaFact.Known(if (degrees == 90 || degrees == 270) Dimensions(visible.height, visible.width) else visible)
+  }
+
+  private fun pixels(color: Int?, apiLevel: Int): MediaFact<PixelFormat> = when (color) {
+    CodecCapabilities.COLOR_FormatYUV420Planar, CodecCapabilities.COLOR_FormatYUV420PackedPlanar,
+    CodecCapabilities.COLOR_FormatYUV420SemiPlanar, CodecCapabilities.COLOR_FormatYUV420PackedSemiPlanar,
+    CodecCapabilities.COLOR_FormatYUV420Flexible -> MediaFact.Known(PixelFormat(8, ChromaSubsampling.Yuv420))
+    CodecCapabilities.COLOR_FormatYUVP010 -> if (apiLevel >= 33)
+      MediaFact.Known(PixelFormat(10, ChromaSubsampling.Yuv420)) else MediaFact.Unknown
+    else -> MediaFact.Unknown
   }
 
   private fun dimensions(width: Int?, height: Int?): MediaFact<Dimensions> =
@@ -305,19 +262,25 @@ private fun MediaFormat.long(key: String): Long? = try { if (containsKey(key)) g
 private fun MediaFormat.string(key: String): String? = try { if (containsKey(key)) getString(key) else null } catch (_: RuntimeException) { null }
 private fun MediaFormat.number(key: String): Double? = try { if (containsKey(key)) getFloat(key).toDouble() else null }
   catch (_: RuntimeException) { int(key)?.toDouble() }
-private fun MediaFormat.bytes(key: String): ByteArray? {
-  return try {
-    val buffer: ByteBuffer = getByteBuffer(key)?.duplicate() ?: return null
-    if (buffer.remaining() !in 1..CodecMetadataReader.MAX_CONFIGURATION_BYTES) null
-    else ByteArray(buffer.remaining()).also { buffer.get(it) }
-  } catch (_: RuntimeException) { null }
-}
-
 private fun nonNegative(value: Int?): MediaFact<Int> =
   if (value != null && value >= 0) MediaFact.Known(value) else MediaFact.Unknown
 
 private fun VideoTrackMetadata.toFacts(base: MediaFacts): MediaFacts = base.copy(
   videoCodec = codec, videoProfile = profile, encodedDimensions = encodedDimensions,
   displayDimensions = displayDimensions, rotationDegrees = rotationDegrees,
-  pixelFormat = configuration.pixelFormat, dynamicRange = dynamicRange,
+  pixelFormat = pixelFormat, dynamicRange = dynamicRange,
 )
+
+internal fun positive(value: Double?): MediaFact<Double> =
+  if (value != null && value.isFinite() && value > 0) MediaFact.Known(value) else MediaFact.Unknown
+
+internal fun positiveCode(value: Int?): MediaFact<Int> =
+  if (value != null && value > 0) MediaFact.Known(value) else MediaFact.Unknown
+
+internal fun aacChannelLayout(count: Int?): MediaFact<AudioChannelLayout> =
+  if (count == null || count <= 0) MediaFact.Unknown else MediaFact.Known(when (count) {
+    1 -> AudioChannelLayout.Mono
+    2 -> AudioChannelLayout.Stereo
+    6 -> AudioChannelLayout.FivePointOne
+    else -> AudioChannelLayout.Other
+  })
