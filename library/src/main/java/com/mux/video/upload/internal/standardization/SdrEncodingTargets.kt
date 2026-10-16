@@ -42,8 +42,7 @@ internal data class SdrEncodingTargets(
       val facts = source.facts
       // LINEAR is SDR, but this surface path has no proof of its transfer handling.
       if (metadata.tracks.any { it.video?.let { video ->
-          video.platformColor.transfer.valueOrNull == MediaFormat.COLOR_TRANSFER_LINEAR ||
-            video.configuration.color.transfer.valueOrNull == MediaFormat.COLOR_TRANSFER_LINEAR
+          video.color.transfer.valueOrNull == MediaFormat.COLOR_TRANSFER_LINEAR
         } == true }) return null
       if (source.status != SampleScanStatus.Complete || conversion.toneMapsToSdr ||
         conversion.sourceDynamicRange != DynamicRange.Sdr || facts.dynamicRange != MediaFact.Known(DynamicRange.Sdr) ||

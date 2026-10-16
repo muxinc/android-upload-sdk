@@ -46,7 +46,7 @@ class SdrMedia3ConfigurationTests {
     .setHeight(conversion.outputDimensions.height).setFrameRate(30f).setAverageBitrate(targets.bitrate)
     .setColorInfo(ColorInfo.SDR_BT709_LIMITED).build()
   private val video = MediaTrackMetadataReader.read(0, MediaFormat.createVideoFormat("video/avc", 1920, 1080))
-  private val metadata = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), listOf(video), MediaFact.Unknown, facts, 0)
+  private val metadata = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), listOf(video), facts, 0)
 
   @Test fun strictFactoryRejectsMimeDimensionsRotationAndLinearBeforeCodecCreation() {
     val factory = StrictSdrEncoderFactory(context, conversion, targets, SdrEncoderCapability("chosen", 4))
