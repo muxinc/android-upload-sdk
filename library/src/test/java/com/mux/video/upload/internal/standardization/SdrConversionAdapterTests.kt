@@ -33,7 +33,7 @@ class SdrConversionAdapterTests {
     known(if (format.valueOrNull is AudioFormat.Aac) "audio/mp4a-latm" else "audio/mpeg"), known(3.0),
     MediaFact.Unknown, MediaFact.Unknown, audio = AudioTrackMetadata(format, known(channels), known(48_000), known(0), known(0)))
   private fun metadata(tracks: List<TrackMetadata> = listOf(audio())) =
-    MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), tracks, MediaFact.Unknown, facts, 0)
+    MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), tracks, facts, 0)
   private fun samples(input: MediaFacts = facts) = MediaSampleInspection(input, SampleScanStatus.Complete, timeline = timeline)
   private fun targets(plan: StandardInputConversion = conversion, input: MediaFacts = facts,
     tracks: List<TrackMetadata> = listOf(audio())) = SdrEncodingTargets.from(plan, metadata(tracks), samples(input))
