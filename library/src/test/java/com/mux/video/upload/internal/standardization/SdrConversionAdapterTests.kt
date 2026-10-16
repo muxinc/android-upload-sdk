@@ -187,6 +187,7 @@ class SdrConversionAdapterTests {
     capability: SdrEncoderCapability? = SdrEncoderCapability("fake", 1),
     duringValidation: (() -> Unit)? = null,
     duringPreflight: (() -> Unit)? = null,
+    onAllocated: (SdrGeneratedFile) -> Unit = {},
     inputMetadata: MediaMetadataInspection = metadata(),
   ) {
     val sourceFile = File.createTempFile("customer-", ".mp4", context.cacheDir).apply { writeText("original") }
@@ -195,7 +196,7 @@ class SdrConversionAdapterTests {
     val results = CopyOnWriteArrayList<SdrConversionResult>()
     val adapter = SdrConversionAdapter(context, preflight = { _, _, _, _ -> duringPreflight?.invoke(); capability },
       validate = { _, _, _, _, _ -> duringValidation?.invoke(); validation }, createEngine = { _, _, _, _, _ -> engine },
-      ioDispatcher = dispatcher)
+      ioDispatcher = dispatcher, onAllocated = onAllocated)
     val attempt = adapter.start(sourceFile, inputMetadata, samples(), conversion, results::add)
     fun idle() { dispatcher.scheduler.runCurrent() }
     fun assertInputSafe() { assertEquals("original", sourceFile.readText()); assertEquals("customer", unrelated.readText()) }
@@ -203,7 +204,7 @@ class SdrConversionAdapterTests {
   @Test fun successRetainsVerifiedFileUntilOwnerDeletesItAndIgnoresLateEvents() {
     val run = Run(); run.idle(); run.engine.complete(); run.idle()
     val result = run.results.single() as SdrConversionResult.Completed
-    assertTrue(result.output.file.exists()); run.assertInputSafe()
+    assertTrue(result.output.file.exists()); assertTrue(result.output.matchesValidation()); run.assertInputSafe()
     run.engine.failures!!(SdrConversionFailure.Export); run.attempt.cancel()
     assertEquals(1, run.results.size)
     assertTrue(result.output.delete()); assertTrue(result.output.delete())
@@ -329,4 +330,23 @@ class SdrConversionAdapterTests {
     assertEquals("standard-input", generated.file.parentFile!!.name)
     assertTrue(generated.delete()); assertTrue(customer.exists())
   }
+  @Test fun allocationPersistenceFailurePreventsExportAndCleansItsFile() {
+    var allocated: SdrGeneratedFile? = null
+    val run = Run(onAllocated = { allocated = it; throw java.io.IOException("Persistence failed") })
+    run.idle()
+    assertNotNull(allocated); assertFalse(allocated!!.file.exists()); assertEquals(0, run.engine.starts)
+    assertEquals(listOf(SdrConversionResult.Failed(SdrConversionFailure.Export)), run.results)
+    run.assertInputSafe()
+  }
+
+  @Test fun cancellationDuringAllocationPersistencePreventsExportAndCleansItsFile() {
+    var allocated: SdrGeneratedFile? = null
+    lateinit var run: Run
+    run = Run(onAllocated = { allocated = it; run.attempt.cancel() })
+    run.idle()
+    assertNotNull(allocated); assertFalse(allocated!!.file.exists()); assertEquals(0, run.engine.starts)
+    assertEquals(listOf(SdrConversionResult.Cancelled), run.results)
+    run.assertInputSafe()
+  }
+
 }

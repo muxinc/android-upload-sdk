@@ -8,25 +8,15 @@ import okio.BufferedSink
 internal fun ByteArray.asCountingRequestBody(
   mediaType: MediaType?,
   contentLength: Long,
-  callback: (Long) -> Unit
-): RequestBody = CountingRequestBody(
-  bodyData = this,
-  mediaType = mediaType,
-  contentLength = contentLength,
-  callback = callback
-)
-
-@JvmSynthetic
-internal fun ByteArray.asCountingRequestBody(
-  mediaType: MediaType?,
-  contentLength: Long,
   readSize: Int = CountingRequestBody.DEFAULT_READ_LENGTH,
+  oneShot: Boolean = false,
   callback: (Long) -> Unit
 ): RequestBody = CountingRequestBody(
   bodyData = this,
   mediaType = mediaType,
   contentLength = contentLength,
   readLength = readSize,
+  oneShot = oneShot,
   callback = callback
 )
 
@@ -39,6 +29,7 @@ private class CountingRequestBody constructor(
   private val mediaType: MediaType?,
   private val contentLength: Long,
   private val readLength: Int = DEFAULT_READ_LENGTH,
+  private val oneShot: Boolean = false,
   private val callback: (Long) -> Unit,
 ) : RequestBody() {
   private var dead = false
@@ -51,7 +42,7 @@ private class CountingRequestBody constructor(
 
   override fun contentType(): MediaType? = mediaType
 
-  override fun isOneShot(): Boolean = false
+  override fun isOneShot(): Boolean = oneShot
 
   override fun writeTo(sink: BufferedSink) {
     var totalBytes = 0
