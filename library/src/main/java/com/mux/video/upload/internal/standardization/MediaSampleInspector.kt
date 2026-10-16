@@ -54,8 +54,6 @@ internal class MediaSampleInspector(private val limits: SampleScanLimits = Sampl
     if (metadata.facts.videoTrackCount != MediaFact.Known(1) ||
       metadata.facts.videoCodec.valueOrNull !in listOf(VideoCodec.H264, VideoCodec.Hevc))
       return result(SampleScanStatus.Unsupported)
-    if (metadata.container == MediaFact.Known(ContainerKind.IsoBaseMedia) &&
-      track.containerIndex == MediaFact.Unknown) return result(SampleScanStatus.Unsupported)
     val codec = metadata.facts.videoCodec.valueOrNull!!
     val extractor = MediaExtractor()
     return try {
@@ -94,8 +92,7 @@ internal class MediaSampleInspector(private val limits: SampleScanLimits = Sampl
       if (System.nanoTime() - started >= limits.maximumElapsedNanos) return result(SampleScanStatus.LimitExceeded)
       // Match the shared video-edit policy. Audio edits remain separate track observations.
       val edit = when (metadata.container.valueOrNull) {
-        ContainerKind.IsoBaseMedia -> metadata.isoTracks.valueOrNull
-          ?.getOrNull(track.containerIndex.valueOrNull ?: -1)?.editList ?: MediaFact.Unknown
+        ContainerKind.IsoBaseMedia -> IsoContainerMetadataReader.videoEdit(file, track.sourceTrackId.valueOrNull)
         // This proves absence of ISO edits only, not an effective Matroska presentation timeline.
         ContainerKind.Matroska -> MediaFact.Known(EditList.None)
         else -> MediaFact.Unknown
