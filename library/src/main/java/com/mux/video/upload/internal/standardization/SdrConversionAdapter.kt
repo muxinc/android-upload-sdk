@@ -20,8 +20,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.RandomAccessFile
-import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
@@ -174,7 +172,6 @@ internal class SdrConversionAdapter(
             if (validation.facts.videoProfile != MediaFact.Known(targets.profile) ||
               (targets.audioChannels != null && audio?.layout != expectedLayout))
               SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid)
-            else if (!owned.recordValidation()) SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid)
             else if (!owned.recordValidation()) SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid)
             else SdrConversionResult.Completed(owned, validation.facts)
           }

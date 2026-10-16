@@ -154,7 +154,7 @@ internal object UploadPersistence {
     }
   }
 
-  /** Only a different process may clean a blocked record whose engine could have died. */
+  /** Only a different process may clean cancelled/blocked exports whose engine could have died. */
   fun scheduleBlockedCleanup(context: Context): kotlinx.coroutines.Job {
     if (readGenerated().values.none { it.processIdentity != processIdentity })
       return kotlinx.coroutines.Job().apply { complete() }
@@ -164,17 +164,22 @@ internal object UploadPersistence {
         synchronized(generatedWriteLock) {
           if (prefs !== ownerStore) return@synchronized
           val records = readGenerated()
-          val blocked = readBlocks() + readGeneratedBlocks()
-          val stale = records.values.filter { destinationKey(it.url) in blocked && it.processIdentity != processIdentity }
+          val generatedBlocks = readGeneratedBlocks()
+          val blocked = readBlocks() + generatedBlocks
+          val stale = records.values.filter { (destinationKey(it.url) in blocked || it.generated?.abandoned == true) &&
+            it.processIdentity != processIdentity }
           var changed = false
           for (entry in stale) {
             val path = entry.generated?.ownedPath
             val owned = path?.let { com.mux.video.upload.internal.standardization.SdrGeneratedFile.restore(context.cacheDir, it) }
             if (path == null || owned?.delete() == true) {
+              if (entry.generated?.networkStarted == true || entry.generatedResumeBlocked)
+                generatedBlocks += destinationKey(entry.url)
               records.remove(destinationKey(entry.url)); changed = true
             }
           }
-          if (changed) prefs.edit().putString(GENERATED_KEY, JSONArray(records.values.map { it.toJson() }).toString()).commit()
+          if (changed) prefs.edit().putString(GENERATED_KEY, JSONArray(records.values.map { it.toJson() }).toString())
+            .putString(GENERATED_BLOCKS_KEY, JSONArray(generatedBlocks.toList()).toString()).commit()
         }
       } catch (_: Exception) {
         com.mux.video.upload.MuxUploadSdk.logger.e("MuxUpload", "Generated persistence cleanup failed")
@@ -190,6 +195,14 @@ internal object UploadPersistence {
   fun writeGenerated(upload: UploadInfo, state: GeneratedResumeState) {
     synchronized(generatedWriteLock) {
       val records = readGenerated()
+      val key = destinationKey(upload.remoteUri.toString())
+      val existing = records[key]
+      val attempt = upload.attempt
+      // A stopped owner may only mark its existing record abandoned, never claim or revive one.
+      val cancelled = attempt?.isCancelled() == true || attempt?.replacementFailure() != null
+      if (attempt?.isSuperseded() == true ||
+        cancelled && (!state.abandoned || existing == null || !ownsGenerated(upload, existing))) return
+      if (existing != null && !ownsGenerated(upload, existing)) throw GeneratedResumeBlockedException()
       val entry = UploadEntry(upload.inputFile, upload.remoteUri.toString(), upload.chunkSize,
         upload.retriesPerChunk, upload.optOut, Date().time, WAS_RUNNING, 0,
         upload.inputStandardization, originalSelected = false, attemptId = upload.attempt?.id,
@@ -286,7 +299,7 @@ internal object UploadPersistence {
     val entries = fetchEntries()
     val generated = readGenerated()
     val hints = entries.toMap()
-    generated.values.filter { !isHidden(it) && destinationKey(it.url) !in blocks }
+    generated.values.filter { !isHidden(it) && it.generated?.abandoned != true && destinationKey(it.url) !in blocks }
       .groupBy { it.file.absolutePath }.values.forEach { candidates ->
         val entry = candidates.maxBy { it.savedAtLocalMs }
         val hint = hints[entry.file.absolutePath]
@@ -298,7 +311,8 @@ internal object UploadPersistence {
             bytesSent = matching?.bytesSent ?: 0)
         }
       }
-    return entries.values.filter { generated[destinationKey(it.url)]?.let(::isHidden) != true }.map { entry ->
+    return entries.values.filter { generated[destinationKey(it.url)]?.let { record ->
+      isHidden(record) || record.generated?.abandoned == true } != true }.map { entry ->
       val record = generated[destinationKey(entry.url)]
       val blocked = destinationKey(entry.url) in blocks ||
         (record != null && record.file.absoluteFile != entry.file.absoluteFile)

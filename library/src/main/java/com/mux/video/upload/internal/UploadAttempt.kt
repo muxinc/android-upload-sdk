@@ -56,6 +56,7 @@ internal class UploadAttempt(
   @Synchronized fun confirmedProgress() = confirmed
   @Synchronized fun isGeneratedTransport() = transportPayloadGenerated ?: (preparation.verified != null)
   @Synchronized fun supersede() { superseded = true }
+  @Synchronized fun isSuperseded() = superseded
 
   @Synchronized fun retainGenerated(output: SdrGeneratedFile) {
     if (superseded) preparation.discardLateOutput(output)

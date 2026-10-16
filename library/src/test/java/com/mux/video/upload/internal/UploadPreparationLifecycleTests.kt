@@ -1343,7 +1343,8 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     assertFalse(readUploadResumeState(target).generatedResumeBlocked)
     assertTrue(readCachedUploadSnapshots().isEmpty())
     val output = generated(12)
-    val fresh = target.update(attempt = UploadAttempt(UploadPreparationState(), MuxUpload.Progress()))
+    val fresh = target.update(attempt = UploadAttempt(UploadPreparationState(), MuxUpload.Progress(),
+      previousPersistenceOwnerId = old.attempt!!.id))
     val freshState = state.copy(phase = PreparationPhase.Validated, ownedPath = output.file.absolutePath,
       payload = output.validatedIdentity, networkStarted = true)
     runBlocking(Dispatchers.IO) {
@@ -1527,6 +1528,70 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     assertTrue(upload.error is GeneratedResumeBlockedException)
     assertEquals(0, preparations); assertEquals(0, queries); assertTrue(chunks.isEmpty())
     assertFalse(output.file.exists()); assertTrue(readUploadResumeState(info()).generatedResumeBlocked)
+  }
+
+  @Test fun lateGeneratedWritesCannotReplaceTheNewOwnersIdentity() {
+    val target = info()
+    val state = GeneratedResumeState(PayloadIdentity.capture(source)!!)
+    val old = target.update(attempt = UploadAttempt(UploadPreparationState(), MuxUpload.Progress()))
+    val output = generated(12)
+    val fresh = target.update(attempt = UploadAttempt(UploadPreparationState(), MuxUpload.Progress(), old.attempt!!.id))
+    val validated = state.copy(phase = PreparationPhase.Validated, ownedPath = output.file.absolutePath,
+      payload = output.validatedIdentity, networkStarted = true)
+    runBlocking(Dispatchers.IO) {
+      UploadPersistence.writeGenerated(old, state)
+      UploadPersistence.writeGenerated(fresh, validated)
+      for (late in listOf(state, state.copy(abandoned = true))) {
+        assertThrows(GeneratedResumeBlockedException::class.java) { UploadPersistence.writeGenerated(old, late) }
+      }
+    }
+    val restored = readUploadResumeState(fresh)
+    assertEquals(fresh.attempt!!.id, restored.attemptId); assertEquals(validated, restored.generated)
+    assertFalse(restored.generatedResumeBlocked); assertTrue(output.file.exists())
+  }
+
+  @Test fun stoppedOwnersCannotRecreateRetiredGeneratedRecords() {
+    for (stop in listOf("superseded", "cancelled", "replaced")) {
+      val target = info().copy(remoteUri = Uri.parse("https://example.invalid/late-$stop"))
+      val old = target.update(attempt = UploadAttempt(UploadPreparationState(), MuxUpload.Progress()))
+      val state = GeneratedResumeState(PayloadIdentity.capture(source)!!)
+      when (stop) {
+        "superseded" -> old.attempt!!.supersede()
+        "cancelled" -> old.attempt!!.cancel {}
+        else -> old.attempt!!.replace {}
+      }
+      runBlocking(Dispatchers.IO) {
+        UploadPersistence.writeGenerated(old, state)
+        UploadPersistence.writeGenerated(old, state.copy(abandoned = true))
+      }
+      assertNull(stop, readUploadResumeState(target).generated)
+      assertFalse(stop, readUploadResumeState(target).generatedResumeBlocked)
+      assertTrue(readCachedUploadSnapshots().isEmpty())
+    }
+  }
+
+  @Test fun abandonedPreviousProcessRecordsAreNeverAutoResumedAndTheirFilesAreReclaimed() {
+    for (networkStarted in listOf(false, true)) {
+      val target = info().copy(remoteUri = Uri.parse("https://example.invalid/abandoned-$networkStarted"))
+      val output = generated(12)
+      val state = GeneratedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Validated,
+        output.file.absolutePath, output.validatedIdentity, networkStarted = networkStarted, abandoned = true)
+      runBlocking(Dispatchers.IO) { UploadPersistence.writeGenerated(target, state) }
+      val prefs = context.getSharedPreferences("mux_upload", 0)
+      val records = org.json.JSONArray(prefs.getString("generated_payloads_v1", null))
+      val row = (0 until records.length()).map { records.getJSONObject(it) }
+        .single { it.getJSONObject("data").getString("url") == target.remoteUri.toString() }
+      row.getJSONObject("data").put("process_identity", "previous-process")
+      prefs.edit().putString("generated_payloads_v1", records.toString()).commit()
+      assertTrue(readCachedUploadSnapshots().isEmpty())
+      assertTrue(MuxUploadManager.resumeAllCachedJobs().isEmpty())
+      dispatcher.scheduler.runCurrent()
+      assertEquals(0, preparations); assertEquals(0, queries); assertTrue(chunks.isEmpty())
+      runBlocking { UploadPersistence.scheduleBlockedCleanup(context).join() }
+      assertFalse(output.file.exists()); assertNull(readUploadResumeState(target).generated)
+      assertEquals(networkStarted, readUploadResumeState(target).generatedResumeBlocked)
+      assertTrue(readCachedUploadSnapshots().isEmpty())
+    }
   }
 
 }
