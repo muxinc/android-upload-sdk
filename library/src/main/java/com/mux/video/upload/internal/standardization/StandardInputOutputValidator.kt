@@ -99,9 +99,7 @@ internal class StandardInputOutputValidator(
       // SDR transfer alone also describes BT.601/BT.2020. Require the actual promised color space.
       expect(outputColor.standard, MediaFormat.COLOR_STANDARD_BT709, OutputExpectation.Color)
       expect(outputColor.transfer, MediaFormat.COLOR_TRANSFER_SDR_VIDEO, OutputExpectation.Color)
-      if (outputColor.range == MediaFact.Unknown) missing.add(OutputExpectation.Color)
-      else if (outputColor.range.valueOrNull !in setOf(MediaFormat.COLOR_RANGE_FULL, MediaFormat.COLOR_RANGE_LIMITED))
-        mismatches.add(OutputExpectation.Color)
+      expect(outputColor.range, MediaFormat.COLOR_RANGE_LIMITED, OutputExpectation.Color)
     }
     if (!preservesAspectRatio(conversion.sourceDisplayDimensions, conversion.outputDimensions))
       mismatches.add(OutputExpectation.DimensionsAndOrientation)

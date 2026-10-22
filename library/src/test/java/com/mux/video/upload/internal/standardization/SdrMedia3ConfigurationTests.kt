@@ -125,7 +125,7 @@ class SdrMedia3ConfigurationTests {
     val preflight = SdrCapabilityPreflight({ infos }, { 0L }, sdk = 29, supportsHdrOpenGl = { true })
     assertNotNull(preflight.videoEncoder(plan, metadata, target) { false })
     assertEquals(MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10, queried.first().getInteger(MediaFormat.KEY_PROFILE))
-    assertEquals(MediaFormat.COLOR_TRANSFER_HLG, queried.first().getInteger(MediaFormat.KEY_COLOR_TRANSFER))
+    assertEquals(30f, queried.first().getFloat(MediaFormat.KEY_FRAME_RATE), 0f)
     assertEquals(MediaFormat.COLOR_STANDARD_BT709, queried.last().getInteger(MediaFormat.KEY_COLOR_STANDARD))
     assertEquals(MediaFormat.COLOR_TRANSFER_SDR_VIDEO, queried.last().getInteger(MediaFormat.KEY_COLOR_TRANSFER))
     SupportedFormatShadow.supported = { it.getString(MediaFormat.KEY_MIME) != "video/hevc" }

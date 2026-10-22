@@ -197,9 +197,7 @@ internal class SdrCapabilityPreflight(
     if (sourceProfile != null) sourceFormat.setInteger(MediaFormat.KEY_PROFILE, sourceProfile)
     if (conversion.toneMapsToSdr) {
       if (sourceProfile == null) return null
-      sourceFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, video.video.color.standard.valueOrNull ?: return null)
-      sourceFormat.setInteger(MediaFormat.KEY_COLOR_TRANSFER, video.video.color.transfer.valueOrNull ?: return null)
-      sourceFormat.setInteger(MediaFormat.KEY_COLOR_RANGE, video.video.color.range.valueOrNull ?: return null)
+      // isFormatSupported checks profile/size/rate, not HDR color handling. Export must still succeed.
       sourceFormat.setFloat(MediaFormat.KEY_FRAME_RATE, targets.sourceFrameRate?.toFloat() ?: return null)
     }
     if (!supportsDecode(sourceMime, sourceFormat)) return null
