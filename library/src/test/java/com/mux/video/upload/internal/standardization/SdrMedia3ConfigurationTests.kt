@@ -107,39 +107,49 @@ class SdrMedia3ConfigurationTests {
   }
 
   @Test fun toneMappingRequiresApiGlDecoderAndExactSdrEncoderSupport() {
-    val input = hdrFacts().copy(audioTracks = known(emptyList()), cadence = known(Cadence.Constant))
-    val metadata = hdrMetadata(input).copy(facts = input.copy(frameRate = MediaFact.Unknown))
-    val plan = conversion.copy(sourceCodec = VideoCodec.Hevc, outputCodec = VideoCodec.Hevc,
-      sourceDynamicRange = DynamicRange.Hlg, toneMapsToSdr = true, outputAudio = OutputAudio.None)
-    val target = targets.copy(videoMime = "video/hevc", profile = VideoProfile.HevcMain,
-      platformProfile = MediaCodecInfo.CodecProfileLevel.HEVCProfileMain, sourceFrameRate = 30.0)
-    val infos = arrayOf(codec(false, "video/hevc"), codec(true, "video/hevc"))
-    val queried = mutableListOf<MediaFormat>()
-    SupportedFormatShadow.supported = { queried.add(it); true }
     assertEquals(Composition.HDR_MODE_KEEP_HDR, conversion.media3HdrMode)
-    assertEquals(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL, plan.media3HdrMode)
-    assertNull(SdrCapabilityPreflight({ error("API gate") }, { 0L }, sdk = 28, supportsHdrOpenGl = { error("API gate") })
-      .videoEncoder(plan, metadata, target) { false })
-    assertNull(SdrCapabilityPreflight({ error("GL gate") }, { 0L }, sdk = 29, supportsHdrOpenGl = { false })
-      .videoEncoder(plan, metadata, target) { false })
-    val preflight = SdrCapabilityPreflight({ infos }, { 0L }, sdk = 29, supportsHdrOpenGl = { true })
-    assertNotNull(preflight.videoEncoder(plan, metadata, target) { false })
-    assertEquals(MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10, queried.first().getInteger(MediaFormat.KEY_PROFILE))
-    assertEquals(30f, queried.first().getFloat(MediaFormat.KEY_FRAME_RATE), 0f)
-    assertEquals(MediaFormat.COLOR_STANDARD_BT709, queried.last().getInteger(MediaFormat.KEY_COLOR_STANDARD))
-    assertEquals(MediaFormat.COLOR_TRANSFER_SDR_VIDEO, queried.last().getInteger(MediaFormat.KEY_COLOR_TRANSFER))
-    SupportedFormatShadow.supported = { it.getString(MediaFormat.KEY_MIME) != "video/hevc" }
-    assertNull(preflight.videoEncoder(plan, metadata, target) { false })
-    SupportedFormatShadow.supported = { it.getInteger(MediaFormat.KEY_PROFILE) == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10 }
-    assertNull(preflight.videoEncoder(plan, metadata, target) { false })
-    val factory = StrictSdrEncoderFactory(context, plan, target, SdrEncoderCapability("chosen", 4))
-    assertThrows(IllegalStateException::class.java) {
-      factory.createForVideoEncoding(format.buildUpon().setSampleMimeType("video/hevc")
-        .setColorInfo(ColorInfo.SDR_BT709_LIMITED.buildUpon().setColorSpace(C.COLOR_SPACE_BT2020).build()).build(), null)
+    for (codec in listOf(VideoCodec.H264, VideoCodec.Hevc)) for (range in listOf(DynamicRange.Hlg, DynamicRange.Pq)) {
+      val hevc = codec == VideoCodec.Hevc
+      val mime = if (hevc) "video/hevc" else "video/avc"
+      val sourceProfile = if (hevc) MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10 else MediaCodecInfo.CodecProfileLevel.AVCProfileHigh
+      val input = compliantFacts(codec, dynamicRange = range,
+        pixelFormat = PixelFormat(if (hevc) 10 else 8, ChromaSubsampling.Yuv420))
+        .copy(audioTracks = known(emptyList()), cadence = known(Cadence.Constant))
+      val metadata = hdrMetadata(input).copy(facts = input.copy(frameRate = MediaFact.Unknown))
+      val plan = conversion.copy(sourceCodec = codec, outputCodec = codec,
+        sourceDynamicRange = range, toneMapsToSdr = true, outputAudio = OutputAudio.None)
+      val target = if (hevc) targets.copy(videoMime = mime, profile = VideoProfile.HevcMain,
+        platformProfile = MediaCodecInfo.CodecProfileLevel.HEVCProfileMain, sourceFrameRate = 30.0)
+        else targets.copy(sourceFrameRate = 30.0)
+      val infos = arrayOf(codec(false, mime, sourceProfile), codec(true, mime))
+      val queried = mutableListOf<MediaFormat>()
+      SupportedFormatShadow.supported = { queried.add(it); true }
+      assertEquals(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL, plan.media3HdrMode)
+      assertNull(SdrCapabilityPreflight({ error("API gate") }, { 0L }, sdk = 28, supportsHdrOpenGl = { error("API gate") })
+        .videoEncoder(plan, metadata, target) { false })
+      assertNull(SdrCapabilityPreflight({ error("GL gate") }, { 0L }, sdk = 29, supportsHdrOpenGl = { false })
+        .videoEncoder(plan, metadata, target) { false })
+      val preflight = SdrCapabilityPreflight({ infos }, { 0L }, sdk = 29, supportsHdrOpenGl = { true })
+      assertNotNull(preflight.videoEncoder(plan, metadata, target) { false })
+      assertEquals(mime, queried.first().getString(MediaFormat.KEY_MIME))
+      assertEquals(sourceProfile, queried.first().getInteger(MediaFormat.KEY_PROFILE))
+      assertEquals(30f, queried.first().getFloat(MediaFormat.KEY_FRAME_RATE), 0f)
+      assertEquals(mime, queried.last().getString(MediaFormat.KEY_MIME))
+      assertEquals(MediaFormat.COLOR_STANDARD_BT709, queried.last().getInteger(MediaFormat.KEY_COLOR_STANDARD))
+      assertEquals(MediaFormat.COLOR_TRANSFER_SDR_VIDEO, queried.last().getInteger(MediaFormat.KEY_COLOR_TRANSFER))
+      SupportedFormatShadow.supported = { it.getString(MediaFormat.KEY_MIME) != mime }
+      assertNull(preflight.videoEncoder(plan, metadata, target) { false })
+      SupportedFormatShadow.supported = { it.getInteger(MediaFormat.KEY_PROFILE) == sourceProfile }
+      assertNull(preflight.videoEncoder(plan, metadata, target) { false })
+      val factory = StrictSdrEncoderFactory(context, plan, target, SdrEncoderCapability("chosen", 4))
+      assertThrows(IllegalStateException::class.java) {
+        factory.createForVideoEncoding(format.buildUpon().setSampleMimeType(mime)
+          .setColorInfo(ColorInfo.SDR_BT709_LIMITED.buildUpon().setColorSpace(C.COLOR_SPACE_BT2020).build()).build(), null)
+      }
     }
   }
 
-  private fun codec(encoder: Boolean, mime: String): MediaCodecInfo {
+  private fun codec(encoder: Boolean, mime: String, requestedProfile: Int? = null): MediaCodecInfo {
     val capabilityFormat = if (mime.startsWith("video/")) MediaFormat.createVideoFormat(mime, 1920, 1080)
       else MediaFormat.createAudioFormat(mime, 48_000, 2)
     val capabilities = MediaCodecInfoBuilder.CodecCapabilitiesBuilder.newBuilder().setMediaFormat(capabilityFormat)
@@ -147,7 +157,7 @@ class SdrMedia3ConfigurationTests {
         if (mime.startsWith("video/")) setColorFormats(intArrayOf(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface))
       }
       .setProfileLevels(arrayOf(MediaCodecInfo.CodecProfileLevel().apply {
-        profile = if (mime == "video/hevc") MediaCodecInfo.CodecProfileLevel.HEVCProfileMain else targets.platformProfile
+        profile = requestedProfile ?: if (mime == "video/hevc") MediaCodecInfo.CodecProfileLevel.HEVCProfileMain else targets.platformProfile
         level = if (mime == "video/hevc") MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51
           else MediaCodecInfo.CodecProfileLevel.AVCLevel51
       })).build()
