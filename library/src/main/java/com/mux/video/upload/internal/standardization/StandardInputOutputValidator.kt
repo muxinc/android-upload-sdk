@@ -78,10 +78,18 @@ internal class StandardInputOutputValidator(
     }
     expect(output.videoTrackCount, 1, OutputExpectation.VideoPresence)
     expect(output.videoCodec, conversion.outputCodec, OutputExpectation.VideoCodec)
-    // The plan's dimensions are display-oriented. The adapter must bake orientation into pixels.
-    expect(output.encodedDimensions, conversion.outputDimensions, OutputExpectation.DimensionsAndOrientation)
+    val encoded = output.encodedDimensions.valueOrNull
+    val rotation = output.rotationDegrees.valueOrNull
+    if (encoded == null || rotation == null) missing.add(OutputExpectation.DimensionsAndOrientation)
+    else {
+      val displayed = when (rotation) {
+        0, 180 -> encoded
+        90, 270 -> Dimensions(encoded.height, encoded.width)
+        else -> null
+      }
+      if (displayed != conversion.outputDimensions) mismatches.add(OutputExpectation.DimensionsAndOrientation)
+    }
     expect(output.displayDimensions, conversion.outputDimensions, OutputExpectation.DimensionsAndOrientation)
-    expect(output.rotationDegrees, 0, OutputExpectation.DimensionsAndOrientation)
     expect(output.pixelFormat, conversion.outputPixelFormat, OutputExpectation.PixelFormat)
     expect(output.dynamicRange, conversion.outputDynamicRange, OutputExpectation.DynamicRange)
     if (!preservesAspectRatio(conversion.sourceDisplayDimensions, conversion.outputDimensions))

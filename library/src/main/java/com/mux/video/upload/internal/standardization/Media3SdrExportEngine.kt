@@ -60,7 +60,6 @@ internal class Media3SdrExportEngine(
       .setHdrMode(Composition.HDR_MODE_KEEP_HDR).build()
     val exporter = Transformer.Builder(context)
       .setLooper(looper)
-      .setPortraitEncodingEnabled(true)
       .setVideoMimeType(targets.videoMime)
       .setAudioMimeType(MimeTypes.AUDIO_AAC)
       .setAssetLoaderFactory(assetLoader)
@@ -152,8 +151,9 @@ internal class StrictSdrEncoderFactory(
   }
 
   private fun requestedVideoFormat(format: Format): Format {
-    check(format.sampleMimeType == targets.videoMime && format.width == conversion.outputDimensions.width &&
-      format.height == conversion.outputDimensions.height && format.rotationDegrees == 0 &&
+    val size = conversion.encoderDimensions
+    check(format.sampleMimeType == targets.videoMime && format.width == size.width &&
+      format.height == size.height && format.rotationDegrees == 0 &&
       format.colorInfo?.colorTransfer == C.COLOR_TRANSFER_SDR)
     return format.buildUpon().setFrameRate(conversion.outputFrameRate.toFloat()).setAverageBitrate(targets.bitrate).build()
   }
