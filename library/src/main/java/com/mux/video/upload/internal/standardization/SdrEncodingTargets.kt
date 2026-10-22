@@ -4,6 +4,10 @@ import android.media.MediaCodecInfo
 import android.media.MediaCodecInfo.CodecProfileLevel
 import android.media.MediaCodecList
 import android.media.MediaFormat
+import android.opengl.EGL14
+import android.os.Build
+import androidx.media3.common.ColorInfo
+import androidx.media3.common.util.GlUtil
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import kotlin.math.abs
@@ -26,6 +30,7 @@ internal data class SdrEncodingTargets(
   val audioSampleRate: Int?,
   val copyAac: Boolean,
   val firstAudioTrackId: String?,
+  val sourceFrameRate: Double? = null,
 ) {
   fun estimatedOutputBytes(duration: Double): Long? {
     if (!duration.isFinite() || duration <= 0) return null
@@ -44,8 +49,29 @@ internal data class SdrEncodingTargets(
       if (metadata.tracks.any { it.video?.let { video ->
           video.color.transfer.valueOrNull == MediaFormat.COLOR_TRANSFER_LINEAR
         } == true }) return null
-      if (source.status != SampleScanStatus.Complete || conversion.toneMapsToSdr ||
-        conversion.sourceDynamicRange != DynamicRange.Sdr || facts.dynamicRange != MediaFact.Known(DynamicRange.Sdr) ||
+      if (conversion.toneMapsToSdr) {
+        val video = metadata.tracks.singleOrNull { it.kind == TrackKind.Video }?.video ?: return null
+        val transfer = when (conversion.sourceDynamicRange) {
+          DynamicRange.Hlg -> MediaFormat.COLOR_TRANSFER_HLG
+          DynamicRange.Pq -> MediaFormat.COLOR_TRANSFER_ST2084
+          else -> return null
+        }
+        val pixels = facts.pixelFormat.valueOrNull ?: return null
+        val profiles = when (conversion.sourceCodec) {
+          VideoCodec.H264 -> setOf(VideoProfile.H264Baseline, VideoProfile.H264Main, VideoProfile.H264High)
+          VideoCodec.Hevc -> setOf(if (pixels.bitDepth == 10) VideoProfile.HevcMain10 else VideoProfile.HevcMain)
+          else -> return null
+        }
+        if (video.codec != MediaFact.Known(conversion.sourceCodec) || video.profile.valueOrNull !in profiles ||
+          video.dynamicRange != MediaFact.Known(conversion.sourceDynamicRange) ||
+          video.pixelFormat != facts.pixelFormat || pixels.chromaSubsampling != ChromaSubsampling.Yuv420 ||
+          pixels.bitDepth !in (if (conversion.sourceCodec == VideoCodec.Hevc) setOf(8, 10) else setOf(8)) ||
+          video.color.standard.valueOrNull != MediaFormat.COLOR_STANDARD_BT2020 ||
+          video.color.transfer.valueOrNull != transfer ||
+          video.color.range.valueOrNull !in setOf(MediaFormat.COLOR_RANGE_FULL, MediaFormat.COLOR_RANGE_LIMITED)) return null
+      } else if (conversion.sourceDynamicRange != DynamicRange.Sdr) return null
+      if (source.status != SampleScanStatus.Complete ||
+        facts.dynamicRange != MediaFact.Known(conversion.sourceDynamicRange) ||
         facts.videoCodec != MediaFact.Known(conversion.sourceCodec) || facts.videoTrackCount != MediaFact.Known(1) ||
         facts.displayDimensions != MediaFact.Known(conversion.sourceDisplayDimensions) ||
         source.timeline.videoPresentationSeconds.valueOrNull.isNullOrEmpty() ||
@@ -115,7 +141,7 @@ internal data class SdrEncodingTargets(
         if (expectedCodec == VideoCodec.Hevc) CodecProfileLevel.HEVCProfileMain else CodecProfileLevel.AVCProfileBaseline,
         minOf(6_000_000L.takeIf { size.longSide <= 2048 } ?: 15_000_000L,
           conversion.outputPolicyLimits.maximumAverageBitrate * 3 / 4).toInt().takeIf { it > 0 } ?: return null,
-        maxOf(1, gopSeconds), channels, sampleRate, copy, first?.sourceTrackId?.valueOrNull?.toString(),
+        maxOf(1, gopSeconds), channels, sampleRate, copy, first?.sourceTrackId?.valueOrNull?.toString(), sourceRate,
       )
     }
   }
@@ -131,10 +157,13 @@ internal data class SdrEncoderCapability(val name: String, val level: Int)
 internal class SdrCapabilityPreflight(
   private val codecInfos: () -> Array<MediaCodecInfo> = { MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos },
   private val nanoTime: () -> Long = System::nanoTime,
+  private val sdk: Int = Build.VERSION.SDK_INT,
+  private val supportsHdrOpenGl: () -> Boolean = ::supportsHdrOpenGl,
 ) {
   fun videoEncoder(conversion: StandardInputConversion, metadata: MediaMetadataInspection,
     targets: SdrEncodingTargets, isCancelled: () -> Boolean): SdrEncoderCapability? {
     if (isCancelled()) return null
+    if (conversion.toneMapsToSdr && (sdk < 29 || !supportsHdrOpenGl() || isCancelled())) return null
     val infos = codecInfos()
     // Native enumeration cannot be interrupted; budget subsequent capability queries.
     if (isCancelled()) return null
@@ -166,6 +195,13 @@ internal class SdrCapabilityPreflight(
       else -> null
     }
     if (sourceProfile != null) sourceFormat.setInteger(MediaFormat.KEY_PROFILE, sourceProfile)
+    if (conversion.toneMapsToSdr) {
+      if (sourceProfile == null) return null
+      sourceFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, video.video.color.standard.valueOrNull ?: return null)
+      sourceFormat.setInteger(MediaFormat.KEY_COLOR_TRANSFER, video.video.color.transfer.valueOrNull ?: return null)
+      sourceFormat.setInteger(MediaFormat.KEY_COLOR_RANGE, video.video.color.range.valueOrNull ?: return null)
+      sourceFormat.setFloat(MediaFormat.KEY_FRAME_RATE, targets.sourceFrameRate?.toFloat() ?: return null)
+    }
     if (!supportsDecode(sourceMime, sourceFormat)) return null
     if (targets.audioChannels != null && !targets.copyAac) {
       val audioMime = metadata.tracks.first { it.sourceTrackId.valueOrNull?.toString() == targets.firstAudioTrackId }.mimeType.valueOrNull ?: return null
@@ -188,7 +224,8 @@ internal class SdrCapabilityPreflight(
         if (caps.videoCapabilities?.areSizeAndRateSupported(size.width, size.height, conversion.outputFrameRate) != true)
           return@runCatching null
         val requested = Format.Builder().setSampleMimeType(targets.videoMime).setWidth(size.width).setHeight(size.height)
-          .setFrameRate(conversion.outputFrameRate.toFloat()).setAverageBitrate(targets.bitrate).build()
+          .setFrameRate(conversion.outputFrameRate.toFloat()).setAverageBitrate(targets.bitrate)
+          .apply { if (conversion.toneMapsToSdr) setColorInfo(ColorInfo.SDR_BT709_LIMITED) }.build()
         val format = SdrVideoEncoderConfiguration.create(requested, targets, level)
         if (caps.isFormatSupported(format)) SdrEncoderCapability(info.name, level) else null
       }.getOrNull()
@@ -197,3 +234,15 @@ internal class SdrCapabilityPreflight(
     return null
   }
 }
+
+/** Probe the same ES3 YUV sampling path used by Media3; never disturb another current context. */
+private fun supportsHdrOpenGl(): Boolean = runCatching {
+  if (EGL14.eglGetCurrentContext() != EGL14.EGL_NO_CONTEXT) return@runCatching false
+  val display = GlUtil.getDefaultEglDisplay()
+  val context = GlUtil.createEglContext(EGL14.EGL_NO_CONTEXT, display, 3, GlUtil.EGL_CONFIG_ATTRIBUTES_RGBA_8888)
+  try {
+    val surface = GlUtil.createFocusedPlaceholderEglSurface(context, display)
+    try { GlUtil.isYuvTargetExtensionSupported() }
+    finally { GlUtil.destroyEglSurface(display, surface) }
+  } finally { GlUtil.destroyEglContext(display, context) }
+}.getOrDefault(false)

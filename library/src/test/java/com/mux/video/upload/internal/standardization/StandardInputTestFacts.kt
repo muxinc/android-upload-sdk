@@ -40,3 +40,17 @@ internal fun fullCapabilities() = PlanningCapabilities(
 internal fun <T> known(value: T): MediaFact<T> = MediaFact.Known(value)
 internal fun selection(resolution: MaximumResolution = MaximumResolution.Default) = PolicySelection(resolution)
 internal fun options(resolution: MaximumResolution = MaximumResolution.Default) = InputStandardization(true, resolution)
+
+/** Complete video color evidence for opt-in HDR adapter/preflight tests; no platform calls. */
+internal fun hdrMetadata(facts: MediaFacts): MediaMetadataInspection {
+  val codec = facts.videoCodec.valueOrNull!!
+  val profile = if (codec == VideoCodec.Hevc) VideoProfile.HevcMain10 else VideoProfile.H264High
+  val color = ColorMetadata(known(android.media.MediaFormat.COLOR_STANDARD_BT2020),
+    known(if (facts.dynamicRange.valueOrNull == DynamicRange.Hlg) android.media.MediaFormat.COLOR_TRANSFER_HLG
+      else android.media.MediaFormat.COLOR_TRANSFER_ST2084), known(android.media.MediaFormat.COLOR_RANGE_LIMITED))
+  val video = VideoTrackMetadata(facts.videoCodec, known(profile), facts.displayDimensions, facts.displayDimensions,
+    known(0), known(0), facts.pixelFormat, color, facts.dynamicRange)
+  return MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), listOf(TrackMetadata(0, known(0), known(1),
+    TrackKind.Video, known(if (codec == VideoCodec.Hevc) "video/hevc" else "video/avc"), known(3.0), facts.frameRate,
+    MediaFact.Unknown, video = video)), facts, 0)
+}

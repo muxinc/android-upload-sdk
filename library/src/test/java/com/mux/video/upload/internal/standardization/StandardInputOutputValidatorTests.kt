@@ -73,6 +73,18 @@ class StandardInputOutputValidatorTests {
     mismatch(OutputExpectation.DynamicRange, validate(output.copy(videoCodec = known(VideoCodec.Hevc),
       pixelFormat = known(PixelFormat(10, ChromaSubsampling.Yuv420)), dynamicRange = known(DynamicRange.Hlg)), conversion = hevc))
   }
+  @Test fun toneMappedOutputRequiresProvenBt709ColorRatherThanOnlySdrTransfer() {
+    val mapped = plan.copy(sourceDynamicRange = DynamicRange.Pq, toneMapsToSdr = true)
+    val color = ColorMetadata(known(android.media.MediaFormat.COLOR_STANDARD_BT709),
+      known(android.media.MediaFormat.COLOR_TRANSFER_SDR_VIDEO), known(android.media.MediaFormat.COLOR_RANGE_LIMITED))
+    fun check(color: ColorMetadata) = validator.validateFacts(output, source, timeline(), timeline(), mapped, color)
+    assertTrue(check(color) is StandardInputOutputValidation.Accepted)
+    assertTrue(reason(check(color.copy(standard = MediaFact.Unknown))) is OutputRejection.InsufficientPlanEvidence)
+    mismatch(OutputExpectation.Color, check(color.copy(standard = known(android.media.MediaFormat.COLOR_STANDARD_BT2020))))
+    mismatch(OutputExpectation.Color, check(color.copy(transfer = known(android.media.MediaFormat.COLOR_TRANSFER_HLG))))
+    assertTrue(reason(check(color.copy(range = MediaFact.Unknown))) is OutputRejection.InsufficientPlanEvidence)
+  }
+
   @Test fun expectedAudioCannotDisappearOrAppearAndKnownLayoutIsRetained() {
     mismatch(OutputExpectation.Audio, validate(output.copy(audioTracks = known(emptyList()))))
     mismatch(OutputExpectation.Audio, validate(conversion = plan.copy(outputAudio = OutputAudio.None)))

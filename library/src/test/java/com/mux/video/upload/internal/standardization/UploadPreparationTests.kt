@@ -89,6 +89,32 @@ class UploadPreparationTests : AbsRobolectricTest() {
     }
   }
 
+  @Test fun hdrPreserveSkipsExportAndExplicitToneMappingRetainsFallbackAndCancellation() = runBlocking {
+    for (range in listOf(DynamicRange.Hlg, DynamicRange.Pq)) {
+      val facts = source(VideoCodec.Hevc).copy(dynamicRange = known(range),
+        pixelFormat = known(PixelFormat(10, ChromaSubsampling.Yuv420)))
+      var exports = 0
+      var result: SdrConversionResult = SdrConversionResult.Failed(SdrConversionFailure.CapabilityUnavailable)
+      val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(hdrMetadata(facts)) },
+        inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) },
+        convert = { _, _, _, _, plan ->
+          exports++
+          assertTrue(plan.toneMapsToSdr); assertEquals(VideoCodec.Hevc, plan.outputCodec)
+          result
+        })
+      assertEquals(PreparedUpload.Original(), preparation.prepare(upload(), context, true))
+      assertEquals(0, exports)
+      val optIn = upload().copy(inputStandardization = InputStandardization(
+        true, com.mux.video.upload.internal.MaximumResolution.Default, hdrHandling = com.mux.video.upload.api.HdrHandling.ToneMapToSDR))
+      assertEquals(PreparedUpload.Original(PreparationDiagnostic.ConversionFailed(SdrConversionFailure.CapabilityUnavailable)),
+        preparation.prepare(optIn, context, true))
+      assertEquals(1, exports)
+      result = SdrConversionResult.Cancelled
+      try { preparation.prepare(optIn, context, true); fail("Cancellation must terminate preparation") }
+      catch (_: CancellationException) { }
+    }
+  }
+
   @Test fun inspectionFailuresAndMissingTimelineSelectOriginalWithoutRawDiagnosticText() = runBlocking {
     val failed = UploadPreparation(inspectMetadata = { throw NoSuchMethodError("https://secret.invalid/path") })
     assertEquals(PreparedUpload.Original(PreparationDiagnostic.InspectionFailed), failed.prepare(upload(), context, true))
