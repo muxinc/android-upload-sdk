@@ -84,14 +84,17 @@ class StandardInputPlannerTests {
     assertEquals(setOf(PolicyRequirement.Audio), planner.plan(facts).evaluation.unknownRequirements)
   }
 
-  @Test fun anotherViolationWithMultipleAudioTracksSelectsFirstTrack() {
-    val facts = compliantFacts().copy(frameRate = known(121.0),
-      audioTracks = known(listOf(AudioTrack(known(AudioFormat.OtherCodec)), AudioTrack())))
-    val conversion = conversion(facts)
-    assertEquals(OutputAudio.AacFromFirstTrack, conversion.outputAudio)
-    assertEquals(setOf(PolicyRequirement.FrameRate), conversion.requirementsToRemediate)
-    assertEquals(StandardInputAction.UploadOriginal(OriginalReason.NoKnownStandardInputViolation),
-      planner.plan(facts.copy(frameRate = known(30.0))).action)
+  @Test fun conversionWithMultipleAudioTracksFallsBackEvenWithFullEncoderCapabilities() {
+    for (codec in listOf(VideoCodec.H264, VideoCodec.Hevc)) {
+      val facts = compliantFacts(codec).copy(
+        audioTracks = known(listOf(AudioTrack(known(AudioFormat.OtherCodec)), AudioTrack())))
+      for (source in listOf(facts.copy(frameRate = known(121.0)),
+        facts.copy(averageBitrate = known(9_000_000L)), facts.copy(displayDimensions = known(Dimensions(2560, 1440))))) {
+        assertEquals(FallbackReason.UnverifiedAudioSelection, fallback(source))
+        assertTrue(planner.plan(source, capabilities = fullCapabilities()).evaluation.nonCompliantRequirements.isNotEmpty())
+      }
+      assertEquals(StandardInputAction.UploadOriginal(OriginalReason.NoKnownStandardInputViolation), planner.plan(facts).action)
+    }
   }
 
   @Test fun conversionDoesNotGuessUnknownAudioPresenceMeansSilence() {
@@ -109,8 +112,7 @@ class StandardInputPlannerTests {
       remediableRequirements = setOf(PolicyRequirement.FrameRate),
     )
     val facts = compliantFacts().copy(frameRate = known(121.0))
-    for (audio in listOf(MediaFact.Unknown, known(listOf(AudioTrack())),
-      known(listOf(AudioTrack(known(AudioFormat.OtherCodec)), AudioTrack())))) {
+    for (audio in listOf(MediaFact.Unknown, known(listOf(AudioTrack())))) {
       val action = planner.plan(facts.copy(audioTracks = audio), capabilities = videoCapabilities).action
       assertTrue("Audio must have its own proven AAC path: $action", action is StandardInputAction.Fallback)
       assertTrue((action as StandardInputAction.Fallback).reason is FallbackReason.UnsupportedConversion)
@@ -124,7 +126,6 @@ class StandardInputPlannerTests {
     val facts = compliantFacts().copy(frameRate = known(121.0))
     for (audio in listOf(facts.audioTracks, MediaFact.Unknown, known(listOf(AudioTrack())),
       known(listOf(AudioTrack(known(AudioFormat.OtherCodec)))),
-      known(listOf(AudioTrack(known(AudioFormat.OtherCodec)), AudioTrack())),
       known(listOf(AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.FivePointOne))))))) {
       val source = facts.copy(audioTracks = audio)
       assertTrue(fallback(source, videoOnly) is FallbackReason.UnsupportedConversion)

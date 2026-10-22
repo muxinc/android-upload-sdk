@@ -88,7 +88,7 @@ class UploadPersistenceTests : AbsRobolectricTest() {
     )
     assertEquals(
       "upload A should be read as written",
-      uploadInfoInA,
+      uploadInfoInA.update(restoredFromOriginal = true),
       uploadOutA
     )
   }
@@ -128,6 +128,20 @@ class UploadPersistenceTests : AbsRobolectricTest() {
     )
   }
 
+  @Test
+  fun cachedSnapshotsReadEntriesAndBlocksOnceForAllUploads() {
+    val prefs = mockSharedPreferences()
+    initializeUploadPersistence(mockContext(prefs))
+    writeUploadState(uploadInfo("file/a"), MuxUpload.Progress(bytesUploaded = 5, totalBytes = 10))
+    writeUploadState(uploadInfo("file/b"), MuxUpload.Progress(bytesUploaded = 2, totalBytes = 4))
+    clearMocks(prefs, answers = false, childMocks = false)
+    val snapshots = readCachedUploadSnapshots()
+    assertEquals(listOf(5L, 2L), snapshots.map { it.resumeState.bytesSent })
+    assertEquals(listOf(true, true), snapshots.map { it.resumeState.paused })
+    verify(exactly = 1) { prefs.getString("uploads", null) }
+    verify(exactly = 1) { prefs.getString("generated_upload_blocks", null) }
+  }
+
   private fun uploadInfo(name: String = "a/file") = UploadInfo(
     inputFile = File(name).absoluteFile,
     remoteUri = Uri.parse("https://www.mux.com/$name"),
@@ -138,10 +152,10 @@ class UploadPersistenceTests : AbsRobolectricTest() {
     statusFlow = null,
   )
 
-  private fun mockContext(): Context {
+  private fun mockContext(prefs: SharedPreferences = mockSharedPreferences()): Context {
     return mockk<Context> {
       every { applicationContext } returns mockk {
-        every { getSharedPreferences(any(), any()) } returns mockSharedPreferences()
+        every { getSharedPreferences(any(), any()) } returns prefs
       }
     }
   }

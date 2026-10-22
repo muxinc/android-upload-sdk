@@ -89,6 +89,8 @@ internal class StandardInputOutputValidator(
 
     val sourceAudio = source.audioTracks.valueOrNull
     val outputAudio = output.audioTracks.valueOrNull
+    // Output format/timing cannot prove that a removed track was not Mux's ingest choice.
+    if ((sourceAudio?.size ?: 0) > 1) missing.add(OutputExpectation.Audio)
     val wantsAudio = when (conversion.outputAudio) {
       OutputAudio.None -> false
       OutputAudio.AacFromFirstTrack -> true

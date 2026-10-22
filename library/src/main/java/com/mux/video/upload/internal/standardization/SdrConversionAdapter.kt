@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Looper
 import androidx.media3.common.MimeTypes
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -18,6 +19,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.RandomAccessFile
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
@@ -30,6 +33,32 @@ internal sealed interface SdrConversionResult {
 
 /** The only deletion authority returned to orchestration; never accepts an arbitrary path. */
 internal class SdrGeneratedFile private constructor(val file: File) {
+  private var validatedIdentity: FileIdentity? = null
+  internal fun recordValidation(): Boolean {
+    validatedIdentity = identity()
+    return validatedIdentity != null
+  }
+  internal fun matchesValidation(): Boolean = validatedIdentity?.let { it == identity() } == true
+
+  private data class FileIdentity(val size: Long, val modified: Long, val edgeHash: List<Byte>)
+  private fun identity(): FileIdentity? = try {
+    val size = file.length()
+    val modified = file.lastModified()
+    if (!file.isFile || !file.canRead() || size <= 0) null else {
+      val digest = MessageDigest.getInstance("SHA-256")
+      RandomAccessFile(file, "r").use { input ->
+        val first = ByteArray(minOf(size, 64 * 1024L).toInt())
+        input.readFully(first); digest.update(first)
+        if (size > first.size) {
+          val last = ByteArray(minOf(size - first.size, 64 * 1024L).toInt())
+          input.seek(size - last.size); input.readFully(last); digest.update(last)
+        }
+      }
+      if (file.length() != size || file.lastModified() != modified) null
+      else FileIdentity(size, modified, digest.digest().toList())
+    }
+  } catch (_: Exception) { null }
+
   fun delete(): Boolean = !file.exists() || file.delete()
 
   companion object {
@@ -58,6 +87,7 @@ internal class SdrConversionAdapter(
   private val createEngine: (Context, Looper, StandardInputConversion, SdrEncodingTargets, SdrEncoderCapability) -> SdrExportEngine =
     ::Media3SdrExportEngine,
   private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+  private val onPendingCleanup: (SdrGeneratedFile) -> Unit = {},
 ) {
   private val appContext = context.applicationContext
 
@@ -74,6 +104,7 @@ internal class SdrConversionAdapter(
     private val scope = CoroutineScope(job + Dispatchers.Main)
     private val terminalLock = Any()
     private var terminal = false
+    private val released = CompletableDeferred<Unit>()
     private var engine: SdrExportEngine? = null
     private var output: SdrGeneratedFile? = null
     /** Exact deletion authority retained if the OS refuses cleanup, including cancellation. */
@@ -88,6 +119,8 @@ internal class SdrConversionAdapter(
         job.cancel()
       }
     }
+
+    suspend fun awaitRelease() { released.await() }
 
     @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
     internal fun begin() {
@@ -145,6 +178,7 @@ internal class SdrConversionAdapter(
             if (validation.facts.videoProfile != MediaFact.Known(targets.profile) ||
               (targets.audioChannels != null && audio?.layout != expectedLayout))
               SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid)
+            else if (!owned.recordValidation()) SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid)
             else SdrConversionResult.Completed(owned, validation.facts)
           }
           is StandardInputOutputValidation.Rejected -> SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid)
@@ -165,12 +199,14 @@ internal class SdrConversionAdapter(
         runCatching { engine?.cancel() }
         if (result !is SdrConversionResult.Completed && withContext(ioDispatcher) { output?.delete() } == false) {
           pendingCleanup = output
+          output?.let(onPendingCleanup)
           // Keep ownership at its exact path if the OS refuses deletion; never sweep a directory.
           if (result !is SdrConversionResult.Cancelled) result = SdrConversionResult.Failed(SdrConversionFailure.FileOwnership)
         }
         runCatching { onResult(result) }
       } finally {
         engine = null
+        released.complete(Unit)
         scope.cancel()
       }
     }
