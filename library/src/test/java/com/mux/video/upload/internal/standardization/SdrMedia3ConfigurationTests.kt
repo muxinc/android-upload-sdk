@@ -55,6 +55,15 @@ class SdrMedia3ConfigurationTests {
     assertEquals(4, configuration.getInteger(MediaFormat.KEY_LEVEL))
     assertEquals(18, configuration.getInteger(MediaFormat.KEY_I_FRAME_INTERVAL))
     assertEquals(1, configuration.getInteger(MediaFormat.KEY_PRIORITY))
+    val portrait = conversion.copy(outputDimensions = Dimensions(conversion.outputDimensions.height, conversion.outputDimensions.width))
+    val portraitFactory = StrictSdrEncoderFactory(context, portrait, targets, SdrEncoderCapability("chosen", 4))
+    val requested = StrictSdrEncoderFactory::class.java.getDeclaredMethod("requestedVideoFormat", Format::class.java)
+      .apply { isAccessible = true }.invoke(portraitFactory, format) as Format
+    assertEquals(format.width, requested.width); assertEquals(format.height, requested.height)
+    assertThrows(IllegalStateException::class.java) {
+      portraitFactory.createForVideoEncoding(format.buildUpon().setWidth(portrait.outputDimensions.width)
+        .setHeight(portrait.outputDimensions.height).build(), null)
+    }
     for (bad in listOf(format.buildUpon().setSampleMimeType("video/hevc").build(),
       format.buildUpon().setWidth(640).build(), format.buildUpon().setRotationDegrees(90).build(),
       format.buildUpon().setColorInfo(ColorInfo.SDR_BT709_LIMITED.buildUpon().setColorTransfer(C.COLOR_TRANSFER_LINEAR).build()).build())) {
@@ -125,6 +134,11 @@ class SdrMedia3ConfigurationTests {
     assertEquals(2, queried.size)
     assertEquals(18, queried.last().getInteger(MediaFormat.KEY_I_FRAME_INTERVAL))
     assertEquals(1, queried.last().getInteger(MediaFormat.KEY_PRIORITY))
+    queried.clear()
+    val portrait = conversion.copy(outputDimensions = Dimensions(conversion.outputDimensions.height, conversion.outputDimensions.width))
+    assertNotNull(preflight.videoEncoder(portrait, metadata, targets) { false })
+    assertEquals(conversion.outputDimensions.width, queried.last().getInteger(MediaFormat.KEY_WIDTH))
+    assertEquals(conversion.outputDimensions.height, queried.last().getInteger(MediaFormat.KEY_HEIGHT))
   }
 
   @Test fun preflightAcceptsSlowEnumerationButBoundsQueriesAndCancellation() {

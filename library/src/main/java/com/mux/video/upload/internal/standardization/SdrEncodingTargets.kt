@@ -121,6 +121,10 @@ internal data class SdrEncodingTargets(
   }
 }
 
+/** Media3 encodes in landscape and applies output rotation separately from the encoder format. */
+internal val StandardInputConversion.encoderDimensions: Dimensions
+  get() = Dimensions(maxOf(outputDimensions.width, outputDimensions.height), minOf(outputDimensions.width, outputDimensions.height))
+
 internal data class SdrEncoderCapability(val name: String, val level: Int)
 
 /** Bounded advertised-format guard. This does not manufacture planner/device-path proof. */
@@ -180,7 +184,7 @@ internal class SdrCapabilityPreflight(
       val candidate = runCatching {
         val caps = info.getCapabilitiesForType(targets.videoMime)
         val level = caps.profileLevels.filter { it.profile == targets.platformProfile }.maxOfOrNull { it.level } ?: return@runCatching null
-        val size = conversion.outputDimensions
+        val size = conversion.encoderDimensions
         if (caps.videoCapabilities?.areSizeAndRateSupported(size.width, size.height, conversion.outputFrameRate) != true)
           return@runCatching null
         val requested = Format.Builder().setSampleMimeType(targets.videoMime).setWidth(size.width).setHeight(size.height)

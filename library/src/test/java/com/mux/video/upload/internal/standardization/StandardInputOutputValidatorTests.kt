@@ -44,13 +44,25 @@ class StandardInputOutputValidatorTests {
   @Test fun rejectsCodecFallbackEvenIfOtherwiseCompliant() {
     mismatch(OutputExpectation.VideoCodec, validate(output.copy(videoCodec = known(VideoCodec.Hevc))))
   }
-  @Test fun requiresSingleVideoExactEncodedAndDisplayDimensionsAndBakedOrientation() {
+  @Test fun requiresSingleVideoAndConsistentEncodedDisplayDimensionsAndRotation() {
     mismatch(OutputExpectation.VideoPresence, validate(output.copy(videoTrackCount = known(0))))
     mismatch(OutputExpectation.VideoPresence, validate(output.copy(videoTrackCount = known(2))))
     for (facts in listOf(output.copy(encodedDimensions = known(Dimensions(1080, 1920))),
-      output.copy(displayDimensions = known(Dimensions(1918, 1080))), output.copy(rotationDegrees = known(180))))
+      output.copy(displayDimensions = known(Dimensions(1918, 1080))), output.copy(rotationDegrees = known(90))))
       mismatch(OutputExpectation.DimensionsAndOrientation, validate(facts))
     assertTrue(reason(validate(output.copy(encodedDimensions = MediaFact.Unknown))) is OutputRejection.InsufficientPlanEvidence)
+    val portrait = Dimensions(plan.outputDimensions.height, plan.outputDimensions.width)
+    val portraitPlan = plan.copy(sourceDisplayDimensions = portrait, outputDimensions = portrait)
+    val upright = output.copy(encodedDimensions = known(portrait), displayDimensions = known(portrait))
+    for (valid in listOf(upright, upright.copy(rotationDegrees = known(180)),
+      upright.copy(encodedDimensions = known(plan.outputDimensions), rotationDegrees = known(90)),
+      upright.copy(encodedDimensions = known(plan.outputDimensions), rotationDegrees = known(270)))) {
+      assertTrue(validate(valid, conversion = portraitPlan) is StandardInputOutputValidation.Accepted)
+    }
+    for (invalid in listOf(upright.copy(rotationDegrees = known(90)),
+      upright.copy(rotationDegrees = known(45)), upright.copy(rotationDegrees = MediaFact.Unknown))) {
+      assertTrue(validate(invalid, conversion = portraitPlan) is StandardInputOutputValidation.Rejected)
+    }
   }
   @Test fun compliantButUnplannedBitDepthRejects() {
     val hevc = plan.copy(outputCodec = VideoCodec.Hevc, outputPixelFormat = PixelFormat(10, ChromaSubsampling.Yuv420))
