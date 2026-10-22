@@ -1,11 +1,12 @@
 package com.mux.video.upload.internal.standardization
 
+import android.media.MediaFormat
 import java.io.File
 import java.util.concurrent.CancellationException
 import kotlin.math.abs
 
 internal enum class OutputExpectation {
-  VideoPresence, VideoCodec, DimensionsAndOrientation, PixelFormat, DynamicRange,
+  VideoPresence, VideoCodec, DimensionsAndOrientation, PixelFormat, DynamicRange, Color,
   Audio, Duration, AudioVideoStartOffset, Cadence, Timestamps,
 }
 
@@ -55,7 +56,8 @@ internal class StandardInputOutputValidator(
       if (timeline.status != SampleScanStatus.Complete) return rejected(OutputRejection.TimelineInspection(timeline.status))
       if (file.length() != initialSize || file.lastModified() != initialModified)
         return rejected(OutputRejection.ChangedDuringInspection)
-      val result = validateFacts(timeline.facts, source, sourceTimeline, timeline.timeline, conversion)
+      val result = validateFacts(timeline.facts, source, sourceTimeline, timeline.timeline, conversion,
+        metadata.tracks.singleOrNull { it.kind == TrackKind.Video }?.video?.color ?: ColorMetadata())
       if (isCancelled()) StandardInputOutputValidation.Cancelled else result
     } catch (_: CancellationException) { StandardInputOutputValidation.Cancelled }
       catch (_: LinkageError) { failedInspection() }
@@ -63,7 +65,8 @@ internal class StandardInputOutputValidator(
   }
 
   fun validateFacts(output: MediaFacts, source: MediaFacts, sourceTimeline: StandardInputTimelineFacts,
-    outputTimeline: StandardInputTimelineFacts, conversion: StandardInputConversion): StandardInputOutputValidation {
+    outputTimeline: StandardInputTimelineFacts, conversion: StandardInputConversion,
+    outputColor: ColorMetadata = ColorMetadata()): StandardInputOutputValidation {
     val evaluation = evaluator.evaluate(output, conversion.selection, MediaRole.GeneratedOutput)
     fun rejected(reason: OutputRejection) = StandardInputOutputValidation.Rejected(reason, evaluation)
     if (evaluation.nonCompliantRequirements.isNotEmpty())
@@ -92,6 +95,12 @@ internal class StandardInputOutputValidator(
     expect(output.displayDimensions, conversion.outputDimensions, OutputExpectation.DimensionsAndOrientation)
     expect(output.pixelFormat, conversion.outputPixelFormat, OutputExpectation.PixelFormat)
     expect(output.dynamicRange, conversion.outputDynamicRange, OutputExpectation.DynamicRange)
+    if (conversion.toneMapsToSdr) {
+      // SDR transfer alone also describes BT.601/BT.2020. Require the actual promised color space.
+      expect(outputColor.standard, MediaFormat.COLOR_STANDARD_BT709, OutputExpectation.Color)
+      expect(outputColor.transfer, MediaFormat.COLOR_TRANSFER_SDR_VIDEO, OutputExpectation.Color)
+      expect(outputColor.range, MediaFormat.COLOR_RANGE_LIMITED, OutputExpectation.Color)
+    }
     if (!preservesAspectRatio(conversion.sourceDisplayDimensions, conversion.outputDimensions))
       mismatches.add(OutputExpectation.DimensionsAndOrientation)
 
