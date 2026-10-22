@@ -237,7 +237,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     dispatcher.scheduler.runCurrent()
     assertTrue(generated.file.exists())
     upload.start()
-    pump { upload.uploadStatus is UploadStatus.UploadFailed }
+    pump { upload.uploadStatus is UploadStatus.UploadFailed && internalInfo(upload).uploadJob!!.isCompleted }
     assertTrue(upload.error is GeneratedResumeBlockedException)
     assertEquals(1, chunks.size)
     assertTrue(readAllCachedUploads().single().generatedResumeBlocked)
@@ -1443,8 +1443,10 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
         val state = running.attempt!!.preparation.generatedState!!.copy(ownedPath = partial.file.absolutePath)
         running.attempt.preparation.generatedState = state
         running.attempt.trackCleanup(partial)
-        withContext(Dispatchers.IO) { UploadPersistence.writeGenerated(running, state) }
-        try { awaitCancellation() } finally {
+        try {
+          withContext(Dispatchers.IO) { UploadPersistence.writeGenerated(running, state) }
+          awaitCancellation()
+        } finally {
           running.attempt.preparation.releaseBarrier = { released.await() }
         }
       }
