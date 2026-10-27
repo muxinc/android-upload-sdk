@@ -37,28 +37,6 @@ class UploadProtocolTests : AbsRobolectricTest() {
     response(308, "bytes=0-2").use { assertEquals(3L, UploadProtocol.acknowledgedOffset(it, 12)) }
   }
 
-  @Test fun queryIsEmptyPutAndOnlyAcceptsVerifiedIncompleteOrCompleteResponses() = runBlocking {
-    for ((code, ranges, expected) in listOf(Triple(308, emptyArray<String>(), 0L),
-      Triple(308, arrayOf("bytes=0-2"), 3L), Triple(200, emptyArray(), 12L), Triple(201, emptyArray(), 12L),
-      Triple(204, emptyArray(), null), Triple(202, emptyArray(), null), Triple(404, emptyArray(), null),
-      Triple(200, arrayOf("bytes=0-2"), null), Triple(308, arrayOf("bytes=3-4"), null))) {
-      var requests = 0
-      MuxUploadSdk.useOkHttpClient(OkHttpClient.Builder().addInterceptor { chain ->
-        requests++
-        val request = chain.request()
-        assertEquals("PUT", request.method)
-        assertEquals("bytes */12", request.header("Content-Range"))
-        assertEquals(0L, request.body!!.contentLength())
-        val body = Buffer(); request.body!!.writeTo(body); assertEquals(0L, body.size)
-        response(code, *ranges).newBuilder().request(request).build()
-      }.build())
-      if (expected == null) {
-        try { UploadProtocol.query(info(), 12); fail("Unsupported query $code") }
-        catch (_: UploadResumeBlockedException) {}
-      } else assertEquals(expected, UploadProtocol.query(info(), 12))
-      assertEquals(1, requests)
-    }
-  }
 
   @Test fun originalAndStandardizedChunksSharePartialAndOverlappingAcknowledgements() = runBlocking {
     val owned = SdrStandardizedFile.allocate(RuntimeEnvironment.getApplication().cacheDir, 1)!!
@@ -92,16 +70,16 @@ class UploadProtocolTests : AbsRobolectricTest() {
       response(200).use { assertEquals(4L, UploadProtocol.acknowledge(it, chunk.copy(startByte = 8, endByte = 11))) }
     } finally { owned.delete() }
   }
-  @Test fun queryPreservesTransportFailureAndClassifiesRetryableResponses() = runBlocking {
+  @Test fun chunkPreservesTransportFailureAndClassifiesRetryableResponses() = runBlocking {
     val offline = java.io.IOException("Offline")
     MuxUploadSdk.useOkHttpClient(OkHttpClient.Builder().addInterceptor { throw offline }.build())
-    try { UploadProtocol.query(info(), 12); fail("Expected transport failure") }
+    try { ChunkWorker.create(ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7)), info(), "video/*", MutableSharedFlow(replay = 1)).upload(); fail("Expected transport failure") }
     catch (e: java.io.IOException) { assertEquals(offline.javaClass, e.javaClass); assertEquals(offline.message, e.message) }
     for (code in listOf(408, 429, 500, 502, 503, 504)) {
       MuxUploadSdk.useOkHttpClient(OkHttpClient.Builder().addInterceptor { chain ->
         response(code).newBuilder().request(chain.request()).build()
       }.build())
-      try { UploadProtocol.query(info(), 12); fail("Expected retryable response $code") }
+      try { ChunkWorker.create(ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7)), info(), "video/*", MutableSharedFlow(replay = 1)).upload(); fail("Expected retryable response $code") }
       catch (_: java.io.IOException) {}
       response(code).use { assertThrows(java.io.IOException::class.java) {
         UploadProtocol.acknowledge(it, ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7))) } }
@@ -155,7 +133,7 @@ class UploadProtocolTests : AbsRobolectricTest() {
     owned.file.writeText("standardized payload"); assertTrue(owned.recordValidation())
     val state = UploadPreparationState().apply { verified = owned }
     try {
-      for (code in listOf(408, 503)) for (isQuery in listOf(true, false)) {
+      for (code in listOf(408, 503)) {
         val server = java.net.ServerSocket(0, 0, java.net.InetAddress.getByName("127.0.0.1"))
         val requests = java.util.concurrent.atomic.AtomicInteger()
         val serverFailure = java.util.concurrent.atomic.AtomicReference<Throwable>()
@@ -188,14 +166,13 @@ class UploadProtocolTests : AbsRobolectricTest() {
         var failure: java.io.IOException? = null
         try {
           try {
-            if (isQuery) UploadProtocol.query(upload, 12)
-            else ChunkWorker.create(ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7)),
+            ChunkWorker.create(ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7)),
               upload, "video/*", MutableSharedFlow(replay = 1)).upload()
             fail("Expected retryable $code")
           } catch (e: java.io.IOException) { failure = e }
         } finally { server.close(); thread.join(1000) }
         assertNull(serverFailure.get())
-        assertEquals("$code query=$isQuery: $failure", 1, requests.get())
+        assertEquals("$code: $failure", 1, requests.get())
       }
     } finally { owned.delete() }
   }

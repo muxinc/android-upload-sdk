@@ -116,7 +116,7 @@ class StandardInputLifecycleTests : AbsRobolectricTest() {
     runUntil { workerOptions.size == 4 }
     assertOptions(restored, options)
     // These offsets apply only to the same original bytes, not restandardized media.
-    assertEquals(listOf(0L, 3L, 3L, 0L), chunkOffsets)
+    assertEquals(listOf(0L, 3L, 3L, 3L), chunkOffsets)
     assertEquals(List(4) { options }, workerOptions)
   }
 

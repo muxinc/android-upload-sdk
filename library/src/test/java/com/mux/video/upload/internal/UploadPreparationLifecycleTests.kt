@@ -29,8 +29,6 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
   private val context get() = RuntimeEnvironment.getApplication()
   private lateinit var source: File
   private lateinit var sibling: File
-  private var query: suspend (UploadInfo, Long) -> Long = { _, _ -> 0L }
-  private var queries = 0
   private var preparations = 0
   private var beforeCreateJob: () -> Unit = {}
   private var prepare: suspend (UploadInfo) -> PreparedUpload = { PreparedUpload.Original() }
@@ -49,7 +47,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     MuxUploadSdk.useLogger(MuxUploadSdk.noLogger())
     source = File.createTempFile("customer", ".mp4", context.cacheDir).apply { writeBytes(ByteArray(16) { it.toByte() }) }
     sibling = File(context.cacheDir, "mux-upload/customer-copy.mp4").apply { parentFile!!.mkdirs(); writeText("customer") }
-    val real = UploadJobFactory(prepare = { preparations++; prepare(it) }, queryOffset = { info, total -> queries++; query(info, total) }, createWorker = { chunk, info, flow ->
+    val real = UploadJobFactory(prepare = { preparations++; prepare(it) }, createWorker = { chunk, info, flow ->
       // The factory reuses its buffer; snapshot the actual payload for assertions.
       chunks += chunk.copy(sliceData = chunk.sliceData.copyOf(chunk.contentLength))
       mockk<ChunkWorker> { coEvery { upload() } coAnswers { work(chunk, info, flow) } }
@@ -235,7 +233,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     output.delete()
     upload.start(); pump { internalInfo(upload).uploadJob!!.isCompleted }
     assertTrue(upload.error is UploadResumeBlockedException)
-    assertEquals(1, chunks.size); assertEquals(0, queries); assertEquals(1, preparations)
+    assertEquals(1, chunks.size); assertEquals(1, preparations)
     assertTrue(readUploadResumeState(info()).standardizedResumeBlocked)
     val failedJob = internalInfo(upload).uploadJob
     upload.start(forceRestart = true)
@@ -244,7 +242,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     assertEquals(1, chunks.size); assertEquals(1, preparations)
   }
 
-  @Test fun changedVerifiedOutputBeforeNetworkRequiresZeroBytesBeforeRepreparing() {
+  @Test fun changedVerifiedOutputBeforeNetworkFailsWithoutRepreparing() {
     val release = CompletableDeferred<Unit>()
     val standardized = standardized(8)
     prepare = { withContext(NonCancellable) { release.await(); PreparedUpload.Standardized(standardized) } }
@@ -257,12 +255,11 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     val modified = standardized.file.lastModified()
     standardized.file.writeBytes(ByteArray(8) { 99 })
     assertTrue(standardized.file.setLastModified(modified))
-    prepare = { PreparedUpload.Original() }
+    prepare = { error("Completed standardization cannot restart") }
     upload.start()
-    pump { upload.isSuccessful }
-    assertEquals(1, queries)
-    assertEquals(16L, upload.currentProgress.totalBytes)
-    assertArrayEquals(source.readBytes(), chunks.flatMap { it.sliceData.toList() }.toByteArray())
+    pump { internalInfo(upload).uploadJob!!.isCompleted }
+    assertTrue(upload.error is UploadResumeBlockedException)
+    assertTrue(chunks.isEmpty()); assertEquals(1, preparations)
     assertFalse(standardized.file.exists())
   }
 
@@ -642,7 +639,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     }
   }
 
-  @Test fun neverStartedCancelPreservesDiskRecordButExplicitRestartClearsOffset() {
+  @Test fun neverStartedCancelAndExplicitRestartPreserveAcknowledgedOffset() {
     writeUploadState(info(), MuxUpload.Progress(bytesUploaded = 8, totalBytes = 16))
     for (autoManage in listOf(false, true)) {
       MuxUpload.Builder(info().remoteUri, source).manageUploadTask(autoManage).build().cancel()
@@ -651,7 +648,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     work = { _, _, _ -> awaitCancellation() }
     val restarted = MuxUpload.create(info())
     restarted.start(forceRestart = true); pump { chunks.size == 1 }
-    assertEquals(0L, chunks.single().startByte)
+    assertEquals(8L, chunks.single().startByte)
   }
 
   @Test fun newDestinationFinishesOldHandleAndExistingWaiterWithReplacementFailure() {
@@ -872,72 +869,60 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
     assertEquals(2L, upload.currentProgress.bytesUploaded)
     assertTrue(output.file.exists()); assertTrue(results.isEmpty())
-    query = { _, _ -> error("Retained output needs no query") }
     work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
     assertEquals(2L, chunks[2].startByte)
     assertArrayEquals(byteArrayOf(32, 33, 34, 35), chunks[2].sliceData)
-    assertEquals(0, queries); assertEquals(1, preparations)
+    assertEquals(1, preparations)
     assertEquals(1, results.size); assertTrue(readAllCachedUploads().isEmpty())
     assertFalse(output.file.exists()); assertTrue(sibling.exists())
   }
 
-  @Test fun durableStandardizedRestorationUsesOverlappingAcknowledgementsWithoutQuerying() {
+  @Test fun durableStandardizedRestorationKeepsAcknowledgementsWithoutOrdinaryPreferences() {
     val output = standardized(12)
     val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Uploading,
       output.file.absolutePath, output.validatedIdentity, networkStarted = true)
-    runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(info(), state) }
+    val owner = UploadAttempt(UploadPreparationState().apply { standardizedState = state },
+      MuxUpload.Progress(bytesUploaded = 4, totalBytes = 12))
+    val saved = info().update(attempt = owner)
+    runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(saved, state) }
+    writeUploadState(saved, owner.confirmedProgress().copy(bytesUploaded = 2))
+    assertEquals(4L, readUploadResumeState(saved).bytesSent)
+    assertEquals(4L, readCachedUploadSnapshots().single().resumeState.bytesSent)
     context.getSharedPreferences("mux_upload", 0).edit().remove("uploads").remove("generated_upload_blocks").commit()
     MuxUploadSdk.initialize(context, false)
-    query = { _, _ -> error("Retained output needs no query") }
-    work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = if (chunk.startByte == 0L) 6 else chunk.contentLength.toLong()) }
+    work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = if (chunk.startByte == 4L) 6 else chunk.contentLength.toLong()) }
     val restored = observe(MuxUploadManager.resumeAllCachedJobs().single())
     pump { restored.isSuccessful && internalInfo(restored).uploadJob!!.isCompleted }
-    assertEquals(0, preparations); assertEquals(0, queries)
-    assertEquals(listOf(0L, 6L, 10L), chunks.map { it.startByte })
+    assertEquals(0, preparations)
+    assertEquals(listOf(4L, 10L), chunks.map { it.startByte })
     assertEquals(12L, restored.currentProgress.totalBytes)
     assertEquals(1, results.size); assertFalse(output.file.exists())
     assertTrue(readAllCachedUploads().isEmpty())
   }
 
-  @Test fun invalidStandardizedPayloadNeedsZeroRemoteBytesAndIdenticalSourceBeforeRepreparing() {
-    for ((label, offset, changeSource, missing, expectedSuccess) in listOf(
-      ResumeCase("missing-zero", 0, false, true, true),
-      ResumeCase("changed-zero", 0, false, false, true),
-      ResumeCase("missing-partial", 3, false, true, false),
-      ResumeCase("changed-partial", 3, false, false, false),
-      ResumeCase("source-changed-zero", 0, true, true, false))) {
-      val target = info().copy(remoteUri = Uri.parse("https://example.invalid/$label"))
-      val sourceBytes = source.readBytes()
-      val sourceMtime = source.lastModified()
+  @Test fun completedStandardizationCannotRestartWhenItsOutputIsMissingOrChanged() {
+    for (phase in listOf(PreparationPhase.Validated, PreparationPhase.Uploading)) for (missing in listOf(true, false)) {
+      val target = info().copy(remoteUri = Uri.parse("https://example.invalid/completed-$phase-$missing"))
       val output = standardized(12)
-      val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Validated,
-        output.file.absolutePath, output.validatedIdentity, networkStarted = false)
+      val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, phase,
+        output.file.absolutePath, output.validatedIdentity, networkStarted = phase == PreparationPhase.Uploading)
       runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(target, state) }
       if (missing) output.delete() else {
         val modified = output.file.lastModified()
         output.file.writeBytes(ByteArray(12) { 99 }); assertTrue(output.file.setLastModified(modified))
       }
-      if (changeSource) {
-        source.writeBytes(ByteArray(16) { 88 }); assertTrue(source.setLastModified(sourceMtime))
-      }
-      val before = chunks.size
-      query = { _, _ -> offset }
-      prepare = { PreparedUpload.Standardized(standardized(8)) }
+      prepare = { error("Completed standardization cannot restart") }
       val upload = MuxUpload.create(target)
       upload.start(); pump { internalInfo(upload).uploadJob!!.isCompleted }
-      if (expectedSuccess) {
-        assertTrue(label, upload.isSuccessful)
-        assertEquals(0L, chunks[before].startByte)
-        assertEquals(8L, chunks[before].totalFileSize)
-      } else {
-        assertTrue(label, upload.error is UploadResumeBlockedException)
-        assertEquals(before, chunks.size)
-        upload.cancel()
-      }
-      source.writeBytes(sourceBytes); assertTrue(source.setLastModified(sourceMtime))
+      assertTrue(upload.error is UploadResumeBlockedException)
+      assertTrue(readUploadResumeState(target).standardizedResumeBlocked)
+      val fresh = MuxUpload.create(target)
+      fresh.start(); pump { internalInfo(fresh).uploadJob!!.isCompleted }
+      assertTrue(fresh.error is UploadResumeBlockedException)
+      assertEquals(0, preparations); assertTrue(chunks.isEmpty())
+      assertTrue(source.exists()); assertTrue(sibling.exists())
     }
-    assertTrue(sibling.exists()); assertTrue(source.exists())
   }
 
   @Test fun abandonedTrackedPartialIsCleanedBeforeZeroBytePreparation() {
@@ -949,7 +934,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     prepare = { assertFalse(partial.file.exists()); PreparedUpload.Original() }
     val upload = MuxUpload.create(info())
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-    assertEquals(0, queries); assertEquals(1, preparations)
+    assertEquals(1, preparations)
     assertTrue(sibling.exists()); assertTrue(source.exists())
   }
 
@@ -975,7 +960,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     prepare = { PreparedUpload.Standardized(standardized(12)) }
     val upload = MuxUpload.create(info())
     upload.start(); pump { upload.uploadStatus is UploadStatus.UploadFailed }
-    assertTrue("Failed without commit: ${upload.error}", commits > 0); assertTrue(chunks.isEmpty()); assertEquals(0, queries)
+    assertTrue("Failed without commit: ${upload.error}", commits > 0); assertTrue(chunks.isEmpty())
     assertTrue(upload.error is UploadResumeBlockedException)
   }
 
@@ -1015,10 +1000,10 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     runBlocking(Dispatchers.IO) { UploadPersistence.retireStandardized(old); UploadPersistence.retireStandardized(current) }
   }
 
-  @Test fun zeroRemoteRepreparationCanFallBackToOriginalAndThenPauseAndResume() {
+  @Test fun interruptedPreparationCanFallBackToOriginalAndThenPauseAndResume() {
     val output = standardized(12)
-    val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Validated,
-      output.file.absolutePath, output.validatedIdentity, networkStarted = false)
+    val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Preparing,
+      ownedPath = output.file.absolutePath)
     val savedAttempt = UploadAttempt(UploadPreparationState().apply { standardizedState = state },
       MuxUpload.Progress(bytesUploaded = 8, totalBytes = 12))
     writeUploadState(info().update(attempt = savedAttempt), savedAttempt.confirmedProgress())
@@ -1035,16 +1020,16 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     assertNull(readUploadResumeState(info()).standardized)
     work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
     upload.start(); pump { upload.isSuccessful }
-    assertEquals(1, queries); assertEquals(1, preparations)
+    assertEquals(1, preparations)
   }
 
-  @Test fun zeroRemoteRepreparationUsesDurableOptionsOnAFreshHandle() {
+  @Test fun interruptedPreparationUsesDurableOptionsOnAFreshHandle() {
     val output = standardized(12)
     val options = InputStandardization(true, MaximumResolution.Preset1280x720,
       com.mux.video.upload.api.HdrHandling.Preserve)
     val original = info().copy(inputStandardization = options)
-    val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Validated,
-      output.file.absolutePath, output.validatedIdentity, networkStarted = false)
+    val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Preparing,
+      ownedPath = output.file.absolutePath)
     runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(original, state) }
     output.delete()
     prepare = { restored ->
@@ -1084,9 +1069,6 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     }
   }
 
-  private data class ResumeCase(val label: String, val offset: Long, val changeSource: Boolean,
-    val missing: Boolean, val expectedSuccess: Boolean)
-
 
   @Test fun offlineStandardizedTransportRetainsPayloadAndCanResumeOnTheSameDestination() {
     val output = standardized(12)
@@ -1097,10 +1079,10 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     val upload = MuxUpload.create(info().copy(retriesPerChunk = 0))
     upload.start(); pump { internalInfo(upload).uploadJob!!.isCompleted }
     assertTrue(upload.error is java.io.IOException); assertTrue(output.file.exists())
-    assertEquals(0, queries); assertEquals(0, preparations)
+    assertEquals(0, preparations)
     work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-    assertEquals(0, queries); assertEquals(0, preparations); assertFalse(output.file.exists())
+    assertEquals(0, preparations); assertFalse(output.file.exists())
   }
 
   @Test fun uncertainChunkRetriesTheSameRangeForOriginalAndStandardizedPayloads() {
@@ -1118,8 +1100,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
       val sent = chunks.drop(first)
       assertEquals(listOf(0L, 4L, 4L, 8L) + if (standardized) emptyList() else listOf(12L), sent.map { it.startByte })
       assertArrayEquals(sent[1].sliceData, sent[2].sliceData)
-      assertEquals(0, queries)
-    }
+      }
   }
 
   @Test fun exhaustedChunkRetriesKeepTheSelectedPayloadForExplicitResume() {
@@ -1129,7 +1110,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     val upload = MuxUpload.create(info().copy(retriesPerChunk = 2))
     upload.start(); pumpRetries { internalInfo(upload).uploadJob!!.isCompleted }
     assertTrue(upload.error is java.io.IOException)
-    assertEquals(0, queries); assertEquals(3, chunks.size)
+    assertEquals(3, chunks.size)
     assertTrue(output.file.exists()); assertFalse(readUploadResumeState(info()).standardizedResumeBlocked)
     work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
@@ -1146,7 +1127,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     prepare = { error("A selected original cannot be standardized again") }
     val restored = MuxUploadManager.resumeAllCachedJobs().single()
     pump { internalInfo(restored).uploadJob!!.isCompleted }
-    assertNotNull(restored.error); assertEquals(1, preparations); assertEquals(1, chunks.size); assertEquals(0, queries)
+    assertNotNull(restored.error); assertEquals(1, preparations); assertEquals(1, chunks.size)
   }
 
   @Test fun finalChunkWithALostResponseIsResentWithoutRepeatingSuccessfulChunks() {
@@ -1157,7 +1138,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     }
     val upload = observe(MuxUpload.create(info()))
     upload.start(); pumpRetries { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-    assertEquals(0, queries); assertEquals(listOf(0L, 4L, 4L), chunks.map { it.startByte })
+    assertEquals(listOf(0L, 4L, 4L), chunks.map { it.startByte })
     assertEquals(1, results.size); assertEquals(8L, upload.currentProgress.bytesUploaded)
   }
 
@@ -1169,11 +1150,11 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     upload.start(); pump { chunks.size == 1 }
     upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
     dispatcher.scheduler.advanceTimeBy(10_000); dispatcher.scheduler.runCurrent()
-    assertTrue(results.isEmpty()); assertEquals(0, queries); assertEquals(1, chunks.size)
+    assertTrue(results.isEmpty()); assertEquals(1, chunks.size)
     assertTrue(output.file.exists()); assertEquals(0L, upload.currentProgress.bytesUploaded)
     work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-    assertEquals(0, queries); assertEquals(1, preparations); assertEquals(1, results.size)
+    assertEquals(1, preparations); assertEquals(1, results.size)
   }
 
   @Test fun forceRestartRepeatsOnlyInterruptedPreparationAndRetainsCompletedOutput() {
@@ -1200,27 +1181,28 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
       assertTrue(upload.isSuccessful); assertEquals(before + 2, preparations)
       assertFalse(partial.file.exists())
     }
-    for (managed in listOf(true, false)) {
+    for (managed in listOf(true, false)) for (standardized in listOf(true, false)) {
       val output = standardized(12)
       val before = preparations
       val chunkStart = chunks.size
-      prepare = { PreparedUpload.Standardized(output) }
-      work = { _, _, _ -> awaitCancellation() }
-      val upload = MuxUpload.Builder("https://example.invalid/completed-restart-$managed", source)
+      prepare = { if (standardized) PreparedUpload.Standardized(output) else PreparedUpload.Original() }
+      work = { _, _, _ ->
+        if (chunks.size == chunkStart + 1) MuxUpload.Progress(bytesUploaded = 4) else awaitCancellation()
+      }
+      val upload = MuxUpload.Builder("https://example.invalid/completed-restart-$managed-$standardized", source)
         .manageUploadTask(managed).build()
-      upload.start(); pump { chunks.size == chunkStart + 1 }
+      upload.start(); pump { chunks.size == chunkStart + 2 }
       upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
-      assertTrue(output.file.exists())
-      prepare = { error("Completed standardization cannot restart") }
+      assertEquals(4L, upload.currentProgress.bytesUploaded)
+      prepare = { error("A completed selection cannot restart") }
       work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
       upload.start(forceRestart = true)
       pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
       assertEquals(before + 1, preparations)
-      assertEquals(listOf(0L, 0L), chunks.drop(chunkStart).map { it.startByte })
-      assertArrayEquals(chunks[chunkStart].sliceData, chunks.last().sliceData)
-      assertFalse(output.file.exists())
+      assertEquals(listOf(0L, 4L, 4L), chunks.drop(chunkStart).map { it.startByte })
+      assertArrayEquals(chunks[chunkStart + 1].sliceData, chunks.last().sliceData)
+      if (standardized) assertFalse(output.file.exists())
     }
-    assertEquals(0, queries)
   }
 
   @Test fun standardizedTransportMarkerIsDurableBeforeTheFirstChunk() {
@@ -1245,14 +1227,11 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
       val target = info().copy(remoteUri = Uri.parse("https://example.invalid/budget-$budget"), retriesPerChunk = budget)
       val output = standardized(12)
       prepare = { PreparedUpload.Standardized(output) }
-      query = { _, _ -> 0L }
       work = { _, _, _ -> throw java.io.IOException("Uncertain chunk") }
-      val queryStart = queries
       val chunkStart = chunks.size
       val upload = MuxUpload.create(target)
       upload.start(); pumpRetries { internalInfo(upload).uploadJob!!.isCompleted }
       assertTrue(upload.error is java.io.IOException)
-      assertEquals(0, queries - queryStart)
       assertEquals(budget + 1, chunks.size - chunkStart)
       assertTrue(output.file.exists()); assertFalse(readUploadResumeState(target).standardizedResumeBlocked)
       upload.cancel(); pump { !output.file.exists() }
@@ -1265,10 +1244,9 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     val saved = StandardizedResumeState(PayloadIdentity.capture(source)!!, ownedPath = partial.file.absolutePath)
     runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(info(), saved) }
     prepare = { assertFalse(partial.file.exists()); PreparedUpload.Standardized(standardized(12)) }
-    query = { _, _ -> error("Interrupted conversion sent no bytes") }
     val upload = MuxUpload.create(info())
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-    assertEquals(0, queries); assertEquals(listOf(0L, 4L, 8L), chunks.map { it.startByte })
+    assertEquals(listOf(0L, 4L, 8L), chunks.map { it.startByte })
     assertEquals(1, preparations); assertFalse(partial.file.exists())
   }
 
@@ -1301,12 +1279,11 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
   @Test fun standardizedZeroProgressRetriesAndExhaustionKeepsItsPayload() {
     val output = standardized(12)
     prepare = { PreparedUpload.Standardized(output) }
-    query = { _, _ -> 0L }
     work = { _, _, _ -> throw UploadRetryException("No progress") }
     val upload = MuxUpload.create(info().copy(retriesPerChunk = 2))
     upload.start(); pumpRetries { internalInfo(upload).uploadJob!!.isCompleted }
     assertTrue(upload.error is UploadRetryException)
-    assertEquals(3, chunks.size); assertEquals(0, queries)
+    assertEquals(3, chunks.size)
     assertTrue(output.file.exists()); assertFalse(readUploadResumeState(info()).standardizedResumeBlocked)
     work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
@@ -1324,7 +1301,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     val upload = observe(MuxUpload.create(info().copy(retriesPerChunk = 1)))
     upload.start(); pumpRetries { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
     assertEquals((0L..11L).flatMap { listOf(it, it) }, chunks.map { it.startByte })
-    assertEquals(0, queries); assertEquals(1, results.size)
+    assertEquals(1, results.size)
     assertEquals(12L, upload.currentProgress.bytesUploaded)
   }
 
@@ -1334,15 +1311,15 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     val upload = observe(MuxUpload.create(info()))
     upload.start(); pump { chunks.size == 1 }
     dispatcher.scheduler.advanceTimeBy(29_999); dispatcher.scheduler.runCurrent()
-    assertEquals(0, queries); assertEquals(1, chunks.size)
+    assertEquals(1, chunks.size)
     dispatcher.scheduler.advanceTimeBy(1)
     work = { _, _, _ -> throw UploadRetryException("429", 30_000) }
     pump { chunks.size == 2 }
     dispatcher.scheduler.advanceTimeBy(29_999); dispatcher.scheduler.runCurrent()
-    assertEquals(0, queries); assertEquals(2, chunks.size)
+    assertEquals(2, chunks.size)
     upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
     dispatcher.scheduler.advanceTimeBy(60_000); dispatcher.scheduler.runCurrent()
-    assertTrue(results.isEmpty()); assertEquals(0, queries)
+    assertTrue(results.isEmpty())
     work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
     assertEquals(1, preparations); assertEquals(1, results.size)
@@ -1404,7 +1381,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
       assertFalse(readUploadResumeState(target).standardizedResumeBlocked)
       released.complete(Unit)
       pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-      assertEquals(before + 2, preparations); assertEquals(0, queries)
+      assertEquals(before + 2, preparations)
       assertFalse(readUploadResumeState(target).standardizedResumeBlocked)
       beforeCreateJob = {}
     }
@@ -1418,7 +1395,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     prepare = { assertFalse(output.file.exists()); PreparedUpload.Original() }
     val upload = MuxUpload.create(info())
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-    assertEquals(1, preparations); assertEquals(0, queries)
+    assertEquals(1, preparations)
     assertEquals(16L, upload.currentProgress.totalBytes)
     assertFalse(readUploadResumeState(info()).standardizedResumeBlocked)
   }
@@ -1431,7 +1408,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     val upload = MuxUpload.create(info())
     upload.start(); pump { internalInfo(upload).uploadJob!!.isCompleted }
     assertTrue(upload.error is UploadResumeBlockedException)
-    assertEquals(0, preparations); assertEquals(0, queries); assertTrue(chunks.isEmpty())
+    assertEquals(0, preparations); assertTrue(chunks.isEmpty())
     assertFalse(output.file.exists()); assertTrue(readUploadResumeState(info()).standardizedResumeBlocked)
   }
 
@@ -1491,7 +1468,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
       assertTrue(readCachedUploadSnapshots().isEmpty())
       assertTrue(MuxUploadManager.resumeAllCachedJobs().isEmpty())
       dispatcher.scheduler.runCurrent()
-      assertEquals(0, preparations); assertEquals(0, queries); assertTrue(chunks.isEmpty())
+      assertEquals(0, preparations); assertTrue(chunks.isEmpty())
       runBlocking { UploadPersistence.scheduleBlockedCleanup(context).join() }
       assertFalse(output.file.exists()); assertNull(readUploadResumeState(target).standardized)
       assertEquals(networkStarted, readUploadResumeState(target).standardizedResumeBlocked)

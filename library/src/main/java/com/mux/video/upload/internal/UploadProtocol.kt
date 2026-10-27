@@ -5,10 +5,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Request
-import okhttp3.RequestBody
-import okhttp3.MediaType
 import okhttp3.OkHttpClient
-import okio.BufferedSink
 import okhttp3.Response
 import java.io.IOException
 import kotlin.coroutines.resumeWithException
@@ -26,25 +23,6 @@ internal object UploadProtocol {
       originalClient = client
     }
     return checkNotNull(transportClient)
-  }
-
-  suspend fun query(upload: UploadInfo, total: Long): Long {
-    require(total > 0)
-    val body = object : RequestBody() {
-      override fun contentType(): MediaType? = null
-      override fun contentLength() = 0L
-      override fun writeTo(sink: BufferedSink) {}
-      override fun isOneShot() = true
-    }
-    val request = Request.Builder().url(upload.remoteUri.toString())
-      .put(body).header("Content-Range", "bytes */$total").build()
-    return executeUploadRequest(request, httpClient()).use { response ->
-      when (response.code) {
-        308 -> acknowledgedOffset(response, total)
-        200, 201 -> if (response.headers.values("Range").isEmpty()) total else blocked()
-        else -> failedResponse(response)
-      }
-    }
   }
 
   fun acknowledge(response: Response, chunk: ChunkWorker.Chunk): Long {

@@ -25,7 +25,6 @@ internal class UploadJobFactory internal constructor(
   private val prepare: suspend (UploadInfo) -> PreparedUpload = {
     UploadPreparation().prepare(it, checkNotNull(MuxUploadManager.appContext), standardizedResumeVerified = true)
   },
-  private val queryOffset: suspend (UploadInfo, Long) -> Long = UploadProtocol::query,
   val createWorker: (ChunkWorker.Chunk, UploadInfo, MutableSharedFlow<MuxUpload.Progress>) -> ChunkWorker =
     ::createWorkerForSlice,
 ) {
@@ -94,7 +93,7 @@ internal class UploadJobFactory internal constructor(
             val retainForRestart = attempt.isRestarting() && preparation.standardizedState?.payload != null
             if (retire || attempt.isCancelled() && !retainForRestart || attempt.replacementFailure() != null) {
               preparation.deleteOwnedFile()
-              UploadPersistence.retireStandardized(runningInfo)
+              UploadPersistence.retireStandardized(runningInfo, block = retire)
             } else preparation.standardizedState?.let { UploadPersistence.writeStandardized(runningInfo, it) }
           } catch (_: Exception) {
             MuxUploadSdk.logger.e("MuxUpload", "Standardized persistence cleanup failed")
@@ -162,10 +161,8 @@ internal class UploadJobFactory internal constructor(
       return
     // Transport fixes the selected bytes. A missing/changed payload must never be replaced then.
     if (saved.networkStarted) throw UploadResumeBlockedException()
-    if (saved.payload != null && !saved.abandoned) {
-      val next = withUploadRetries(upload.retriesPerChunk) { queryOffset(upload, saved.payload.size) }
-      if (next != 0L) throw UploadResumeBlockedException()
-    }
+    // A completed selection is final, even if its file disappears before the first request.
+    if (saved.payload != null && !saved.abandoned) throw UploadResumeBlockedException()
     if (!withContext(Dispatchers.IO) { saved.source.matches(upload.inputFile) }) throw UploadResumeBlockedException()
     withContext(Dispatchers.IO) { state.deleteOwnedFile(); UploadPersistence.retireStandardized(upload) }
     state.standardizedState = null

@@ -65,8 +65,9 @@ internal fun readLastByteForFile(upload: UploadInfo): Long = readUploadResumeSta
 
 @JvmSynthetic
 internal fun forgetUploadState(uploadInfo: UploadInfo) {
-  if (uploadInfo.attempt?.isRestarting() == true && uploadInfo.attempt.preparation.standardizedState?.payload != null) {
-    UploadPersistence.removeForFile(uploadInfo)
+  if (uploadInfo.attempt?.isRestarting() == true) {
+    // Replace the attempt, retaining its selected file and last acknowledged byte.
+    writeUploadState(uploadInfo, uploadInfo.attempt.confirmedProgress())
     return
   }
   UploadPersistence.hideStandardized(uploadInfo)
@@ -199,7 +200,8 @@ internal object UploadPersistence {
         cancelled && (!state.abandoned || existing == null || !ownsStandardized(upload, existing))) return
       if (existing != null && !ownsStandardized(upload, existing)) throw UploadResumeBlockedException()
       val entry = UploadEntry(upload.inputFile, upload.remoteUri.toString(), upload.chunkSize,
-        upload.retriesPerChunk, upload.optOut, Date().time, WAS_RUNNING, 0,
+        upload.retriesPerChunk, upload.optOut, Date().time, WAS_RUNNING,
+        attempt?.confirmedProgress()?.bytesUploaded ?: existing?.bytesSent ?: 0,
         upload.inputStandardization, originalSelected = false, attemptId = upload.attempt?.id,
         standardized = state, processIdentity = processIdentity)
       records[destinationKey(entry.url)] = entry
@@ -211,7 +213,7 @@ internal object UploadPersistence {
     }
   }
 
-  fun retireStandardized(upload: UploadInfo) {
+  fun retireStandardized(upload: UploadInfo, block: Boolean = false) {
     synchronized(standardizedWriteLock) {
       val records = readStandardized()
       val key = destinationKey(upload.remoteUri.toString())
@@ -220,7 +222,7 @@ internal object UploadPersistence {
       val blocks = readStandardizedBlocks()
       // Keep only the destination hash after terminal cleanup, not paths/URLs/identities.
       // No time-based eviction: without known URL expiry, reuse could splice different bytes.
-      if (entry.standardized?.networkStarted == true || entry.standardizedResumeBlocked) blocks += key
+      if (block || entry.standardized?.networkStarted == true || entry.standardizedResumeBlocked) blocks += key
       records.remove(key)
       if (!prefs.edit().putString(STANDARDIZED_KEY, JSONArray(records.values.map { it.toJson() }).toString())
           .putString(STANDARDIZED_BLOCKS_KEY, JSONArray(blocks.toList()).toString()).commit())
@@ -266,7 +268,7 @@ internal object UploadPersistence {
     if (standardized != null) {
       if (standardized.file.absoluteFile != upload.inputFile.absoluteFile) return UploadResumeState(standardizedResumeBlocked = true)
       return resumeState(standardized, false).copy(paused = entry?.state == WAS_PAUSED,
-        bytesSent = entry?.bytesSent ?: 0)
+        bytesSent = maxOf(entry?.bytesSent ?: 0, standardized.bytesSent))
     }
     return resumeState(entry, destinationKey(upload.remoteUri.toString()) in readBlocks())
   }
@@ -303,7 +305,7 @@ internal object UploadPersistence {
         if (hint == null || hint.url == entry.url || entry.savedAtLocalMs > hint.savedAtLocalMs) {
           val matching = hint?.takeIf { it.url == entry.url }
           entries[entry.file.absolutePath] = entry.copy(state = matching?.state ?: entry.state,
-            bytesSent = matching?.bytesSent ?: 0)
+            bytesSent = maxOf(matching?.bytesSent ?: 0, entry.bytesSent))
         }
       }
     return entries.values.filter { standardized[destinationKey(it.url)]?.let { record ->

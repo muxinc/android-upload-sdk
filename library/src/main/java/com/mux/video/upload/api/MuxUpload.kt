@@ -122,7 +122,7 @@ class MuxUpload private constructor(
    *
    * To suspend the execution of the upload, use [pause]. To cancel it completely, use [cancel]
    *
-   * @param forceRestart Start the upload from the beginning even if the file is partially uploaded
+   * @param forceRestart Replace the current attempt while retaining its selected payload and acknowledged bytes
    *
    * @see pause
    * @see cancel
@@ -154,8 +154,7 @@ class MuxUpload private constructor(
       if (forceRestart) {
         val blocked = uploadInfo.standardizedResumeBlocked || readUploadResumeState(uploadInfo).standardizedResumeBlocked
         val previous = uploadInfo
-        if (previous.attempt == null) forgetUploadState(previous)
-        else previous.attempt.cancel(forRestart = true) { forgetUploadState(previous) }
+        previous.attempt?.cancel(forRestart = true) { forgetUploadState(previous) }
         previous.uploadJob?.cancel()
         uploadInfo = uploadInfo.update(attempt = null, statusFlow = null,
           restoredFromOriginal = previous.attempt?.preparation?.originalSelected == true || previous.restoredFromOriginal,
