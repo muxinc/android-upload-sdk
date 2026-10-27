@@ -24,7 +24,7 @@ internal data class StandardInputTimelineFacts(
 )
 
 /**
- * Effective ISO presentation time, shared by source inspection and generated-output validation.
+ * Effective ISO presentation time, shared by source inspection and standardized-output validation.
  * Timing tables prove the final sample's duration; full platform reads prove those samples exist.
  * Fragmented, non-ISO, ambiguous, or unsupported edit timelines remain unknown. No decoding/export.
  */

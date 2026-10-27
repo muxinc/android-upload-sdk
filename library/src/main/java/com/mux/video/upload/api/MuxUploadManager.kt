@@ -64,7 +64,7 @@ object MuxUploadManager {
   @MainThread
   internal fun resumeCachedJobs(includePaused: Boolean): List<MuxUpload> {
     val restored = readCachedUploadSnapshots().filter { cached ->
-      (cached.resumeState.generated != null || cached.upload.inputFile.exists()).also { if (!it) forgetUploadState(cached.upload) }
+      (cached.resumeState.standardized != null || cached.upload.inputFile.exists()).also { if (!it) forgetUploadState(cached.upload) }
     }.map { (upload, saved) ->
       if (!includePaused && saved.paused) {
         uploadsByFilename.getOrPut(upload.inputFile.absolutePath) {
@@ -184,15 +184,15 @@ object MuxUploadManager {
       return previous
     var source = previous ?: upload
     if (restart || newDestination) {
-      val generatedMayExistRemotely = !newDestination && (source.generatedResumeBlocked ||
-        source.attempt?.preparation?.generatedRequestStarted == true || readUploadResumeState(upload).let { it.generatedResumeBlocked || it.generated?.networkStarted == true })
+      val standardizedMayExistRemotely = !newDestination && (source.standardizedResumeBlocked || readUploadResumeState(upload).standardizedResumeBlocked)
       if (newDestination) {
         source.attempt?.replace { forgetUploadState(source) }
         source.uploadJob?.cancel()
       } else cancelAttempt(source, forgetUnstarted = true, forRestart = true)
       source = upload.update(attempt = null, uploadJob = source.uploadJob,
-        predecessorPreparation = source.attempt?.preparation ?: source.predecessorPreparation,
-        statusFlow = null, restoredFromOriginal = false, generatedResumeBlocked = generatedMayExistRemotely).also {
+        statusFlow = null, restoredFromOriginal = !newDestination &&
+          (source.attempt?.preparation?.originalSelected == true || source.restoredFromOriginal),
+        standardizedResumeBlocked = standardizedMayExistRemotely).also {
         it.session = if (newDestination) upload.session else source.session
       }
     }

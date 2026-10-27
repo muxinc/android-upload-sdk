@@ -45,7 +45,7 @@ class UploadPreparationTests : AbsRobolectricTest() {
     }
   }
 
-  @Test fun multipleAudioTracksSelectOriginalEvenWhenGeneratedResumeIsVerified() = runBlocking {
+  @Test fun multipleAudioTracksSelectOriginalEvenWhenStandardizedResumeIsVerified() = runBlocking {
     for (codec in listOf(VideoCodec.H264, VideoCodec.Hevc)) {
       val facts = source(codec).copy(averageBitrate = known(9_000_000L), audioTracks = known(listOf(
         AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.Stereo))),
@@ -54,11 +54,11 @@ class UploadPreparationTests : AbsRobolectricTest() {
         inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) },
         convert = { _, _, _, _, _ -> error("Multi-audio must keep server selection on original bytes") })
       assertEquals(PreparedUpload.Original(PreparationDiagnostic.UnsupportedPlan),
-        preparation.prepare(upload(), context, generatedResumeVerified = true))
+        preparation.prepare(upload(), context, standardizedResumeVerified = true))
     }
   }
 
-  @Test fun adapterReceivesPlannedCodecAndOnlyValidatedCompletionCanSelectGenerated() = runBlocking {
+  @Test fun adapterReceivesPlannedCodecAndOnlyValidatedCompletionCanSelectStandardized() = runBlocking {
     for (codec in listOf(VideoCodec.H264, VideoCodec.Hevc)) {
       val facts = source(codec).copy(averageBitrate = known(9_000_000L))
       var result: SdrConversionResult = SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid)
@@ -70,11 +70,11 @@ class UploadPreparationTests : AbsRobolectricTest() {
           result
         })
       assertEquals(PreparedUpload.Original(PreparationDiagnostic.ConversionFailed(SdrConversionFailure.OutputInvalid)),
-        preparation.prepare(upload(), context, generatedResumeVerified = true))
-      val owned = SdrGeneratedFile.allocate(context.cacheDir, 1)!!
+        preparation.prepare(upload(), context, standardizedResumeVerified = true))
+      val owned = SdrStandardizedFile.allocate(context.cacheDir, 1)!!
       try {
         result = SdrConversionResult.Completed(owned, source(codec))
-        assertEquals(PreparedUpload.Generated(owned), preparation.prepare(upload(), context, generatedResumeVerified = true))
+        assertEquals(PreparedUpload.Standardized(owned), preparation.prepare(upload(), context, standardizedResumeVerified = true))
       } finally { owned.delete() }
     }
   }
@@ -85,7 +85,7 @@ class UploadPreparationTests : AbsRobolectricTest() {
       val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata(facts)) },
         inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) },
         convert = { _, _, _, _, _ -> error("Unproven HDR must stay outside SDR export") })
-      assertTrue(preparation.prepare(upload(), context, generatedResumeVerified = true) is PreparedUpload.Original)
+      assertTrue(preparation.prepare(upload(), context, standardizedResumeVerified = true) is PreparedUpload.Original)
     }
   }
 
@@ -106,7 +106,7 @@ class UploadPreparationTests : AbsRobolectricTest() {
     val preparation = UploadPreparation(inspectMetadata = { error("Gate must precede metadata") },
       inspectSamples = { _, _, _ -> error("Gate must precede samples") },
       convert = { _, _, _, _, _ -> error("Gate must precede export") })
-    assertEquals(PreparedUpload.Original(PreparationDiagnostic.GeneratedResumeUnavailable), preparation.prepare(upload(), context))
+    assertEquals(PreparedUpload.Original(PreparationDiagnostic.StandardizedResumeUnavailable), preparation.prepare(upload(), context))
   }
 
   @Test fun supportedPlannerConversionReachesAdapter() = runBlocking {
@@ -126,7 +126,7 @@ class UploadPreparationTests : AbsRobolectricTest() {
     } finally { unmockkConstructor(StandardInputPlanner::class) }
   }
 
-  @Test fun cancellationWaitsForAdapterReleaseBeforePreparationJobCompletes() = runBlocking {
+  @Test fun cancellationRequestsAdapterCleanupWithoutBlockingThePreparationJob() = runBlocking {
     val facts = source().copy(averageBitrate = known(9_000_000L))
     val started = CompletableDeferred<Unit>()
     val cancellationRequested = CompletableDeferred<Unit>()
@@ -147,9 +147,9 @@ class UploadPreparationTests : AbsRobolectricTest() {
       withTimeout(5000) { started.await() }
       job.cancel()
       withTimeout(5000) { cancellationRequested.await() }
-      assertFalse(job.isCompleted)
-      released.complete(Unit)
-      withTimeout(5000) { job.join() }
+      withTimeout(1000) { job.join() }
+      assertFalse(released.isCompleted)
+      coVerify(exactly = 0) { export.awaitRelease() }
       assertTrue(job.isCompleted)
       callback.captured(SdrConversionResult.Cancelled)
     } finally {
@@ -157,34 +157,6 @@ class UploadPreparationTests : AbsRobolectricTest() {
     }
   }
 
-  @Test fun cancelledPreparationDeadlineRetainsAReleaseBarrier() = runBlocking {
-    val facts = source().copy(averageBitrate = known(9_000_000L))
-    val started = CompletableDeferred<Unit>()
-    val released = CompletableDeferred<Unit>()
-    val export = mockk<SdrConversionAdapter.Attempt> {
-      every { cancel() } just Runs
-      coEvery { awaitRelease() } coAnswers { released.await() }
-    }
-    mockkConstructor(SdrConversionAdapter::class)
-    every { anyConstructed<SdrConversionAdapter>().start(any(), any(), any(), any(), any()) } answers {
-      started.complete(Unit); export
-    }
-    val state = UploadPreparationState()
-    val upload = upload().copy(attempt = UploadAttempt(state, MuxUpload.Progress()))
-    val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata(facts)) },
-      inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) })
-    val job = launch(Dispatchers.Default) { preparation.prepare(upload, context, true) }
-    try {
-      withTimeout(5000) { started.await() }
-      job.cancel()
-      withTimeout(8000) { job.join() }
-      assertTrue(job.isCancelled)
-      assertNotNull(state.releaseBarrier)
-      assertFalse(released.isCompleted)
-      released.complete(Unit)
-      withTimeout(1000) { state.releaseBarrier!!.invoke() }
-    } finally { released.complete(Unit); job.cancelAndJoin(); unmockkConstructor(SdrConversionAdapter::class) }
-  }
 
   private fun bridgeRace(cancel: Boolean) = runBlocking {
     val facts = source().copy(averageBitrate = known(9_000_000L))
@@ -198,7 +170,7 @@ class UploadPreparationTests : AbsRobolectricTest() {
     every { anyConstructed<SdrConversionAdapter>().start(any(), any(), any(), any(), capture(callback)) } answers {
       started.complete(Unit); export
     }
-    val owned = SdrGeneratedFile.allocate(context.cacheDir, 1)!!
+    val owned = SdrStandardizedFile.allocate(context.cacheDir, 1)!!
     owned.file.writeText("validated output"); assertTrue(owned.recordValidation())
     val state = UploadPreparationState()
     val attempt = UploadAttempt(state, MuxUpload.Progress())

@@ -56,7 +56,7 @@ internal data class SdrEncodingTargets(
       val rate = conversion.outputFrameRate
       if (conversion.outputCodec != expectedCodec || !size.isValid || size.width % 2 != 0 || size.height % 2 != 0 ||
         size.width > conversion.sourceDisplayDimensions.width || size.height > conversion.sourceDisplayDimensions.height ||
-        !size.fitsWithin(conversion.selection.generatedOutputDimensions) ||
+        !size.fitsWithin(conversion.selection.standardizedOutputDimensions) ||
         !StandardInputOutputValidator.preservesAspectRatio(conversion.sourceDisplayDimensions, size) ||
         !rate.isFinite() || rate !in conversion.outputPolicyLimits.frameRateRange ||
         conversion.outputPixelFormat != PixelFormat(8, ChromaSubsampling.Yuv420)) return null

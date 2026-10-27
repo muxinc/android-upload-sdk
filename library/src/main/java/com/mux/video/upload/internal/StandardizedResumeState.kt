@@ -4,8 +4,8 @@ import org.json.JSONObject
 
 internal enum class PreparationPhase { Preparing, Validated, Uploading }
 
-/** The durable record is authoritative; preference progress is only a UI hint. */
-internal data class GeneratedResumeState(
+/** Tracks the selected standardized file and whether transport has fixed its bytes. */
+internal data class StandardizedResumeState(
   val source: PayloadIdentity,
   val phase: PreparationPhase = PreparationPhase.Preparing,
   val ownedPath: String? = null,
@@ -16,7 +16,7 @@ internal data class GeneratedResumeState(
   fun toJson() = JSONObject().put("source", source.toJson()).put("phase", phase.name)
     .put("owned_path", ownedPath).put("payload", payload?.toJson()).put("network_started", networkStarted).put("abandoned", abandoned)
   companion object {
-    fun fromJson(json: JSONObject) = GeneratedResumeState(
+    fun fromJson(json: JSONObject) = StandardizedResumeState(
       source = PayloadIdentity.fromJson(json.getJSONObject("source")),
       phase = PreparationPhase.valueOf(json.getString("phase")),
       ownedPath = json.optString("owned_path").takeIf { it.isNotEmpty() },

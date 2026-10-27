@@ -4,7 +4,7 @@ import android.net.Uri
 import com.mux.exoplayeradapter.AbsRobolectricTest
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
-import com.mux.video.upload.internal.standardization.SdrGeneratedFile
+import com.mux.video.upload.internal.standardization.SdrStandardizedFile
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.runBlocking
 import okhttp3.*
@@ -16,7 +16,7 @@ import org.junit.Test
 import org.robolectric.RuntimeEnvironment
 import java.io.File
 
-class GeneratedUploadProtocolTests : AbsRobolectricTest() {
+class UploadProtocolTests : AbsRobolectricTest() {
   @After fun tearDown() { MuxUploadSdk.useLogger(MuxUploadSdk.noLogger()) }
   private fun info() = UploadInfo(remoteUri = Uri.parse("https://example.invalid/upload"), inputFile = File("unused"),
     chunkSize = 4, retriesPerChunk = 3, optOut = true, uploadJob = null, statusFlow = null)
@@ -30,11 +30,11 @@ class GeneratedUploadProtocolTests : AbsRobolectricTest() {
       arrayOf("bytes=0-9223372036854775807"), arrayOf("bytes=0-999999999999999999999"),
       arrayOf("bytes=0--1"), arrayOf("bytes=0-2,4-5"), arrayOf("items=0-2"),
       arrayOf("bytes=0-2", "bytes=0-2"), arrayOf(""))) {
-      response(308, *headers).use { assertThrows(GeneratedResumeBlockedException::class.java) {
-        GeneratedUploadProtocol.acknowledgedOffset(it, 12) } }
+      response(308, *headers).use { assertThrows(UploadResumeBlockedException::class.java) {
+        UploadProtocol.acknowledgedOffset(it, 12) } }
     }
-    response(308).use { assertEquals(0L, GeneratedUploadProtocol.acknowledgedOffset(it, 12)) }
-    response(308, "bytes=0-2").use { assertEquals(3L, GeneratedUploadProtocol.acknowledgedOffset(it, 12)) }
+    response(308).use { assertEquals(0L, UploadProtocol.acknowledgedOffset(it, 12)) }
+    response(308, "bytes=0-2").use { assertEquals(3L, UploadProtocol.acknowledgedOffset(it, 12)) }
   }
 
   @Test fun queryIsEmptyPutAndOnlyAcceptsVerifiedIncompleteOrCompleteResponses() = runBlocking {
@@ -53,23 +53,23 @@ class GeneratedUploadProtocolTests : AbsRobolectricTest() {
         response(code, *ranges).newBuilder().request(request).build()
       }.build())
       if (expected == null) {
-        try { GeneratedUploadProtocol.query(info(), 12); fail("Unsupported query $code") }
-        catch (_: GeneratedResumeBlockedException) {}
-      } else assertEquals(expected, GeneratedUploadProtocol.query(info(), 12))
+        try { UploadProtocol.query(info(), 12); fail("Unsupported query $code") }
+        catch (_: UploadResumeBlockedException) {}
+      } else assertEquals(expected, UploadProtocol.query(info(), 12))
       assertEquals(1, requests)
     }
   }
 
-  @Test fun generatedChunkProgressUsesPartialRangeAndAmbiguityIsNeverRetried() = runBlocking {
-    val owned = SdrGeneratedFile.allocate(RuntimeEnvironment.getApplication().cacheDir, 1)!!
-    owned.file.writeText("generated payload"); assertTrue(owned.recordValidation())
+  @Test fun originalAndStandardizedChunksSharePartialAndOverlappingAcknowledgements() = runBlocking {
+    val owned = SdrStandardizedFile.allocate(RuntimeEnvironment.getApplication().cacheDir, 1)!!
+    owned.file.writeText("standardized payload"); assertTrue(owned.recordValidation())
     val state = UploadPreparationState().apply { verified = owned }
     val upload = info().update(attempt = UploadAttempt(state, MuxUpload.Progress()))
     val chunk = ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7))
     try {
-      for ((code, ranges, expected) in listOf(Triple(308, arrayOf("bytes=0-5"), 2L),
+      for (upload in listOf(info(), upload)) for ((code, ranges, expected) in listOf(Triple(308, arrayOf("bytes=0-5"), 2L),
         Triple(308, emptyArray<String>(), null),
-        Triple(308, arrayOf("bytes=0-8"), null), Triple(200, emptyArray(), null),
+        Triple(308, arrayOf("bytes=0-8"), 5L), Triple(200, emptyArray(), 8L),
         Triple(204, emptyArray(), null))) {
         var requests = 0
         MuxUploadSdk.useOkHttpClient(OkHttpClient.Builder().addInterceptor { chain ->
@@ -81,7 +81,7 @@ class GeneratedUploadProtocolTests : AbsRobolectricTest() {
         val progress = MutableSharedFlow<MuxUpload.Progress>(replay = 1)
         val worker = ChunkWorker.create(chunk, upload, "video/*", progress)
         if (expected == null) {
-          try { worker.upload(); fail("Ambiguous chunk $code") } catch (_: GeneratedResumeBlockedException) {}
+          try { worker.upload(); fail("Ambiguous chunk $code") } catch (_: UploadResumeBlockedException) {}
           assertTrue(progress.replayCache.isEmpty())
         } else {
           assertEquals(expected, worker.upload().bytesUploaded)
@@ -89,28 +89,28 @@ class GeneratedUploadProtocolTests : AbsRobolectricTest() {
         }
         assertEquals(1, requests)
       }
-      response(200).use { assertEquals(4L, GeneratedUploadProtocol.acknowledge(it, chunk.copy(startByte = 8, endByte = 11))) }
+      response(200).use { assertEquals(4L, UploadProtocol.acknowledge(it, chunk.copy(startByte = 8, endByte = 11))) }
     } finally { owned.delete() }
   }
   @Test fun queryPreservesTransportFailureAndClassifiesRetryableResponses() = runBlocking {
     val offline = java.io.IOException("Offline")
     MuxUploadSdk.useOkHttpClient(OkHttpClient.Builder().addInterceptor { throw offline }.build())
-    try { GeneratedUploadProtocol.query(info(), 12); fail("Expected transport failure") }
+    try { UploadProtocol.query(info(), 12); fail("Expected transport failure") }
     catch (e: java.io.IOException) { assertEquals(offline.javaClass, e.javaClass); assertEquals(offline.message, e.message) }
     for (code in listOf(408, 429, 500, 502, 503, 504)) {
       MuxUploadSdk.useOkHttpClient(OkHttpClient.Builder().addInterceptor { chain ->
         response(code).newBuilder().request(chain.request()).build()
       }.build())
-      try { GeneratedUploadProtocol.query(info(), 12); fail("Expected retryable response $code") }
+      try { UploadProtocol.query(info(), 12); fail("Expected retryable response $code") }
       catch (_: java.io.IOException) {}
       response(code).use { assertThrows(java.io.IOException::class.java) {
-        GeneratedUploadProtocol.acknowledge(it, ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7))) } }
+        UploadProtocol.acknowledge(it, ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7))) } }
     }
   }
 
-  @Test fun generatedWorkerLeavesRetryableResponseRecoveryToItsOwner() = runBlocking {
-    val owned = SdrGeneratedFile.allocate(RuntimeEnvironment.getApplication().cacheDir, 1)!!
-    owned.file.writeText("generated payload"); assertTrue(owned.recordValidation())
+  @Test fun standardizedWorkerLeavesRetryableResponseRecoveryToItsOwner() = runBlocking {
+    val owned = SdrStandardizedFile.allocate(RuntimeEnvironment.getApplication().cacheDir, 1)!!
+    owned.file.writeText("standardized payload"); assertTrue(owned.recordValidation())
     val state = UploadPreparationState().apply { verified = owned }
     val upload = info().update(attempt = UploadAttempt(state, MuxUpload.Progress()))
     var requests = 0
@@ -127,13 +127,13 @@ class GeneratedUploadProtocolTests : AbsRobolectricTest() {
     } finally { owned.delete() }
   }
 
-  @Test fun generatedLoggingAndAcknowledgedProgressStayStableWhenOwnershipClears() = runBlocking {
+  @Test fun standardizedLoggingAndAcknowledgedProgressStayStableWhenOwnershipClears() = runBlocking {
     val logs = mutableListOf<String>()
     MuxUploadSdk.useLogger(object : MuxUploadSdk.Logger by MuxUploadSdk.noLogger() {
       override fun v(tag: String, msg: String, e: Exception?) { logs += msg }
     })
-    val owned = SdrGeneratedFile.allocate(RuntimeEnvironment.getApplication().cacheDir, 1)!!
-    owned.file.writeText("generated payload"); assertTrue(owned.recordValidation())
+    val owned = SdrStandardizedFile.allocate(RuntimeEnvironment.getApplication().cacheDir, 1)!!
+    owned.file.writeText("standardized payload"); assertTrue(owned.recordValidation())
     val state = UploadPreparationState().apply { verified = owned }
     val upload = info().update(attempt = UploadAttempt(state, MuxUpload.Progress()))
     val chunk = ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7))
@@ -146,13 +146,13 @@ class GeneratedUploadProtocolTests : AbsRobolectricTest() {
     try {
       assertEquals(2L, ChunkWorker.create(chunk, upload, "video/*", flow).upload().bytesUploaded)
       assertEquals(listOf(2L), flow.replayCache.map { it.bytesUploaded })
-      assertTrue("Generated logs: $logs", logs.isEmpty())
+      assertTrue("Standardized logs: $logs", logs.isEmpty())
     } finally { owned.delete() }
   }
 
-  @Test fun generatedRequestsNeverReplayAutomaticallyOnRetryableHttpResponses() = runBlocking {
-    val owned = SdrGeneratedFile.allocate(RuntimeEnvironment.getApplication().cacheDir, 1)!!
-    owned.file.writeText("generated payload"); assertTrue(owned.recordValidation())
+  @Test fun standardizedRequestsNeverReplayAutomaticallyOnRetryableHttpResponses() = runBlocking {
+    val owned = SdrStandardizedFile.allocate(RuntimeEnvironment.getApplication().cacheDir, 1)!!
+    owned.file.writeText("standardized payload"); assertTrue(owned.recordValidation())
     val state = UploadPreparationState().apply { verified = owned }
     try {
       for (code in listOf(408, 503)) for (isQuery in listOf(true, false)) {
@@ -188,7 +188,7 @@ class GeneratedUploadProtocolTests : AbsRobolectricTest() {
         var failure: java.io.IOException? = null
         try {
           try {
-            if (isQuery) GeneratedUploadProtocol.query(upload, 12)
+            if (isQuery) UploadProtocol.query(upload, 12)
             else ChunkWorker.create(ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7)),
               upload, "video/*", MutableSharedFlow(replay = 1)).upload()
             fail("Expected retryable $code")
@@ -200,9 +200,9 @@ class GeneratedUploadProtocolTests : AbsRobolectricTest() {
     } finally { owned.delete() }
   }
 
-  @Test fun generatedTransportClassificationSurvivesOwnershipClearedBeforeWorkerCreation() = runBlocking {
-    val owned = SdrGeneratedFile.allocate(RuntimeEnvironment.getApplication().cacheDir, 1)!!
-    owned.file.writeText("generated payload"); assertTrue(owned.recordValidation())
+  @Test fun chunkAcknowledgementsDoNotDependOnPreparationOwnership() = runBlocking {
+    val owned = SdrStandardizedFile.allocate(RuntimeEnvironment.getApplication().cacheDir, 1)!!
+    owned.file.writeText("standardized payload"); assertTrue(owned.recordValidation())
     val state = UploadPreparationState().apply { verified = owned }
     val attempt = UploadAttempt(state, MuxUpload.Progress())
     attempt.beginTransport(true) {}
@@ -220,12 +220,12 @@ class GeneratedUploadProtocolTests : AbsRobolectricTest() {
 
   @Test fun zeroProgressAcknowledgementsAreRetryableWhileRegressingOffsetsStillBlock() {
     val chunk = ChunkWorker.Chunk(4, 7, 12, 4, byteArrayOf(4,5,6,7))
-    response(308, "bytes=0-3").use { assertThrows(GeneratedUploadRetryException::class.java) {
-      GeneratedUploadProtocol.acknowledge(it, chunk) } }
-    response(308).use { assertThrows(GeneratedUploadRetryException::class.java) {
-      GeneratedUploadProtocol.acknowledge(it, chunk.copy(startByte = 0, endByte = 3)) } }
-    response(308, "bytes=0-2").use { assertThrows(GeneratedResumeBlockedException::class.java) {
-      GeneratedUploadProtocol.acknowledge(it, chunk) } }
+    response(308, "bytes=0-3").use { assertThrows(UploadRetryException::class.java) {
+      UploadProtocol.acknowledge(it, chunk) } }
+    response(308).use { assertThrows(UploadRetryException::class.java) {
+      UploadProtocol.acknowledge(it, chunk.copy(startByte = 0, endByte = 3)) } }
+    response(308, "bytes=0-2").use { assertThrows(UploadResumeBlockedException::class.java) {
+      UploadProtocol.acknowledge(it, chunk) } }
   }
 
   @Test fun retryAfterCarriesBoundedDelayForSecondsAndHttpDates() {
@@ -239,7 +239,7 @@ class GeneratedUploadProtocolTests : AbsRobolectricTest() {
       Triple("invalid", 0L, 0L), Triple(future, 28_000L, 30_000L),
       Triple("Mon, 01 Jan 2001 00:00:00 GMT", 0L, 0L))) {
       response(503).newBuilder().header("Retry-After", header).build().use {
-        val error = assertThrows(GeneratedUploadRetryException::class.java) { GeneratedUploadProtocol.acknowledge(it, chunk) }
+        val error = assertThrows(UploadRetryException::class.java) { UploadProtocol.acknowledge(it, chunk) }
         assertTrue("$header: ${error.retryAfterMs}", error.retryAfterMs in low..high)
       }
     }

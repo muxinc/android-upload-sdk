@@ -14,7 +14,7 @@ import java.io.IOException
 import kotlin.coroutines.resumeWithException
 
 /** Verified on small Mux test Direct Uploads; never follows an ambiguous response. */
-internal object GeneratedUploadProtocol {
+internal object UploadProtocol {
   private var originalClient: OkHttpClient? = null
   private var transportClient: OkHttpClient? = null
 
@@ -50,12 +50,12 @@ internal object GeneratedUploadProtocol {
   fun acknowledge(response: Response, chunk: ChunkWorker.Chunk): Long {
     val next = when (response.code) {
       308 -> acknowledgedOffset(response, chunk.totalFileSize)
-      200, 201 -> if (chunk.endByte + 1 == chunk.totalFileSize &&
-        response.headers.values("Range").isEmpty()) chunk.totalFileSize else blocked()
+      200, 201 -> if (response.headers.values("Range").isEmpty()) chunk.totalFileSize else blocked()
       else -> failedResponse(response)
     }
-    if (next < chunk.startByte || next > chunk.endByte + 1) blocked()
-    if (next == chunk.startByte) throw GeneratedUploadRetryException("Generated upload acknowledged no new bytes")
+    // An overlapping PUT can acknowledge bytes beyond this chunk that were already received.
+    if (next < chunk.startByte) blocked()
+    if (next == chunk.startByte) throw UploadRetryException("Upload acknowledged no new bytes")
     return next - chunk.startByte
   }
 
@@ -73,7 +73,7 @@ internal object GeneratedUploadProtocol {
   private fun failedResponse(response: Response): Nothing {
     val code = response.code
     if (code == 408 || code == 429 || code in 500..599)
-      throw GeneratedUploadRetryException("Generated upload request failed: $code", retryAfterMs(response))
+      throw UploadRetryException("Upload request failed: $code", retryAfterMs(response))
     blocked()
   }
 
@@ -85,10 +85,10 @@ internal object GeneratedUploadProtocol {
     return (date.time - System.currentTimeMillis()).coerceIn(0, 60_000)
   }
 
-  private fun blocked(): Nothing = throw GeneratedResumeBlockedException()
+  private fun blocked(): Nothing = throw UploadResumeBlockedException()
 }
 
-internal class GeneratedUploadRetryException(message: String, val retryAfterMs: Long = 0) : IOException(message)
+internal class UploadRetryException(message: String, val retryAfterMs: Long = 0) : IOException(message)
 
 internal suspend fun executeUploadRequest(request: Request, client: OkHttpClient): Response = suspendCancellableCoroutine { continuation ->
   val call = client.newCall(request)
