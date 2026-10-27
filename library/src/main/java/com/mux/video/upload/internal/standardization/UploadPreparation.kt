@@ -3,8 +3,6 @@ package com.mux.video.upload.internal.standardization
 import android.content.Context
 import com.mux.video.upload.internal.UploadInfo
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -16,7 +14,7 @@ internal sealed interface PreparationDiagnostic {
   data object Original : PreparationDiagnostic
   data object InspectionFailed : PreparationDiagnostic
   data object UnsupportedPlan : PreparationDiagnostic
-  data object GeneratedResumeUnavailable : PreparationDiagnostic
+  data object StandardizedResumeUnavailable : PreparationDiagnostic
   data class ConversionFailed(val reason: SdrConversionFailure) : PreparationDiagnostic
   data object Validated : PreparationDiagnostic
 }
@@ -24,7 +22,7 @@ internal sealed interface PreparationDiagnostic {
 internal sealed interface PreparedUpload {
   val diagnostic: PreparationDiagnostic
   data class Original(override val diagnostic: PreparationDiagnostic = PreparationDiagnostic.Original) : PreparedUpload
-  data class Generated(val output: SdrGeneratedFile,
+  data class Standardized(val output: SdrStandardizedFile,
     override val diagnostic: PreparationDiagnostic = PreparationDiagnostic.Validated) : PreparedUpload
 }
 
@@ -34,41 +32,29 @@ internal class UploadPreparation(
     { file, metadata, cancelled -> StandardInputTimelineInspector().inspect(file, metadata, cancelled) },
   private val convert: suspend (Context, UploadInfo, MediaMetadataInspection, MediaSampleInspection, StandardInputConversion) -> SdrConversionResult =
     { context, upload, metadata, source, conversion ->
-      var export: SdrConversionAdapter.Attempt? = null
-      try { suspendCancellableCoroutine { continuation ->
+      suspendCancellableCoroutine { continuation ->
         val attempt = SdrConversionAdapter(context, onAllocated = { owned ->
           val preparation = checkNotNull(upload.attempt).preparation
-          val saved = checkNotNull(preparation.generatedState).copy(ownedPath = owned.file.absolutePath)
-          preparation.generatedState = saved
-          com.mux.video.upload.internal.UploadPersistence.writeGenerated(upload, saved)
+          val saved = checkNotNull(preparation.standardizedState).copy(ownedPath = owned.file.absolutePath)
+          preparation.standardizedState = saved
+          com.mux.video.upload.internal.UploadPersistence.writeStandardized(upload, saved)
         }, onPendingCleanup = { upload.attempt?.trackCleanup(it) })
           .start(upload.inputFile, metadata, source, conversion) { result ->
           // Transfer ownership before dispatch: completion can race pause or cancellation.
-          if (result is SdrConversionResult.Completed) upload.attempt?.retainGenerated(result.output)
+          if (result is SdrConversionResult.Completed) upload.attempt?.retainStandardized(result.output)
           continuation.resume(result) { _, value, _ ->
             if (value is SdrConversionResult.Completed && upload.attempt == null) value.output.delete()
           }
         }
-        export = attempt
         continuation.invokeOnCancellation { attempt.cancel() }
-      } } finally {
-        if (!coroutineContext.isActive) withContext(NonCancellable) {
-          export?.let { attempt ->
-            if (kotlinx.coroutines.withTimeoutOrNull(com.mux.video.upload.internal.PREPARATION_RELEASE_TIMEOUT_MS) {
-                attempt.awaitRelease(); true } != true) {
-              // A deadline must not permit another export while Media3 still owns resources.
-              upload.attempt?.preparation?.releaseBarrier = attempt::awaitRelease
-            }
-          }
-        }
       }
     },
 ) {
   suspend fun prepare(upload: UploadInfo, context: Context,
-    generatedResumeVerified: Boolean = false): PreparedUpload = withContext(Dispatchers.IO) {
+    standardizedResumeVerified: Boolean = false): PreparedUpload = withContext(Dispatchers.IO) {
     fun original(reason: PreparationDiagnostic) = PreparedUpload.Original(reason)
     if (!upload.isStandardizationRequested()) return@withContext original(PreparationDiagnostic.Original)
-    if (!generatedResumeVerified) return@withContext original(PreparationDiagnostic.GeneratedResumeUnavailable)
+    if (!standardizedResumeVerified) return@withContext original(PreparationDiagnostic.StandardizedResumeUnavailable)
     val job = coroutineContext
     try {
       val metadata = (inspectMetadata(upload.inputFile) as? MetadataInspectionResult.Success)?.inspection
@@ -88,7 +74,7 @@ internal class UploadPreparation(
       if (SdrEncodingTargets.from(conversion, metadata, source) == null)
         return@withContext original(PreparationDiagnostic.UnsupportedPlan)
       when (val result = convert(context, upload, metadata, source, conversion)) {
-        is SdrConversionResult.Completed -> PreparedUpload.Generated(result.output)
+        is SdrConversionResult.Completed -> PreparedUpload.Standardized(result.output)
         is SdrConversionResult.Failed -> original(PreparationDiagnostic.ConversionFailed(result.reason))
         SdrConversionResult.Cancelled -> throw kotlinx.coroutines.CancellationException("Preparation cancelled")
       }

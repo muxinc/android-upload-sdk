@@ -20,7 +20,7 @@ import java.io.File
 
 /**
  * Configuration retention through the public lifecycle, using unchanged original bytes.
- * Generated payload ownership and resume blocking are covered in UploadPreparationLifecycleTests.
+ * Standardized payload ownership and resume blocking are covered in UploadPreparationLifecycleTests.
  */
 @Config(sdk = [28])
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -115,8 +115,8 @@ class StandardInputLifecycleTests : AbsRobolectricTest() {
     restored.start(forceRestart = true)
     runUntil { workerOptions.size == 4 }
     assertOptions(restored, options)
-    // These offsets apply only to the same original bytes, not regenerated media.
-    assertEquals(listOf(0L, 3L, 3L, 0L), chunkOffsets)
+    // These offsets apply only to the same original bytes, not restandardized media.
+    assertEquals(listOf(0L, 3L, 3L, 3L), chunkOffsets)
     assertEquals(List(4) { options }, workerOptions)
   }
 

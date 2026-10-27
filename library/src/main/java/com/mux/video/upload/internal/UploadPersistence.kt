@@ -18,57 +18,62 @@ import kotlinx.coroutines.launch
 @JvmSynthetic
 internal fun initializeUploadPersistence(appContext: Context) {
   UploadPersistence.prefs = appContext.applicationContext.getSharedPreferences("mux_upload", 0)
-  UploadPersistence.reconcileHiddenGenerated()
+  UploadPersistence.reconcileHiddenStandardized()
   UploadPersistence.scheduleBlockedCleanup(appContext)
 }
 
 @JvmSynthetic
 internal fun writeUploadState(uploadInfo: UploadInfo, state: MuxUpload.Progress) {
-  UploadPersistence.write(
-    UploadEntry(
-      file = uploadInfo.inputFile,
-      url = uploadInfo.remoteUri.toString(),
-      savedAtLocalMs = Date().time,
-      state = if (uploadInfo.isRunning()) {
-        UploadPersistence.WAS_RUNNING
-      } else {
-        UploadPersistence.WAS_PAUSED
-      },
-      bytesSent = state.bytesUploaded,
-      chunkSize = uploadInfo.chunkSize,
-      retriesPerChunk = uploadInfo.retriesPerChunk,
-      optOut = uploadInfo.optOut,
-      inputStandardization = uploadInfo.inputStandardization,
-      originalSelected = uploadInfo.attempt?.preparation?.originalSelected ?: true,
-      attemptId = uploadInfo.attempt?.id,
-      generatedResumeBlocked = (uploadInfo.attempt?.preparation?.generatedRequestStarted == true &&
-        uploadInfo.attempt.preparation.generatedState == null) || uploadInfo.generatedResumeBlocked,
-    )
-  )
+  UploadPersistence.write(persistenceEntry(uploadInfo, state))
 }
+
+private fun persistenceEntry(uploadInfo: UploadInfo, state: MuxUpload.Progress): UploadEntry =
+  UploadEntry(
+    file = uploadInfo.inputFile,
+    url = uploadInfo.remoteUri.toString(),
+    savedAtLocalMs = Date().time,
+    state = if (uploadInfo.isRunning() || uploadInfo.attempt?.isRestarting() == true) {
+      UploadPersistence.WAS_RUNNING
+    } else {
+      UploadPersistence.WAS_PAUSED
+    },
+    bytesSent = state.bytesUploaded,
+    chunkSize = uploadInfo.chunkSize,
+    retriesPerChunk = uploadInfo.retriesPerChunk,
+    optOut = uploadInfo.optOut,
+    inputStandardization = uploadInfo.inputStandardization,
+    originalSelected = uploadInfo.attempt?.preparation?.originalSelected ?: true,
+    attemptId = uploadInfo.attempt?.id,
+    standardizedResumeBlocked = uploadInfo.standardizedResumeBlocked,
+  )
 
 internal data class UploadResumeState(
   val bytesSent: Long = 0,
   val originalSelected: Boolean = false,
-  val generatedResumeBlocked: Boolean = false,
+  val standardizedResumeBlocked: Boolean = false,
   val paused: Boolean = false,
   val attemptId: String? = null,
-  val generated: GeneratedResumeState? = null,
-  val generatedOptions: InputStandardization? = null,
+  val standardized: StandardizedResumeState? = null,
+  val standardizedOptions: InputStandardization? = null,
 )
 
 internal fun readUploadResumeState(upload: UploadInfo): UploadResumeState = UploadPersistence.readState(upload)
 
 @JvmSynthetic
 internal fun readLastByteForFile(upload: UploadInfo): Long = readUploadResumeState(upload).let {
-  if (it.generatedResumeBlocked) 0 else it.bytesSent
+  if (it.standardizedResumeBlocked) 0 else it.bytesSent
 }
 
 @JvmSynthetic
 internal fun forgetUploadState(uploadInfo: UploadInfo) {
-  UploadPersistence.hideGenerated(uploadInfo)
+  if (uploadInfo.attempt?.isRestarting() == true) {
+    // Replace the attempt, retaining its selected file and last acknowledged byte.
+    writeUploadState(uploadInfo, uploadInfo.attempt.confirmedProgress())
+    return
+  }
+  UploadPersistence.hideStandardized(uploadInfo)
   UploadPersistence.removeForFile(uploadInfo)
-  UploadPersistence.scheduleGeneratedRetirement(uploadInfo)
+  UploadPersistence.scheduleStandardizedRetirement(uploadInfo)
 }
 
 internal data class CachedUpload(val upload: UploadInfo, val resumeState: UploadResumeState)
@@ -88,7 +93,7 @@ private fun UploadEntry.toUploadInfo(blocked: Boolean) = UploadInfo(
   uploadJob = null,
   statusFlow = null,
   restoredFromOriginal = originalSelected,
-  generatedResumeBlocked = blocked,
+  standardizedResumeBlocked = blocked,
 )
 
 /**
@@ -102,87 +107,79 @@ internal object UploadPersistence {
   const val WAS_PAUSED = 1
   const val LIST_KEY = "uploads"
   const val BLOCKS_KEY = "generated_upload_blocks"
-  private const val GENERATED_KEY = "generated_payloads_v1"
-  private const val GENERATED_BLOCKS_KEY = "generated_destination_blocks_v1"
+  // Keep the persisted keys compatible with existing saved uploads.
+  private const val STANDARDIZED_KEY = "generated_payloads_v1"
+  private const val STANDARDIZED_BLOCKS_KEY = "generated_destination_blocks_v1"
   // Only IO/export threads acquire this lock; UI pause/cancel never waits for commit().
   private val processIdentity = UUID.randomUUID().toString()
-  private val generatedWriteLock = Any()
+  private val standardizedWriteLock = Any()
   private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-  fun reconcileHiddenGenerated() {
-    val records = readGenerated()
-    hiddenGenerated.forEach { (key, owner) ->
-      if (records[key]?.attemptId != owner.attemptId) hiddenGenerated.remove(key, owner)
+  fun reconcileHiddenStandardized() {
+    val records = readStandardized()
+    hiddenStandardized.forEach { (key, owner) ->
+      if (records[key]?.attemptId != owner.attemptId) hiddenStandardized.remove(key, owner)
     }
   }
 
-  fun scheduleGeneratedRetirement(upload: UploadInfo): kotlinx.coroutines.Job {
+  fun scheduleStandardizedRetirement(upload: UploadInfo): kotlinx.coroutines.Job {
     val ownerStore = prefs
     return cleanupScope.launch {
       try {
         upload.uploadJob?.join()
         if (prefs !== ownerStore) return@launch
-        val preparation = upload.attempt?.preparation
-        if (preparation?.releaseBarrier != null) {
-          synchronized(generatedWriteLock) {
-            val entry = readGenerated()[destinationKey(upload.remoteUri.toString())]
-            if (entry != null && ownsGenerated(upload, entry))
-              preparation.generatedState?.let { writeGenerated(upload, it.copy(abandoned = true)) }
-          }
-        } else retireGenerated(upload)
+        retireStandardized(upload)
       } catch (_: Exception) {
-        com.mux.video.upload.MuxUploadSdk.logger.e("MuxUpload", "Generated persistence cleanup failed")
+        com.mux.video.upload.MuxUploadSdk.logger.e("MuxUpload", "Standardized persistence cleanup failed")
       }
     }
   }
-  private data class HiddenGenerated(val attemptId: String, val upload: UploadInfo)
-  private val hiddenGenerated = java.util.concurrent.ConcurrentHashMap<String, HiddenGenerated>()
-  fun hiddenGeneratedOwner(upload: UploadInfo): UploadInfo? =
-    hiddenGenerated[destinationKey(upload.remoteUri.toString())]?.upload
+  private data class HiddenStandardized(val attemptId: String)
+  private val hiddenStandardized = java.util.concurrent.ConcurrentHashMap<String, HiddenStandardized>()
   private fun isHidden(entry: UploadEntry) = entry.attemptId != null &&
-    hiddenGenerated[destinationKey(entry.url)]?.attemptId == entry.attemptId
-  private fun ownsGenerated(upload: UploadInfo, entry: UploadEntry) =
+    hiddenStandardized[destinationKey(entry.url)]?.attemptId == entry.attemptId
+  private fun ownsStandardized(upload: UploadInfo, entry: UploadEntry) =
     entry.attemptId == upload.attempt?.id || entry.attemptId == upload.attempt?.previousPersistenceOwnerId
-  fun hideGenerated(upload: UploadInfo) {
+  fun hideStandardized(upload: UploadInfo) {
     val key = destinationKey(upload.remoteUri.toString())
-    val entry = readGenerated()[key] ?: return
-    if (ownsGenerated(upload, entry)) {
-      entry.attemptId?.let { hiddenGenerated[key] = HiddenGenerated(it, upload) }
+    val entry = readStandardized()[key] ?: return
+    if (ownsStandardized(upload, entry)) {
+      entry.attemptId?.let { hiddenStandardized[key] = HiddenStandardized(it) }
       // Hiding a cancelled preparation must not permanently block an untouched destination.
-      if (entry.generated?.networkStarted == true || entry.generatedResumeBlocked)
+      if (entry.standardized?.networkStarted == true || entry.standardizedResumeBlocked)
         blockDestination(entry.url)
     }
   }
 
   /** Only a different process may clean cancelled/blocked exports whose engine could have died. */
   fun scheduleBlockedCleanup(context: Context): kotlinx.coroutines.Job {
-    if (readGenerated().values.none { it.processIdentity != processIdentity })
+    if (readStandardized().values.none { it.processIdentity != processIdentity })
       return kotlinx.coroutines.Job().apply { complete() }
     val ownerStore = prefs
     return cleanupScope.launch {
       try {
-        synchronized(generatedWriteLock) {
+        synchronized(standardizedWriteLock) {
           if (prefs !== ownerStore) return@synchronized
-          val records = readGenerated()
-          val generatedBlocks = readGeneratedBlocks()
-          val blocked = readBlocks() + generatedBlocks
-          val stale = records.values.filter { (destinationKey(it.url) in blocked || it.generated?.abandoned == true) &&
+          val records = readStandardized()
+          val standardizedBlocks = readStandardizedBlocks()
+          val blocked = readBlocks() + standardizedBlocks
+          val stale = records.values.filter { (destinationKey(it.url) in blocked || it.standardized?.abandoned == true) &&
             it.processIdentity != processIdentity }
           var changed = false
           for (entry in stale) {
-            val path = entry.generated?.ownedPath
-            val owned = path?.let { com.mux.video.upload.internal.standardization.SdrGeneratedFile.restore(context.cacheDir, it) }
+            val path = entry.standardized?.ownedPath
+            val owned = path?.let { com.mux.video.upload.internal.standardization.SdrStandardizedFile.restore(context.cacheDir, it) }
             if (path == null || owned?.delete() == true) {
-              if (entry.generated?.networkStarted == true || entry.generatedResumeBlocked)
-                generatedBlocks += destinationKey(entry.url)
+              if (entry.standardized?.networkStarted == true || entry.standardizedResumeBlocked)
+                standardizedBlocks += destinationKey(entry.url)
               records.remove(destinationKey(entry.url)); changed = true
             }
           }
-          if (changed) prefs.edit().putString(GENERATED_KEY, JSONArray(records.values.map { it.toJson() }).toString())
-            .putString(GENERATED_BLOCKS_KEY, JSONArray(generatedBlocks.toList()).toString()).commit()
+          if (changed) prefs.edit().putString(STANDARDIZED_KEY, JSONArray(records.values.map { it.toJson() }).toString())
+            .putString(STANDARDIZED_BLOCKS_KEY, JSONArray(standardizedBlocks.toList()).toString()).commit()
         }
       } catch (_: Exception) {
-        com.mux.video.upload.MuxUploadSdk.logger.e("MuxUpload", "Generated persistence cleanup failed")
+        com.mux.video.upload.MuxUploadSdk.logger.e("MuxUpload", "Standardized persistence cleanup failed")
       }
     }
   }
@@ -192,55 +189,81 @@ internal object UploadPersistence {
     prefs.edit().putString(BLOCKS_KEY, JSONArray(blocked.toList()).toString()).apply()
   }
 
-  fun writeGenerated(upload: UploadInfo, state: GeneratedResumeState) {
-    synchronized(generatedWriteLock) {
-      val records = readGenerated()
+  /** Commit the final original choice and retire preparation in the same preference write. */
+  fun selectOriginal(upload: UploadInfo) {
+    val attempt = checkNotNull(upload.attempt)
+    val entry = persistenceEntry(upload, attempt.confirmedProgress()).copy(originalSelected = true)
+    synchronized(standardizedWriteLock) {
+      val store = synchronized(this) {
+        if (attempt.isCancelled() || attempt.isSuperseded() || attempt.replacementFailure() != null)
+          throw kotlinx.coroutines.CancellationException("Upload stopped")
+        val records = readStandardized()
+        val key = destinationKey(entry.url)
+        records[key]?.let { if (!ownsStandardized(upload, it)) throw UploadResumeBlockedException() }
+        records.remove(key)
+        val entries = fetchEntries()
+        val paused = entries[entry.file.absolutePath]?.takeIf { it.attemptId == entry.attemptId && it.state == WAS_PAUSED }
+        entries[entry.file.absolutePath] = entry.copy(state = paused?.state ?: entry.state)
+        prefs.edit().putString(LIST_KEY, JSONArray(entries.values.map { it.toJson() }).toString())
+          .putString(STANDARDIZED_KEY, JSONArray(records.values.map { it.toJson() }).toString()).apply()
+        hiddenStandardized.remove(key)
+        prefs
+      }
+      // Flush the atomic update after releasing the monitor used by UI pause/cancel.
+      if (!store.edit().commit()) throw UploadResumeBlockedException()
+    }
+  }
+
+  fun writeStandardized(upload: UploadInfo, state: StandardizedResumeState) {
+    synchronized(standardizedWriteLock) {
+      val records = readStandardized()
       val key = destinationKey(upload.remoteUri.toString())
       val existing = records[key]
       val attempt = upload.attempt
       // A stopped owner may only mark its existing record abandoned, never claim or revive one.
       val cancelled = attempt?.isCancelled() == true || attempt?.replacementFailure() != null
       if (attempt?.isSuperseded() == true ||
-        cancelled && (!state.abandoned || existing == null || !ownsGenerated(upload, existing))) return
-      if (existing != null && !ownsGenerated(upload, existing)) throw GeneratedResumeBlockedException()
+        cancelled && (!state.abandoned || existing == null || !ownsStandardized(upload, existing))) return
+      if (existing != null && !ownsStandardized(upload, existing)) throw UploadResumeBlockedException()
       val entry = UploadEntry(upload.inputFile, upload.remoteUri.toString(), upload.chunkSize,
-        upload.retriesPerChunk, upload.optOut, Date().time, WAS_RUNNING, 0,
+        upload.retriesPerChunk, upload.optOut, Date().time, WAS_RUNNING,
+        attempt?.confirmedProgress()?.bytesUploaded ?: existing?.bytesSent ?: 0,
         upload.inputStandardization, originalSelected = false, attemptId = upload.attempt?.id,
-        generated = state, processIdentity = processIdentity)
+        standardized = state, processIdentity = processIdentity)
       records[destinationKey(entry.url)] = entry
-      val editor = prefs.edit().putString(GENERATED_KEY, JSONArray(records.values.map { it.toJson() }).toString())
-      if (!editor.commit()) throw GeneratedResumeBlockedException()
-      hiddenGenerated[destinationKey(entry.url)]?.takeIf { it.attemptId != entry.attemptId }?.let {
-        hiddenGenerated.remove(destinationKey(entry.url), it)
+      val editor = prefs.edit().putString(STANDARDIZED_KEY, JSONArray(records.values.map { it.toJson() }).toString())
+      if (!editor.commit()) throw UploadResumeBlockedException()
+      hiddenStandardized[destinationKey(entry.url)]?.takeIf { it.attemptId != entry.attemptId }?.let {
+        hiddenStandardized.remove(destinationKey(entry.url), it)
       }
     }
   }
 
-  fun retireGenerated(upload: UploadInfo) {
-    synchronized(generatedWriteLock) {
-      val records = readGenerated()
+  fun retireStandardized(upload: UploadInfo, block: Boolean = false) {
+    synchronized(standardizedWriteLock) {
+      val records = readStandardized()
       val key = destinationKey(upload.remoteUri.toString())
       val entry = records[key] ?: return
-      if (!ownsGenerated(upload, entry)) return
-      val blocks = readGeneratedBlocks()
+      if (!ownsStandardized(upload, entry)) return
+      val blocks = readStandardizedBlocks()
       // Keep only the destination hash after terminal cleanup, not paths/URLs/identities.
       // No time-based eviction: without known URL expiry, reuse could splice different bytes.
-      if (entry.generated?.networkStarted == true || entry.generatedResumeBlocked) blocks += key
+      if (block || entry.standardized?.networkStarted == true || entry.standardizedResumeBlocked) blocks += key
       records.remove(key)
-      if (!prefs.edit().putString(GENERATED_KEY, JSONArray(records.values.map { it.toJson() }).toString())
-          .putString(GENERATED_BLOCKS_KEY, JSONArray(blocks.toList()).toString()).commit())
-        throw GeneratedResumeBlockedException()
-      hiddenGenerated[key]?.takeIf { it.attemptId == entry.attemptId }?.let { hiddenGenerated.remove(key, it) }
+      if (!prefs.edit().putString(STANDARDIZED_KEY, JSONArray(records.values.map { it.toJson() }).toString())
+          .putString(STANDARDIZED_BLOCKS_KEY, JSONArray(blocks.toList()).toString()).commit())
+        throw UploadResumeBlockedException()
+      hiddenStandardized[key]?.takeIf { it.attemptId == entry.attemptId }?.let { hiddenStandardized.remove(key, it) }
     }
   }
 
-  private fun readGeneratedBlocks(): MutableSet<String> {
-    val json = JSONArray(prefs.getString(GENERATED_BLOCKS_KEY, null) ?: "[]")
+  private fun readStandardizedBlocks(): MutableSet<String> {
+    val json = JSONArray(prefs.getString(STANDARDIZED_BLOCKS_KEY, null) ?: "[]")
     return (0 until json.length()).mapTo(mutableSetOf()) { json.getString(it) }
   }
 
-  private fun readGenerated(): MutableMap<String, UploadEntry> {
-    val json = JSONArray(prefs.getString(GENERATED_KEY, null) ?: "[]")
+  private fun readStandardized(): MutableMap<String, UploadEntry> {
+    val json = JSONArray(prefs.getString(STANDARDIZED_KEY, null) ?: "[]")
     return (0 until json.length()).map { json.getJSONObject(it).parsePersistenceEntry() }
       .associateByTo(mutableMapOf()) { destinationKey(it.url) }
   }
@@ -253,9 +276,11 @@ internal object UploadPersistence {
   fun write(entry: UploadEntry) {
     checkInitialized()
     val entries = fetchEntries()
-    entries[entry.file.absolutePath] = entry
+    val previous = entries[entry.file.absolutePath]
+    entries[entry.file.absolutePath] = if (previous?.url == entry.url && previous.attemptId == entry.attemptId &&
+      previous.originalSelected) entry.copy(originalSelected = true) else entry
     val blocks = readBlocks()
-    if (entry.generatedResumeBlocked) blocks += destinationKey(entry.url)
+    if (entry.standardizedResumeBlocked) blocks += destinationKey(entry.url)
     writeEntries(entries, blocks)
   }
 
@@ -264,14 +289,14 @@ internal object UploadPersistence {
     checkInitialized()
     val entry = fetchEntries()[upload.inputFile.absolutePath]?.takeIf { it.url == upload.remoteUri.toString() }
     val key = destinationKey(upload.remoteUri.toString())
-    if (key in readBlocks() || key in readGeneratedBlocks()) return UploadResumeState(generatedResumeBlocked = true)
-    val generated = readGenerated()[key]
-    if (generated?.let(::isHidden) == true) return UploadResumeState(attemptId = generated?.attemptId,
-      generatedResumeBlocked = generated?.let { it.generated?.networkStarted == true || it.generatedResumeBlocked } == true)
-    if (generated != null) {
-      if (generated.file.absoluteFile != upload.inputFile.absoluteFile) return UploadResumeState(generatedResumeBlocked = true)
-      return resumeState(generated, false).copy(paused = entry?.state == WAS_PAUSED,
-        bytesSent = entry?.bytesSent ?: 0)
+    if (key in readBlocks() || key in readStandardizedBlocks()) return UploadResumeState(standardizedResumeBlocked = true)
+    val standardized = readStandardized()[key]
+    if (standardized?.let(::isHidden) == true) return UploadResumeState(attemptId = standardized?.attemptId,
+      standardizedResumeBlocked = standardized?.let { it.standardized?.networkStarted == true || it.standardizedResumeBlocked } == true)
+    if (standardized != null) {
+      if (standardized.file.absoluteFile != upload.inputFile.absoluteFile) return UploadResumeState(standardizedResumeBlocked = true)
+      return resumeState(standardized, false).copy(paused = entry?.state == WAS_PAUSED,
+        bytesSent = maxOf(entry?.bytesSent ?: 0, standardized.bytesSent))
     }
     return resumeState(entry, destinationKey(upload.remoteUri.toString()) in readBlocks())
   }
@@ -287,7 +312,7 @@ internal object UploadPersistence {
         entry.attemptId != upload.attempt.previousPersistenceOwnerId)) return
     val blocks = readBlocks()
     // Cancelling or replacing a handle cannot undo bytes already sent to this destination.
-    if (entry.generatedResumeBlocked) blocks += destinationKey(entry.url)
+    if (entry.standardizedResumeBlocked) blocks += destinationKey(entry.url)
     entries -= upload.inputFile.absolutePath
     writeEntries(entries, blocks)
   }
@@ -295,11 +320,11 @@ internal object UploadPersistence {
   @Synchronized
   fun readSnapshots(): List<CachedUpload> {
     checkInitialized()
-    val blocks = readBlocks() + readGeneratedBlocks()
+    val blocks = readBlocks() + readStandardizedBlocks()
     val entries = fetchEntries()
-    val generated = readGenerated()
+    val standardized = readStandardized()
     val hints = entries.toMap()
-    generated.values.filter { !isHidden(it) && it.generated?.abandoned != true && destinationKey(it.url) !in blocks }
+    standardized.values.filter { !isHidden(it) && it.standardized?.abandoned != true && destinationKey(it.url) !in blocks }
       .groupBy { it.file.absolutePath }.values.forEach { candidates ->
         val entry = candidates.maxBy { it.savedAtLocalMs }
         val hint = hints[entry.file.absolutePath]
@@ -308,27 +333,27 @@ internal object UploadPersistence {
         if (hint == null || hint.url == entry.url || entry.savedAtLocalMs > hint.savedAtLocalMs) {
           val matching = hint?.takeIf { it.url == entry.url }
           entries[entry.file.absolutePath] = entry.copy(state = matching?.state ?: entry.state,
-            bytesSent = matching?.bytesSent ?: 0)
+            bytesSent = maxOf(matching?.bytesSent ?: 0, entry.bytesSent))
         }
       }
-    return entries.values.filter { generated[destinationKey(it.url)]?.let { record ->
-      isHidden(record) || record.generated?.abandoned == true } != true }.map { entry ->
-      val record = generated[destinationKey(entry.url)]
+    return entries.values.filter { standardized[destinationKey(it.url)]?.let { record ->
+      isHidden(record) || record.standardized?.abandoned == true } != true }.map { entry ->
+      val record = standardized[destinationKey(entry.url)]
       val blocked = destinationKey(entry.url) in blocks ||
         (record != null && record.file.absoluteFile != entry.file.absoluteFile)
       val saved = resumeState(entry, blocked)
-      CachedUpload(entry.toUploadInfo(saved.generatedResumeBlocked), saved)
+      CachedUpload(entry.toUploadInfo(saved.standardizedResumeBlocked), saved)
     }
   }
 
   private fun resumeState(entry: UploadEntry?, blocked: Boolean) = UploadResumeState(
     bytesSent = entry?.bytesSent ?: 0,
     originalSelected = entry?.originalSelected ?: false,
-    generatedResumeBlocked = entry?.generatedResumeBlocked == true || blocked,
+    standardizedResumeBlocked = entry?.standardizedResumeBlocked == true || blocked,
     paused = entry?.state == WAS_PAUSED,
     attemptId = entry?.attemptId,
-    generated = entry?.generated,
-    generatedOptions = entry?.inputStandardization?.takeIf { entry.generated != null },
+    standardized = entry?.standardized,
+    standardizedOptions = entry?.inputStandardization?.takeIf { entry.standardized != null },
   )
 
   @Throws
@@ -392,10 +417,10 @@ internal data class UploadEntry(
   val state: Int,
   val bytesSent: Long,
   val inputStandardization: InputStandardization,
-  val generatedResumeBlocked: Boolean = false,
+  val standardizedResumeBlocked: Boolean = false,
   val originalSelected: Boolean = true,
   val attemptId: String? = null,
-  val generated: GeneratedResumeState? = null,
+  val standardized: StandardizedResumeState? = null,
   val processIdentity: String? = null,
 ) {
   fun toJson(): JSONObject {
@@ -403,8 +428,8 @@ internal data class UploadEntry(
       put("file", file.absolutePath)
       put("data", JSONObject().apply {
         put("process_identity", processIdentity)
-        put("generated", generated?.toJson())
-        put("generated_resume_blocked", generatedResumeBlocked)
+        put("generated", standardized?.toJson())
+        put("generated_resume_blocked", standardizedResumeBlocked)
         put("original_selected", originalSelected)
         put("attempt_id", attemptId)
         put("url", url)
@@ -437,10 +462,10 @@ private fun JSONObject.parsePersistenceEntry(): UploadEntry {
     state = data.optInt("state"),
     bytesSent = data.optLong("bytes_sent"),
     processIdentity = data.optString("process_identity").takeIf { it.isNotEmpty() },
-    generated = data.optJSONObject("generated")?.let { runCatching { GeneratedResumeState.fromJson(it) }.getOrNull() },
-    generatedResumeBlocked = data.optBoolean("generated_resume_blocked", false) ||
+    standardized = data.optJSONObject("generated")?.let { runCatching { StandardizedResumeState.fromJson(it) }.getOrNull() },
+    standardizedResumeBlocked = data.optBoolean("generated_resume_blocked", false) ||
       (data.has("generated") && data.optJSONObject("generated")?.let {
-        runCatching { GeneratedResumeState.fromJson(it) }.isFailure } == true),
+        runCatching { StandardizedResumeState.fromJson(it) }.isFailure } == true),
     originalSelected = data.optBoolean("original_selected", true),
     attemptId = data.optString("attempt_id").takeIf { it.isNotEmpty() },
     inputStandardization = data.optJSONObject("input_standardization").let { options ->

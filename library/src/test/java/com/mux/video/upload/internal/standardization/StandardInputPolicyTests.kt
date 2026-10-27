@@ -10,7 +10,7 @@ class StandardInputPolicyTests {
   @Test fun resolutionSelectionsKeepAcceptanceSeparateFromOutput() {
     for (resolution in MaximumResolution.entries) {
       val selection = selection(resolution)
-      assertEquals(Dimensions(resolution.width, resolution.height), selection.generatedOutputDimensions)
+      assertEquals(Dimensions(resolution.width, resolution.height), selection.standardizedOutputDimensions)
       assertEquals(if (resolution.width > 2048) AcceptanceTier.HighResolution else AcceptanceTier.UpTo1080p,
         selection.acceptanceTier)
     }
@@ -92,16 +92,16 @@ class StandardInputPolicyTests {
     }
   }
 
-  @Test fun generatedOutputMustFitBothAxesOfSelectedBounds() {
+  @Test fun standardizedOutputMustFitBothAxesOfSelectedBounds() {
     for ((resolution, source) in listOf(MaximumResolution.Default to Dimensions(2048, 1152),
       MaximumResolution.Preset3840x2160 to Dimensions(2160, 4096), MaximumResolution.Default to Dimensions(1920, 1920))) {
       val facts = compliantFacts(dimensions = source)
       assertEquals(PolicyStatus.Compliant, evaluate(facts, resolution).checks[PolicyRequirement.VideoResolution])
-      assertEquals(PolicyStatus.NonCompliant, evaluator.evaluate(facts, selection(resolution), MediaRole.GeneratedOutput)
+      assertEquals(PolicyStatus.NonCompliant, evaluator.evaluate(facts, selection(resolution), MediaRole.StandardizedOutput)
         .checks[PolicyRequirement.VideoResolution])
     }
     assertEquals(PolicyStatus.Compliant, evaluator.evaluate(compliantFacts(dimensions = Dimensions(1080, 1920)),
-      selection(), MediaRole.GeneratedOutput).checks[PolicyRequirement.VideoResolution])
+      selection(), MediaRole.StandardizedOutput).checks[PolicyRequirement.VideoResolution])
   }
 
   @Test fun pixelFormatsAreCodecAware() {

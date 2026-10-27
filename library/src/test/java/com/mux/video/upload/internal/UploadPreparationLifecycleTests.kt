@@ -7,7 +7,7 @@ import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
 import com.mux.video.upload.api.UploadStatus
 import com.mux.video.upload.internal.standardization.PreparedUpload
-import com.mux.video.upload.internal.standardization.SdrGeneratedFile
+import com.mux.video.upload.internal.standardization.SdrStandardizedFile
 import com.mux.video.upload.internal.standardization.*
 import io.mockk.*
 import kotlinx.coroutines.*
@@ -29,8 +29,6 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
   private val context get() = RuntimeEnvironment.getApplication()
   private lateinit var source: File
   private lateinit var sibling: File
-  private var query: suspend (UploadInfo, Long) -> Long = { _, _ -> 0L }
-  private var queries = 0
   private var preparations = 0
   private var beforeCreateJob: () -> Unit = {}
   private var prepare: suspend (UploadInfo) -> PreparedUpload = { PreparedUpload.Original() }
@@ -40,7 +38,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
   private val statuses = mutableListOf<UploadStatus>()
   private val results = mutableListOf<Result<MuxUpload.Progress>>()
   private val progress = mutableListOf<MuxUpload.Progress>()
-  private val owned = mutableListOf<SdrGeneratedFile>()
+  private val owned = mutableListOf<SdrStandardizedFile>()
 
   @Before fun setUp() {
     Dispatchers.setMain(dispatcher)
@@ -49,7 +47,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     MuxUploadSdk.useLogger(MuxUploadSdk.noLogger())
     source = File.createTempFile("customer", ".mp4", context.cacheDir).apply { writeBytes(ByteArray(16) { it.toByte() }) }
     sibling = File(context.cacheDir, "mux-upload/customer-copy.mp4").apply { parentFile!!.mkdirs(); writeText("customer") }
-    val real = UploadJobFactory(prepare = { preparations++; prepare(it) }, queryOffset = { info, total -> queries++; query(info, total) }, createWorker = { chunk, info, flow ->
+    val real = UploadJobFactory(prepare = { preparations++; prepare(it) }, createWorker = { chunk, info, flow ->
       // The factory reuses its buffer; snapshot the actual payload for assertions.
       chunks += chunk.copy(sliceData = chunk.sliceData.copyOf(chunk.contentLength))
       mockk<ChunkWorker> { coEvery { upload() } coAnswers { work(chunk, info, flow) } }
@@ -98,7 +96,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata) },
       inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete) },
       convert = { _, _, _, _, _ -> error("Multi-audio export must never select a replacement track") })
-    prepare = { preparation.prepare(it, context, generatedResumeVerified = true) }
+    prepare = { preparation.prepare(it, context, standardizedResumeVerified = true) }
     val upload = observe(MuxUpload.create(info()))
     upload.start()
     pump { upload.isSuccessful }
@@ -180,8 +178,8 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
 
   @Test fun cancellationDeletesOnlyOwnedFilesAndIgnoresLatePreparationCompletion() {
     val release = CompletableDeferred<Unit>()
-    val generated = generated(8)
-    prepare = { withContext(NonCancellable) { release.await(); PreparedUpload.Generated(generated) } }
+    val standardized = standardized(8)
+    prepare = { withContext(NonCancellable) { release.await(); PreparedUpload.Standardized(standardized) } }
     val upload = observe(MuxUpload.create(info()))
     upload.start()
     pump { preparations == 1 }
@@ -196,7 +194,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     dispatcher.scheduler.runCurrent()
     assertEquals(count, statuses.size)
     assertTrue(results.isEmpty()); assertTrue(chunks.isEmpty())
-    assertFalse(generated.file.exists())
+    assertFalse(standardized.file.exists())
     assertTrue(source.exists()); assertTrue(sibling.exists())
     assertTrue(readAllCachedUploads().isEmpty())
     assertNull(MuxUploadManager.findUploadByFile(source))
@@ -204,8 +202,8 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
 
   @Test fun verifiedPreparationOutputSurvivesPauseAndUsesSelectedLengthOnResume() {
     val release = CompletableDeferred<Unit>()
-    val generated = generated(8)
-    prepare = { withContext(NonCancellable) { release.await(); PreparedUpload.Generated(generated) } }
+    val standardized = standardized(8)
+    prepare = { withContext(NonCancellable) { release.await(); PreparedUpload.Standardized(standardized) } }
     val upload = observe(MuxUpload.create(info()))
     upload.start()
     pump { preparations == 1 }
@@ -213,7 +211,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     upload.pause()
     release.complete(Unit)
     pump { job.isCompleted }
-    assertTrue(generated.file.exists())
+    assertTrue(standardized.file.exists())
     assertTrue(chunks.isEmpty()); assertTrue(results.isEmpty())
     upload.start()
     pump { upload.isSuccessful }
@@ -221,65 +219,54 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     assertEquals(8L, upload.currentProgress.totalBytes)
     assertEquals(8L, upload.currentProgress.bytesUploaded)
     assertEquals(listOf(8L, 8L), chunks.map { it.totalFileSize })
-    assertFalse(generated.file.exists())
+    assertFalse(standardized.file.exists())
     assertTrue(source.exists()); assertTrue(sibling.exists())
   }
 
-  @Test fun unsupportedGeneratedQueryBlocksInProcessRestorationAndForceRestart() {
-    query = { _, _ -> if (queries == 1) 0L else throw GeneratedResumeBlockedException() }
-    val generated = generated(8)
-    prepare = { PreparedUpload.Generated(generated) }
+  @Test fun missingStandardizedPayloadAfterTransportBlocksResumeAndForceRestart() {
+    val output = standardized(8)
+    prepare = { PreparedUpload.Standardized(output) }
     work = { _, _, _ -> awaitCancellation() }
     val upload = observe(MuxUpload.create(info()))
-    upload.start()
-    pump { chunks.isNotEmpty() }
-    upload.pause()
-    dispatcher.scheduler.runCurrent()
-    assertTrue(generated.file.exists())
-    upload.start()
-    pump { upload.uploadStatus is UploadStatus.UploadFailed && internalInfo(upload).uploadJob!!.isCompleted }
-    assertTrue(upload.error is GeneratedResumeBlockedException)
-    assertEquals(1, chunks.size)
-    assertTrue(readAllCachedUploads().single().generatedResumeBlocked)
-    val restored = observe(MuxUploadManager.resumeAllCachedJobs().single())
-    pump { restored.uploadStatus is UploadStatus.UploadFailed }
-    assertTrue(restored.error is GeneratedResumeBlockedException)
-    val failedJob = internalInfo(restored).uploadJob
-    restored.start(forceRestart = true)
-    pump { internalInfo(restored).uploadJob !== failedJob && restored.uploadStatus is UploadStatus.UploadFailed }
-    assertTrue(restored.error is GeneratedResumeBlockedException)
-    assertTrue(readUploadResumeState(info()).generatedResumeBlocked)
-    val fresh = MuxUpload.create(info())
-    fresh.start()
-    pump { fresh.uploadStatus is UploadStatus.UploadFailed }
-    assertTrue(fresh.error is GeneratedResumeBlockedException)
-    assertEquals(1, chunks.size)
+    upload.start(); pump { chunks.isNotEmpty() }
+    upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
+    output.delete()
+    upload.start(); pump { internalInfo(upload).uploadJob!!.isCompleted }
+    assertTrue(upload.error is UploadResumeBlockedException)
+    assertEquals(1, chunks.size); assertEquals(1, preparations)
+    assertTrue(readUploadResumeState(info()).standardizedResumeBlocked)
+    val failedJob = internalInfo(upload).uploadJob
+    upload.start(forceRestart = true)
+    pump { internalInfo(upload).uploadJob !== failedJob && internalInfo(upload).uploadJob!!.isCompleted }
+    assertTrue(upload.error is UploadResumeBlockedException)
+    assertEquals(1, chunks.size); assertEquals(1, preparations)
   }
 
-  @Test fun changedVerifiedOutputBeforeNetworkFallsBackToOriginalEvenWithSameSizeAndMtime() {
+  @Test fun changedVerifiedOutputBeforeNetworkFailsWithoutRepreparing() {
     val release = CompletableDeferred<Unit>()
-    val generated = generated(8)
-    prepare = { withContext(NonCancellable) { release.await(); PreparedUpload.Generated(generated) } }
+    val standardized = standardized(8)
+    prepare = { withContext(NonCancellable) { release.await(); PreparedUpload.Standardized(standardized) } }
     val upload = MuxUpload.create(info())
     upload.start()
     pump { preparations == 1 }
     val job = internalInfo(upload).uploadJob!!
     upload.pause(); release.complete(Unit)
     pump { job.isCompleted }
-    val modified = generated.file.lastModified()
-    generated.file.writeBytes(ByteArray(8) { 99 })
-    assertTrue(generated.file.setLastModified(modified))
+    val modified = standardized.file.lastModified()
+    standardized.file.writeBytes(ByteArray(8) { 99 })
+    assertTrue(standardized.file.setLastModified(modified))
+    prepare = { error("Completed standardization cannot restart") }
     upload.start()
-    pump { upload.isSuccessful }
-    assertEquals(16L, upload.currentProgress.totalBytes)
-    assertArrayEquals(source.readBytes(), chunks.flatMap { it.sliceData.toList() }.toByteArray())
-    assertFalse(generated.file.exists())
+    pump { internalInfo(upload).uploadJob!!.isCompleted }
+    assertTrue(upload.error is UploadResumeBlockedException)
+    assertTrue(chunks.isEmpty()); assertEquals(1, preparations)
+    assertFalse(standardized.file.exists())
   }
 
   @Test fun latePreparationCannotReplacePayloadAfterResumeStartsANewAttempt() {
     val release = CompletableDeferred<Unit>()
-    val generated = generated(8)
-    prepare = { withContext(NonCancellable) { release.await(); PreparedUpload.Generated(generated) } }
+    val standardized = standardized(8)
+    prepare = { withContext(NonCancellable) { release.await(); PreparedUpload.Standardized(standardized) } }
     val upload = MuxUpload.create(info())
     upload.start()
     pump { preparations == 1 }
@@ -290,10 +277,10 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     pump { upload.isSuccessful }
     assertEquals(2, preparations)
     assertEquals(16L, upload.currentProgress.totalBytes)
-    assertFalse(generated.file.exists())
+    assertFalse(standardized.file.exists())
   }
 
-  @Test fun cancellationFromStatusCallbackSuppressesProgressAndResult() {
+  @Test fun stopTransitionsSuppressStartupPersistenceAndLateEvents() {
     val upload = MuxUpload.create(info())
     upload.setResultListener { results += it }
     upload.setProgressListener { progress += it }
@@ -306,6 +293,45 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     dispatcher.scheduler.runCurrent()
     assertTrue(progress.isEmpty()); assertTrue(results.isEmpty())
     assertTrue(readAllCachedUploads().isEmpty())
+    pump { internalInfo(upload).uploadJob!!.isCompleted }
+    for (cancel in listOf(false, true)) {
+      val attempt = UploadAttempt(UploadPreparationState(), MuxUpload.Progress())
+      val running = spyk(info().update(attempt = attempt, statusFlow = attempt.status))
+      val captured = java.util.concurrent.CountDownLatch(1)
+      val release = java.util.concurrent.CountDownLatch(1)
+      val failure = java.util.concurrent.atomic.AtomicReference<Throwable>()
+      val startup = Thread {
+        runCatching { attempt.persistStartup { writeUploadState(running, attempt.confirmedProgress()) } }
+          .onFailure { failure.set(it) }
+      }
+      every { running.isRunning() } answers {
+        val value = callOriginal() as Boolean
+        if (Thread.currentThread() === startup) {
+          captured.countDown(); check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        }
+        value
+      }
+      val stop = Thread {
+        runCatching {
+          if (cancel) attempt.cancel { forgetUploadState(running) }
+          else attempt.pause { writeUploadState(running, it) }
+        }.onFailure { failure.set(it) }
+      }
+      try {
+        startup.start(); pump { captured.count == 0L }
+        stop.start(); pump { stop.state == Thread.State.BLOCKED || !stop.isAlive }
+      } finally {
+        release.countDown(); startup.join(5000); stop.join(5000)
+      }
+      assertFalse(startup.isAlive); assertFalse(stop.isAlive); assertNull(failure.get())
+      if (cancel) assertTrue(readCachedUploadSnapshots().isEmpty())
+      else assertTrue(readUploadResumeState(running).paused)
+      assertThrows(CancellationException::class.java) {
+        attempt.persistStartup { writeUploadState(running, attempt.confirmedProgress()) }
+      }
+      UploadPersistence.removeForFile(running)
+    }
+
   }
 
   @Test fun cancellingAFailedUploadRemovesItsRetainedResumeRecord() {
@@ -315,7 +341,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     }
     val upload = MuxUpload.create(info())
     upload.start()
-    pump { upload.uploadStatus is UploadStatus.UploadFailed && MuxUploadManager.findUploadByFile(source) != null }
+    pumpRetries { upload.uploadStatus is UploadStatus.UploadFailed && MuxUploadManager.findUploadByFile(source) != null }
     assertEquals(4L, readLastByteForFile(info()))
     upload.cancel()
     assertTrue(readAllCachedUploads().isEmpty())
@@ -360,9 +386,9 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     assertTrue(result!!.getOrThrow() is UploadStatus.UploadSuccess)
   }
 
-  @Test fun newDirectUploadUsesOriginalFallbackWithoutOldOffsetOrGeneratedPayload() {
-    val generated = generated(8)
-    prepare = { PreparedUpload.Generated(generated) }
+  @Test fun newDirectUploadUsesOriginalFallbackWithoutOldOffsetOrStandardizedPayload() {
+    val standardized = standardized(8)
+    prepare = { PreparedUpload.Standardized(standardized) }
     work = { _, _, _ -> awaitCancellation() }
     val upload = MuxUpload.create(info())
     upload.start()
@@ -375,7 +401,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     assertEquals(0L, chunks.last().startByte)
     assertEquals(16L, chunks.last().totalFileSize)
     assertArrayEquals(source.readBytes().take(4).toByteArray(), chunks.last().sliceData)
-    assertFalse(generated.file.exists())
+    assertFalse(standardized.file.exists())
   }
 
   @Test fun unmanagedSuccessClearsResumeStateAndCannotBeAutomaticallyRestored() {
@@ -390,15 +416,15 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     assertEquals(sent, chunks.size)
   }
 
-  @Test fun freshHandleCannotUseBlockedGeneratedOffsetForOriginalBytes() {
-    val state = UploadPreparationState().apply { generatedRequestStarted = true }
+  @Test fun freshHandleCannotUseBlockedStandardizedOffsetForOriginalBytes() {
+    val state = UploadPreparationState()
     val attempt = UploadAttempt(state, MuxUpload.Progress(bytesUploaded = 8, totalBytes = 16))
-    val marked = info().update(attempt = attempt, statusFlow = attempt.status)
+    val marked = info().update(attempt = attempt, statusFlow = attempt.status, standardizedResumeBlocked = true)
     writeUploadState(marked, attempt.confirmedProgress())
     assertEquals(0L, readLastByteForFile(info()))
     val upload = MuxUpload.create(info())
     upload.start(); pump { upload.uploadStatus is UploadStatus.UploadFailed }
-    assertTrue(upload.error is GeneratedResumeBlockedException)
+    assertTrue(upload.error is UploadResumeBlockedException)
     assertTrue(chunks.isEmpty())
     assertEquals(0, preparations)
   }
@@ -446,7 +472,28 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     assertEquals(2, preparations)
   }
 
-  @Test fun zeroAcknowledgedOriginalRequestRemainsOriginalAfterRestoration() {
+  @Test fun originalChoiceIsSavedBeforeTransportAndSurvivesRestoration() {
+    prepare = { running ->
+      withContext(Dispatchers.IO) {
+        UploadPersistence.writeStandardized(running, running.attempt!!.preparation.standardizedState!!)
+      }
+      PreparedUpload.Original()
+    }
+    mockkObject(UploadPersistence)
+    every { UploadPersistence.selectOriginal(any()) } answers {
+      val running = firstArg<UploadInfo>()
+      if (chunks.isEmpty()) {
+        assertFalse(readUploadResumeState(running).originalSelected)
+        assertNotNull(readCachedUploadSnapshots().single().resumeState.standardized)
+      }
+      callOriginal()
+      assertTrue(readUploadResumeState(running).originalSelected)
+      val saved = readCachedUploadSnapshots().single().resumeState
+      assertTrue(saved.originalSelected); assertNull(saved.standardized)
+      // A pause captured before the in-memory flag changes must not undo the saved choice.
+      writeUploadState(running, running.attempt!!.confirmedProgress())
+      assertTrue(readUploadResumeState(running).originalSelected)
+    }
     work = { _, _, _ -> awaitCancellation() }
     val upload = MuxUpload.create(info())
     upload.start(); pump { chunks.size == 1 }
@@ -477,15 +524,15 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     assertEquals(16L, old.currentProgress.bytesUploaded)
   }
 
-  @Test fun cancellingGeneratedRequestKeepsBlockAcrossNewDestinationAndReinitialization() {
-    val generated = generated(16)
-    prepare = { PreparedUpload.Generated(generated) }
+  @Test fun cancellingStandardizedRequestKeepsBlockAcrossNewDestinationAndReinitialization() {
+    val standardized = standardized(16)
+    prepare = { PreparedUpload.Standardized(standardized) }
     work = { _, _, _ -> awaitCancellation() }
     val old = MuxUpload.create(info())
     old.start(); pump { chunks.size == 1 }
     old.cancel(); dispatcher.scheduler.runCurrent()
     assertTrue(readAllCachedUploads().isEmpty())
-    assertFalse(generated.file.exists())
+    assertFalse(standardized.file.exists())
     prepare = { PreparedUpload.Original() }
     val next = MuxUpload.create(info().copy(remoteUri = Uri.parse("https://example.invalid/new-upload")))
     next.start(); pump { chunks.size == 2 }
@@ -493,7 +540,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     MuxUploadSdk.initialize(context, false)
     val reused = MuxUpload.create(info())
     reused.start(); pump { reused.uploadStatus is UploadStatus.UploadFailed }
-    assertTrue(reused.error is GeneratedResumeBlockedException)
+    assertTrue(reused.error is UploadResumeBlockedException)
     assertEquals(2, chunks.size)
   }
 
@@ -537,21 +584,22 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     every { UploadMetrics.create() } returns metrics
     work = { _, _, _ -> throw failure }
     val upload = MuxUpload.create(info().copy(optOut = false))
-    upload.start(); pump { upload.uploadStatus is UploadStatus.UploadFailed }
-    assertSame(failure, upload.error)
+    upload.start(); pumpRetries { upload.uploadStatus is UploadStatus.UploadFailed }
+    assertEquals(failure.javaClass, upload.error!!.javaClass)
+    assertEquals(failure.message, upload.error!!.message)
     verify { logger.e("MuxUpload", "Upload failed: Io", null) }
     coVerify { metrics.reportUploadFailed(any(), any(), any(), "Upload failed: Io", any(), any()) }
   }
 
-  @Test fun generatedDestinationBlockAlsoRejectsADifferentSourceFile() {
-    val state = UploadPreparationState().apply { generatedRequestStarted = true }
+  @Test fun standardizedDestinationBlockAlsoRejectsADifferentSourceFile() {
+    val state = UploadPreparationState()
     val attempt = UploadAttempt(state, MuxUpload.Progress(totalBytes = 16))
-    val marked = info().update(attempt = attempt, statusFlow = attempt.status)
+    val marked = info().update(attempt = attempt, statusFlow = attempt.status, standardizedResumeBlocked = true)
     writeUploadState(marked, attempt.confirmedProgress())
     forgetUploadState(marked)
     val different = MuxUpload.create(info().copy(inputFile = sibling))
     different.start(); pump { different.uploadStatus is UploadStatus.UploadFailed }
-    assertTrue(different.error is GeneratedResumeBlockedException)
+    assertTrue(different.error is UploadResumeBlockedException)
     assertTrue(chunks.isEmpty())
   }
 
@@ -583,12 +631,13 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
       else throw java.io.IOException("Test failure")
     }
     val original = observe(MuxUpload.create(info()))
-    original.start(); pump { results.size == 1 }
+    original.start(); pumpRetries { results.size == 1 }
     assertTrue(original.error is java.io.IOException)
     assertTrue(MuxUploadManager.findUploadByFile(source)!!.error is java.io.IOException)
     work = { _, _, _ -> awaitCancellation() }
+    val beforeResume = chunks.size
     val resumed = MuxUploadManager.resumeAllCachedJobs().single()
-    pump { chunks.size == 3 }
+    pump { chunks.size == beforeResume + 1 }
     assertTrue(original.isRunning)
     assertNull(original.error)
     assertEquals(4L, chunks.last().startByte)
@@ -650,7 +699,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     }
   }
 
-  @Test fun neverStartedCancelPreservesDiskRecordButExplicitRestartClearsOffset() {
+  @Test fun neverStartedCancelAndExplicitRestartPreserveAcknowledgedOffset() {
     writeUploadState(info(), MuxUpload.Progress(bytesUploaded = 8, totalBytes = 16))
     for (autoManage in listOf(false, true)) {
       MuxUpload.Builder(info().remoteUri, source).manageUploadTask(autoManage).build().cancel()
@@ -659,7 +708,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     work = { _, _, _ -> awaitCancellation() }
     val restarted = MuxUpload.create(info())
     restarted.start(forceRestart = true); pump { chunks.size == 1 }
-    assertEquals(0L, chunks.single().startByte)
+    assertEquals(8L, chunks.single().startByte)
   }
 
   @Test fun newDestinationFinishesOldHandleAndExistingWaiterWithReplacementFailure() {
@@ -724,8 +773,8 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
 
   @Test fun replacementWaitsForOldPreparationAndDeletesItsLateOwnedOutput() {
     val release = CompletableDeferred<Unit>()
-    val generated = generated(8)
-    prepare = { withContext(NonCancellable) { release.await(); PreparedUpload.Generated(generated) } }
+    val standardized = standardized(8)
+    prepare = { withContext(NonCancellable) { release.await(); PreparedUpload.Standardized(standardized) } }
     val old = observe(MuxUpload.create(info()))
     old.start(); pump { preparations == 1 }
     prepare = { PreparedUpload.Original() }
@@ -735,7 +784,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     assertTrue(old.error is UploadReplacedException)
     release.complete(Unit)
     pump { replacement.isSuccessful }
-    assertFalse(generated.file.exists())
+    assertFalse(standardized.file.exists())
     assertTrue(source.exists()); assertTrue(sibling.exists())
     assertArrayEquals(source.readBytes(), chunks.flatMap { it.sliceData.toList() }.toByteArray())
     assertEquals(1, results.size)
@@ -770,8 +819,8 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     }
     val upload = MuxUpload.create(info())
     upload.start(); pump { upload.isSuccessful }
-    // Selection once, four acknowledged chunk checkpoints, and terminal record removal.
-    verify(atMost = 6) { prefs.edit() }
+    // Startup, selection and its flush, four checkpoints, and terminal record removal.
+    verify(atMost = 8) { prefs.edit() }
     assertTrue(readAllCachedUploads().isEmpty())
   }
 
@@ -837,7 +886,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
         "failed" -> {
           work = { _, _, _ -> throw java.io.IOException("Test failure") }
           val failed = MuxUpload.create(info())
-          failed.start(); pump { failed.error != null }
+          failed.start(); pumpRetries { failed.error != null }
           work = { chunk, _, _ -> release.await(); MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
         }
         else -> MuxUpload.create(info()).start()
@@ -865,10 +914,10 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     }
   }
 
-  @Test fun generatedPauseQueriesEveryResumeAndSeeksPartialAcknowledgements() {
-    val output = generated(12)
+  @Test fun standardizedPauseResumesAtTheLastAcknowledgedByteWithoutAQuery() {
+    val output = standardized(12)
     output.file.writeBytes(ByteArray(12) { (it + 30).toByte() }); assertTrue(output.recordValidation())
-    prepare = { PreparedUpload.Generated(output) }
+    prepare = { PreparedUpload.Standardized(output) }
     work = { chunk, _, flow ->
       if (chunk.startByte == 0L) MuxUpload.Progress(bytesUploaded = 2)
       else { flow.emit(MuxUpload.Progress(bytesUploaded = 0)); awaitCancellation() }
@@ -880,89 +929,76 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
     assertEquals(2L, upload.currentProgress.bytesUploaded)
     assertTrue(output.file.exists()); assertTrue(results.isEmpty())
-    // Remote can be ahead of persisted/UI progress when pause races an acknowledgement.
-    query = { _, total -> assertEquals(12L, total); 3L }
     work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-    assertEquals(3L, chunks[2].startByte)
-    assertArrayEquals(byteArrayOf(33, 34, 35, 36), chunks[2].sliceData)
-    assertEquals(2, queries); assertEquals(1, preparations)
+    assertEquals(2L, chunks[2].startByte)
+    assertArrayEquals(byteArrayOf(32, 33, 34, 35), chunks[2].sliceData)
+    assertEquals(1, preparations)
     assertEquals(1, results.size); assertTrue(readAllCachedUploads().isEmpty())
     assertFalse(output.file.exists()); assertTrue(sibling.exists())
   }
 
-  @Test fun durableGeneratedRecordRestoresWithoutOrdinaryPreferencesAndIgnoresSentOffset() {
-    val output = generated(12)
-    val state = GeneratedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Uploading,
+  @Test fun durableStandardizedRestorationKeepsAcknowledgementsWithoutOrdinaryPreferences() {
+    val output = standardized(12)
+    val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Uploading,
       output.file.absolutePath, output.validatedIdentity, networkStarted = true)
-    runBlocking(Dispatchers.IO) { UploadPersistence.writeGenerated(info(), state) }
+    val owner = UploadAttempt(UploadPreparationState().apply { standardizedState = state },
+      MuxUpload.Progress(bytesUploaded = 4, totalBytes = 12))
+    val saved = info().update(attempt = owner)
+    runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(saved, state) }
+    writeUploadState(saved, owner.confirmedProgress().copy(bytesUploaded = 2))
+    assertEquals(4L, readUploadResumeState(saved).bytesSent)
+    assertEquals(4L, readCachedUploadSnapshots().single().resumeState.bytesSent)
     context.getSharedPreferences("mux_upload", 0).edit().remove("uploads").remove("generated_upload_blocks").commit()
     MuxUploadSdk.initialize(context, false)
-    query = { _, _ -> 3L }
+    work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = if (chunk.startByte == 4L) 6 else chunk.contentLength.toLong()) }
     val restored = observe(MuxUploadManager.resumeAllCachedJobs().single())
     pump { restored.isSuccessful && internalInfo(restored).uploadJob!!.isCompleted }
-    assertEquals(0, preparations); assertEquals(1, queries)
-    assertEquals(listOf(3L, 7L, 11L), chunks.map { it.startByte })
+    assertEquals(0, preparations)
+    assertEquals(listOf(4L, 10L), chunks.map { it.startByte })
     assertEquals(12L, restored.currentProgress.totalBytes)
     assertEquals(1, results.size); assertFalse(output.file.exists())
     assertTrue(readAllCachedUploads().isEmpty())
   }
 
-  @Test fun invalidGeneratedPayloadNeedsZeroRemoteBytesAndIdenticalSourceBeforeRepreparing() {
-    for ((label, offset, changeSource, missing, expectedSuccess) in listOf(
-      ResumeCase("missing-zero", 0, false, true, true),
-      ResumeCase("changed-zero", 0, false, false, true),
-      ResumeCase("missing-partial", 3, false, true, false),
-      ResumeCase("changed-partial", 3, false, false, false),
-      ResumeCase("source-changed-zero", 0, true, true, false))) {
-      val target = info().copy(remoteUri = Uri.parse("https://example.invalid/$label"))
-      val sourceBytes = source.readBytes()
-      val sourceMtime = source.lastModified()
-      val output = generated(12)
-      val state = GeneratedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Uploading,
-        output.file.absolutePath, output.validatedIdentity, networkStarted = true)
-      runBlocking(Dispatchers.IO) { UploadPersistence.writeGenerated(target, state) }
+  @Test fun completedStandardizationCannotRestartWhenItsOutputIsMissingOrChanged() {
+    for (phase in listOf(PreparationPhase.Validated, PreparationPhase.Uploading)) for (missing in listOf(true, false)) {
+      val target = info().copy(remoteUri = Uri.parse("https://example.invalid/completed-$phase-$missing"))
+      val output = standardized(12)
+      val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, phase,
+        output.file.absolutePath, output.validatedIdentity, networkStarted = phase == PreparationPhase.Uploading)
+      runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(target, state) }
       if (missing) output.delete() else {
         val modified = output.file.lastModified()
         output.file.writeBytes(ByteArray(12) { 99 }); assertTrue(output.file.setLastModified(modified))
       }
-      if (changeSource) {
-        source.writeBytes(ByteArray(16) { 88 }); assertTrue(source.setLastModified(sourceMtime))
-      }
-      val before = chunks.size
-      query = { _, _ -> offset }
-      prepare = { PreparedUpload.Generated(generated(8)) }
+      prepare = { error("Completed standardization cannot restart") }
       val upload = MuxUpload.create(target)
       upload.start(); pump { internalInfo(upload).uploadJob!!.isCompleted }
-      if (expectedSuccess) {
-        assertTrue(label, upload.isSuccessful)
-        assertEquals(0L, chunks[before].startByte)
-        assertEquals(8L, chunks[before].totalFileSize)
-      } else {
-        assertTrue(label, upload.error is GeneratedResumeBlockedException)
-        assertEquals(before, chunks.size)
-        assertTrue(readUploadResumeState(target).generatedResumeBlocked)
-        upload.cancel()
-      }
-      source.writeBytes(sourceBytes); assertTrue(source.setLastModified(sourceMtime))
+      assertTrue(upload.error is UploadResumeBlockedException)
+      assertTrue(readUploadResumeState(target).standardizedResumeBlocked)
+      val fresh = MuxUpload.create(target)
+      fresh.start(); pump { internalInfo(fresh).uploadJob!!.isCompleted }
+      assertTrue(fresh.error is UploadResumeBlockedException)
+      assertEquals(0, preparations); assertTrue(chunks.isEmpty())
+      assertTrue(source.exists()); assertTrue(sibling.exists())
     }
-    assertTrue(sibling.exists()); assertTrue(source.exists())
   }
 
   @Test fun abandonedTrackedPartialIsCleanedBeforeZeroBytePreparation() {
-    val partial = SdrGeneratedFile.allocate(context.cacheDir, 1)!!
+    val partial = SdrStandardizedFile.allocate(context.cacheDir, 1)!!
     owned += partial
     partial.file.writeText("unfinished export")
-    val state = GeneratedResumeState(PayloadIdentity.capture(source)!!, ownedPath = partial.file.absolutePath)
-    runBlocking(Dispatchers.IO) { UploadPersistence.writeGenerated(info(), state) }
+    val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, ownedPath = partial.file.absolutePath)
+    runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(info(), state) }
     prepare = { assertFalse(partial.file.exists()); PreparedUpload.Original() }
     val upload = MuxUpload.create(info())
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-    assertEquals(0, queries); assertEquals(1, preparations)
+    assertEquals(1, preparations)
     assertTrue(sibling.exists()); assertTrue(source.exists())
   }
 
-  @Test fun durableCommitFailurePreventsEveryGeneratedRequestWithoutBlockingPause() {
+  @Test fun durableCommitFailurePreventsEveryStandardizedRequestWithoutBlockingPause() {
     val prefs = spyk(context.getSharedPreferences("mux_upload", 0))
     val persistenceContext = mockk<android.content.Context>()
     every { persistenceContext.applicationContext } returns persistenceContext
@@ -981,35 +1017,18 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
       editor
     }
     initializeUploadPersistence(persistenceContext)
-    prepare = { PreparedUpload.Generated(generated(12)) }
+    prepare = { PreparedUpload.Standardized(standardized(12)) }
     val upload = MuxUpload.create(info())
     upload.start(); pump { upload.uploadStatus is UploadStatus.UploadFailed }
-    assertTrue("Failed without commit: ${upload.error}", commits > 0); assertTrue(chunks.isEmpty()); assertEquals(0, queries)
-    assertTrue(upload.error is GeneratedResumeBlockedException)
+    assertTrue("Failed without commit: ${upload.error}", commits > 0); assertTrue(chunks.isEmpty())
+    assertTrue(upload.error is UploadResumeBlockedException)
   }
 
-  @Test fun releaseTimeoutFailsClosedUntilTheOldEngineActuallyReleases() {
-    val released = CompletableDeferred<Unit>()
-    work = { _, _, _ -> awaitCancellation() }
-    val upload = MuxUpload.create(info())
-    upload.start(); pump { chunks.size == 1 }
-    upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
-    internalInfo(upload).attempt!!.preparation.releaseBarrier = { released.await() }
-    upload.start(); dispatcher.scheduler.runCurrent()
-    assertEquals(1, chunks.size)
-    dispatcher.scheduler.advanceTimeBy(PREPARATION_RELEASE_TIMEOUT_MS + 1)
-    pump { upload.uploadStatus is UploadStatus.UploadFailed }
-    assertTrue(upload.error is PreparationReleasePendingException)
-    assertEquals(1, chunks.size)
-    released.complete(Unit)
-    work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
-    upload.start(); pump { upload.isSuccessful }
-    assertEquals(1, preparations) // The original payload choice still bypasses another export.
-  }
 
-  @Test fun cancelledPausedGeneratedRecordIsRetiredBeforeReinitialization() {
-    val output = generated(12)
-    prepare = { PreparedUpload.Generated(output) }
+
+  @Test fun cancelledPausedStandardizedRecordIsRetiredBeforeReinitialization() {
+    val output = standardized(12)
+    prepare = { PreparedUpload.Standardized(output) }
     work = { _, _, _ -> awaitCancellation() }
     val upload = MuxUpload.create(info())
     upload.start(); pump { chunks.size == 1 }
@@ -1018,37 +1037,37 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     pump { context.getSharedPreferences("mux_upload", 0).getString("generated_payloads_v1", null) == "[]" }
     MuxUploadSdk.initialize(context, true)
     assertTrue(readAllCachedUploads().isEmpty())
-    assertTrue(readUploadResumeState(info()).generatedResumeBlocked)
+    assertTrue(readUploadResumeState(info()).standardizedResumeBlocked)
     assertFalse(output.file.exists())
   }
 
   @Test fun staleDurableDestinationDoesNotEraseCurrentPausedSnapshot() {
-    val output = generated(12)
-    val state = GeneratedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Uploading,
+    val output = standardized(12)
+    val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Uploading,
       output.file.absolutePath, output.validatedIdentity, networkStarted = true)
     val old = info().copy(remoteUri = Uri.parse("https://example.invalid/older"))
-    runBlocking(Dispatchers.IO) { UploadPersistence.writeGenerated(old, state) }
-    val owner = UploadAttempt(UploadPreparationState().apply { generatedState = state },
+    runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(old, state) }
+    val owner = UploadAttempt(UploadPreparationState().apply { standardizedState = state },
       MuxUpload.Progress(bytesUploaded = 3, totalBytes = 12))
     val current = info().update(attempt = owner, statusFlow = owner.status)
-    runBlocking(Dispatchers.IO) { UploadPersistence.writeGenerated(current, state) }
+    runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(current, state) }
     owner.pause { writeUploadState(current, it) }
     val snapshot = readCachedUploadSnapshots().single()
     assertEquals(current.remoteUri, snapshot.upload.remoteUri)
     assertTrue(snapshot.resumeState.paused)
     assertEquals(3L, snapshot.resumeState.bytesSent)
-    assertEquals(state, snapshot.resumeState.generated)
-    runBlocking(Dispatchers.IO) { UploadPersistence.retireGenerated(old); UploadPersistence.retireGenerated(current) }
+    assertEquals(state, snapshot.resumeState.standardized)
+    runBlocking(Dispatchers.IO) { UploadPersistence.retireStandardized(old); UploadPersistence.retireStandardized(current) }
   }
 
-  @Test fun zeroRemoteRepreparationCanFallBackToOriginalAndThenPauseAndResume() {
-    val output = generated(12)
-    val state = GeneratedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Uploading,
-      output.file.absolutePath, output.validatedIdentity, networkStarted = true)
-    val savedAttempt = UploadAttempt(UploadPreparationState().apply { generatedState = state },
+  @Test fun interruptedPreparationCanFallBackToOriginalAndThenPauseAndResume() {
+    val output = standardized(12)
+    val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Preparing,
+      ownedPath = output.file.absolutePath)
+    val savedAttempt = UploadAttempt(UploadPreparationState().apply { standardizedState = state },
       MuxUpload.Progress(bytesUploaded = 8, totalBytes = 12))
     writeUploadState(info().update(attempt = savedAttempt), savedAttempt.confirmedProgress())
-    runBlocking(Dispatchers.IO) { UploadPersistence.writeGenerated(info(), state) }
+    runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(info(), state) }
     output.delete()
     prepare = { PreparedUpload.Original() }
     work = { _, _, _ -> awaitCancellation() }
@@ -1057,25 +1076,25 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     assertEquals(16L, chunks.single().totalFileSize)
     assertEquals(0L, chunks.single().startByte)
     upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
-    assertFalse(readUploadResumeState(info()).generatedResumeBlocked)
-    assertNull(readUploadResumeState(info()).generated)
+    assertFalse(readUploadResumeState(info()).standardizedResumeBlocked)
+    assertNull(readUploadResumeState(info()).standardized)
     work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
     upload.start(); pump { upload.isSuccessful }
-    assertEquals(1, queries); assertEquals(1, preparations)
+    assertEquals(1, preparations)
   }
 
-  @Test fun zeroRemoteRepreparationUsesDurableOptionsOnAFreshHandle() {
-    val output = generated(12)
+  @Test fun interruptedPreparationUsesDurableOptionsOnAFreshHandle() {
+    val output = standardized(12)
     val options = InputStandardization(true, MaximumResolution.Preset1280x720,
       com.mux.video.upload.api.HdrHandling.Preserve)
     val original = info().copy(inputStandardization = options)
-    val state = GeneratedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Uploading,
-      output.file.absolutePath, output.validatedIdentity, networkStarted = true)
-    runBlocking(Dispatchers.IO) { UploadPersistence.writeGenerated(original, state) }
+    val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Preparing,
+      ownedPath = output.file.absolutePath)
+    runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(original, state) }
     output.delete()
     prepare = { restored ->
       assertEquals(options, restored.inputStandardization)
-      PreparedUpload.Generated(generated(8))
+      PreparedUpload.Standardized(standardized(8))
     }
     val fresh = MuxUpload.create(info().copy(inputStandardization = InputStandardization(false)))
     fresh.start(); pump { fresh.isSuccessful }
@@ -1086,11 +1105,11 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
   @Test fun blockedCleanupDeletesOnlyTrackedFilesOwnedByAPreviousProcess() {
     for ((label, previousProcess, customerPath) in listOf(
       Triple("dead-owned", true, false), Triple("live-owned", false, false), Triple("customer", true, true))) {
-      val output = generated(12)
+      val output = standardized(12)
       val target = info().copy(remoteUri = Uri.parse("https://example.invalid/$label"))
-      val state = GeneratedResumeState(PayloadIdentity.capture(source)!!,
+      val state = StandardizedResumeState(PayloadIdentity.capture(source)!!,
         ownedPath = if (customerPath) sibling.absolutePath else output.file.absolutePath)
-      runBlocking(Dispatchers.IO) { UploadPersistence.writeGenerated(target, state) }
+      runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(target, state) }
       val prefs = context.getSharedPreferences("mux_upload", 0)
       if (previousProcess) {
         val records = org.json.JSONArray(prefs.getString("generated_payloads_v1", null))
@@ -1106,299 +1125,280 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
       runBlocking { UploadPersistence.scheduleBlockedCleanup(context).join() }
       assertEquals(label, !previousProcess || customerPath, output.file.exists())
       assertTrue(sibling.exists()); assertTrue(source.exists())
-      assertTrue(readUploadResumeState(target).generatedResumeBlocked)
+      assertTrue(readUploadResumeState(target).standardizedResumeBlocked)
     }
   }
 
-  private data class ResumeCase(val label: String, val offset: Long, val changeSource: Boolean,
-    val missing: Boolean, val expectedSuccess: Boolean)
 
-
-  @Test fun offlineGeneratedRestorationRetainsPayloadAndCanResumeOnTheSameDestination() {
-    val output = generated(12)
-    val target = info().copy(retriesPerChunk = 2)
-    val state = GeneratedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Uploading,
+  @Test fun offlineStandardizedTransportRetainsPayloadAndCanResumeOnTheSameDestination() {
+    val output = standardized(12)
+    val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Uploading,
       output.file.absolutePath, output.validatedIdentity, networkStarted = true)
-    runBlocking(Dispatchers.IO) { UploadPersistence.writeGenerated(target, state) }
-    val offline = java.io.IOException("Offline")
-    query = { _, _ -> throw offline }
-    val upload = observe(MuxUpload.create(target))
-    upload.start(); pumpRetries { internalInfo(upload).uploadJob!!.isCompleted }
-    assertSame(offline, upload.error)
-    assertEquals(3, queries); assertTrue(chunks.isEmpty())
-    assertTrue(output.file.exists())
-    val retained = readUploadResumeState(target)
-    assertFalse(retained.generatedResumeBlocked); assertEquals(state.payload, retained.generated!!.payload)
-    query = { _, _ -> 3L }
+    runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(info(), state) }
+    work = { _, _, _ -> throw java.io.IOException("Offline") }
+    val upload = MuxUpload.create(info().copy(retriesPerChunk = 0))
+    upload.start(); pump { internalInfo(upload).uploadJob!!.isCompleted }
+    assertTrue(upload.error is java.io.IOException); assertTrue(output.file.exists())
+    assertEquals(0, preparations)
+    work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-    assertEquals(0, preparations); assertEquals(3L, chunks.first().startByte)
-    assertEquals(1, results.count { it.isSuccess }); assertFalse(output.file.exists())
+    assertEquals(0, preparations); assertFalse(output.file.exists())
   }
 
-  @Test fun uncertainGeneratedChunkQueriesBeforeResendingAndSeeksToPartialAcknowledgement() {
-    val output = generated(12)
-    output.file.writeBytes(ByteArray(12) { (it + 30).toByte() }); assertTrue(output.recordValidation())
-    prepare = { PreparedUpload.Generated(output) }
-    query = { _, _ -> if (queries == 1) 0L else 6L }
-    work = { chunk, _, _ ->
-      if (chunks.size == 2) throw java.io.IOException("Uncertain chunk")
-      MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong())
-    }
-    val upload = observe(MuxUpload.create(info()))
-    upload.start(); pumpRetries { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-    assertEquals(listOf(0L, 4L, 6L, 10L), chunks.map { it.startByte })
-    assertArrayEquals(byteArrayOf(36, 37, 38, 39), chunks[2].sliceData)
-    assertEquals(2, queries); assertEquals(1, preparations); assertEquals(1, results.size)
-    assertEquals(12L, upload.currentProgress.bytesUploaded); assertFalse(output.file.exists())
+  @Test fun uncertainChunkRetriesTheSameRangeForOriginalAndStandardizedPayloads() {
+    for (standardized in listOf(false, true)) {
+      val output = standardized(12)
+      prepare = { if (standardized) PreparedUpload.Standardized(output) else PreparedUpload.Original() }
+      val first = chunks.size
+      work = { chunk, _, _ ->
+        if (chunks.size == first + 2) throw java.io.IOException("Lost response")
+        MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong())
+      }
+      val target = info().copy(remoteUri = Uri.parse("https://example.invalid/retry-$standardized"))
+      val upload = MuxUpload.create(target)
+      upload.start(); pumpRetries { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
+      val sent = chunks.drop(first)
+      assertEquals(listOf(0L, 4L, 4L, 8L) + if (standardized) emptyList() else listOf(12L), sent.map { it.startByte })
+      assertArrayEquals(sent[1].sliceData, sent[2].sliceData)
+      }
   }
 
-  @Test fun generatedChunkAndRecoveryQueriesShareOneRetryBudget() {
-    val output = generated(12)
-    prepare = { PreparedUpload.Generated(output) }
-    query = { _, _ -> if (queries == 1) 0L else throw java.io.IOException("Offline query") }
-    work = { _, _, _ -> throw java.io.IOException("Uncertain chunk") }
+  @Test fun exhaustedChunkRetriesKeepTheSelectedPayloadForExplicitResume() {
+    val output = standardized(12)
+    prepare = { PreparedUpload.Standardized(output) }
+    work = { _, _, _ -> throw java.io.IOException("Offline") }
     val upload = MuxUpload.create(info().copy(retriesPerChunk = 2))
     upload.start(); pumpRetries { internalInfo(upload).uploadJob!!.isCompleted }
     assertTrue(upload.error is java.io.IOException)
-    assertEquals(3, queries); assertEquals(1, chunks.size)
-    assertTrue(output.file.exists()); assertFalse(readUploadResumeState(info()).generatedResumeBlocked)
-    query = { _, _ -> 0L }
+    assertEquals(3, chunks.size)
+    assertTrue(output.file.exists()); assertFalse(readUploadResumeState(info()).standardizedResumeBlocked)
     work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
     assertEquals(1, preparations); assertFalse(output.file.exists())
   }
 
-  @Test fun generatedRecoveryQueryRejectsRegressingAndUnrelatedOffsets() {
-    for ((label, offset) in listOf("regressed" to 3L, "ahead" to 9L)) {
-      val target = info().copy(remoteUri = Uri.parse("https://example.invalid/$label"))
-      prepare = { PreparedUpload.Generated(generated(12)) }
-      val queryStart = queries
-      val chunkStart = chunks.size
-      query = { _, _ -> if (queries == queryStart + 1) 0L else offset }
-      work = { chunk, _, _ ->
-        if (chunks.size == chunkStart + 2) throw java.io.IOException("Uncertain chunk")
-        MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong())
-      }
-      val upload = MuxUpload.create(target)
-      upload.start(); pumpRetries { internalInfo(upload).uploadJob!!.isCompleted }
-      assertTrue(label, upload.error is GeneratedResumeBlockedException)
-      assertTrue(label, readUploadResumeState(target).generatedResumeBlocked)
-      assertEquals(chunkStart + 2, chunks.size)
-    }
+  @Test fun restoringDeletedOriginalPayloadFailsWithoutStandardizingAgain() {
+    prepare = { PreparedUpload.Original() }
+    work = { _, _, _ -> awaitCancellation() }
+    val upload = MuxUpload.create(info())
+    upload.start(); pump { chunks.size == 1 }
+    upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
+    source.delete()
+    prepare = { error("A selected original cannot be standardized again") }
+    val restored = MuxUploadManager.resumeAllCachedJobs().single()
+    pump { internalInfo(restored).uploadJob!!.isCompleted }
+    assertNotNull(restored.error); assertEquals(1, preparations); assertEquals(1, chunks.size)
   }
 
-  @Test fun finalGeneratedChunkCanCompleteThroughRecoveryQueryWithoutBeingResent() {
-    prepare = { PreparedUpload.Generated(generated(4)) }
-    query = { _, _ -> if (queries == 1) 0L else 4L }
-    work = { _, _, _ -> throw java.io.IOException("Lost final response") }
+  @Test fun finalChunkWithALostResponseIsResentWithoutRepeatingSuccessfulChunks() {
+    prepare = { PreparedUpload.Standardized(standardized(8)) }
+    work = { chunk, _, _ ->
+      if (chunks.size == 2) throw java.io.IOException("Lost final response")
+      MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong())
+    }
     val upload = observe(MuxUpload.create(info()))
     upload.start(); pumpRetries { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-    assertEquals(2, queries); assertEquals(1, chunks.size); assertEquals(1, results.size)
-    assertEquals(4L, upload.currentProgress.bytesUploaded)
+    assertEquals(listOf(0L, 4L, 4L), chunks.map { it.startByte })
+    assertEquals(1, results.size); assertEquals(8L, upload.currentProgress.bytesUploaded)
   }
 
-  @Test fun pauseDuringGeneratedRetryBackoffRemainsSilentAndResumesWithAQuery() {
-    val output = generated(12)
-    prepare = { PreparedUpload.Generated(output) }
+  @Test fun pauseDuringStandardizedRetryBackoffRemainsSilentAndResumesWithoutAQuery() {
+    val output = standardized(12)
+    prepare = { PreparedUpload.Standardized(output) }
     work = { _, _, _ -> throw java.io.IOException("Temporary failure") }
     val upload = observe(MuxUpload.create(info()))
     upload.start(); pump { chunks.size == 1 }
     upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
     dispatcher.scheduler.advanceTimeBy(10_000); dispatcher.scheduler.runCurrent()
-    assertTrue(results.isEmpty()); assertEquals(1, queries); assertEquals(1, chunks.size)
+    assertTrue(results.isEmpty()); assertEquals(1, chunks.size)
     assertTrue(output.file.exists()); assertEquals(0L, upload.currentProgress.bytesUploaded)
     work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-    assertEquals(2, queries); assertEquals(1, preparations); assertEquals(1, results.size)
+    assertEquals(1, preparations); assertEquals(1, results.size)
   }
 
-  @Test fun forceRestartBeforeGeneratedNetworkRepreparesForManagedAndUnmanagedHandles() {
+  @Test fun forceRestartRepeatsOnlyInterruptedPreparationAndRetainsCompletedOutput() {
     for (managed in listOf(true, false)) {
       val url = "https://example.invalid/restart-$managed"
       val target = info().copy(remoteUri = Uri.parse(url))
-      val partial = SdrGeneratedFile.allocate(context.cacheDir, 1)!!
+      val partial = SdrStandardizedFile.allocate(context.cacheDir, 1)!!
       owned += partial
       prepare = { running ->
-        val state = running.attempt!!.preparation.generatedState!!.copy(ownedPath = partial.file.absolutePath)
-        running.attempt.preparation.generatedState = state
+        val state = running.attempt!!.preparation.standardizedState!!.copy(ownedPath = partial.file.absolutePath)
+        running.attempt.preparation.standardizedState = state
         running.attempt.trackCleanup(partial)
-        withContext(Dispatchers.IO) { UploadPersistence.writeGenerated(running, state) }
+        withContext(Dispatchers.IO) { UploadPersistence.writeStandardized(running, state) }
         awaitCancellation()
       }
       val before = preparations
       val upload = MuxUpload.Builder(url, source).manageUploadTask(managed).build()
-      upload.start(); pump { readUploadResumeState(target).generated?.ownedPath != null }
+      upload.start(); pump { readUploadResumeState(target).standardized?.ownedPath != null }
       upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
-      assertFalse(readUploadResumeState(target).generated!!.networkStarted)
+      assertFalse(readUploadResumeState(target).standardized!!.networkStarted)
+      prepare = { awaitCancellation() }
+      val restarted = if (managed) upload else MuxUpload.Builder(url, source).manageUploadTask(false).build()
+      restarted.start(forceRestart = true)
+      if (managed) assertFalse(readUploadResumeState(target).paused)
+      pump { preparations == before + 2 }
+      assertFalse(readUploadResumeState(target).paused)
+      val running = internalInfo(restarted)
+      running.uploadJob!!.cancel(); pump { running.uploadJob.isCompleted }
+      MuxUploadManager.jobFinished(running, forgetJob = false)
+      MuxUploadSdk.initialize(context, resumeStoppedUploads = true)
+      pump { preparations == before + 3 }
+      val restored = MuxUploadManager.findUploadByFile(source)!!
+      assertTrue(restored.isRunning)
+      restored.pause(); pump { internalInfo(restored).uploadJob!!.isCompleted }
+      assertTrue(readUploadResumeState(target).paused)
+      MuxUploadManager.jobFinished(internalInfo(restored), forgetJob = false)
+      MuxUploadSdk.initialize(context, resumeStoppedUploads = true)
+      dispatcher.scheduler.runCurrent()
+      val paused = MuxUploadManager.findUploadByFile(source)!!
+      assertTrue(paused.isPaused); assertEquals(before + 3, preparations)
       prepare = { PreparedUpload.Original() }
-      upload.start(forceRestart = true); pump { internalInfo(upload).uploadJob!!.isCompleted }
-      assertFalse(readUploadResumeState(target).generatedResumeBlocked)
-      assertTrue(upload.isSuccessful); assertEquals(before + 2, preparations)
-      assertFalse(partial.file.exists())
+      paused.start(); pump { paused.isSuccessful && internalInfo(paused).uploadJob!!.isCompleted }
+      assertFalse(readUploadResumeState(target).standardizedResumeBlocked)
+      assertEquals(before + 4, preparations); assertFalse(partial.file.exists())
     }
-    assertEquals(0, queries)
+    for (managed in listOf(true, false)) for (standardized in listOf(true, false)) {
+      val output = standardized(12)
+      val before = preparations
+      val chunkStart = chunks.size
+      prepare = { if (standardized) PreparedUpload.Standardized(output) else PreparedUpload.Original() }
+      work = { _, _, _ ->
+        if (chunks.size == chunkStart + 1) MuxUpload.Progress(bytesUploaded = 4) else awaitCancellation()
+      }
+      val upload = MuxUpload.Builder("https://example.invalid/completed-restart-$managed-$standardized", source)
+        .manageUploadTask(managed).build()
+      upload.start(); pump { chunks.size == chunkStart + 2 }
+      upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
+      assertEquals(4L, upload.currentProgress.bytesUploaded)
+      prepare = { error("A completed selection cannot restart") }
+      work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
+      upload.start(forceRestart = true)
+      pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
+      assertEquals(before + 1, preparations)
+      assertEquals(listOf(0L, 4L, 4L), chunks.drop(chunkStart).map { it.startByte })
+      assertArrayEquals(chunks[chunkStart + 1].sliceData, chunks.last().sliceData)
+      if (standardized) assertFalse(output.file.exists())
+    }
   }
 
-  @Test fun generatedQueryNetworkMarkerNeverRegressesBeforeTransport() {
-    val records = mutableListOf<GeneratedResumeState>()
+  @Test fun standardizedTransportMarkerIsDurableBeforeTheFirstChunk() {
+    val records = mutableListOf<StandardizedResumeState>()
     mockkObject(UploadPersistence)
-    every { UploadPersistence.writeGenerated(any(), any()) } answers {
-      records += secondArg<GeneratedResumeState>()
+    every { UploadPersistence.writeStandardized(any(), any()) } answers {
+      records += secondArg<StandardizedResumeState>()
       callOriginal()
     }
-    prepare = { PreparedUpload.Generated(generated(12)) }
+    prepare = { PreparedUpload.Standardized(standardized(12)) }
     val upload = MuxUpload.create(info())
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
     assertTrue(records.isNotEmpty())
-    assertTrue("Marker flags: ${records.map { it.networkStarted }}", records.all { it.networkStarted })
+    assertFalse(records.first().networkStarted)
+    assertTrue(records.last().networkStarted)
+    assertEquals(PreparationPhase.Uploading, records.last().phase)
   }
 
 
-  @Test fun generatedDataRetriesAreBoundedAndZeroBudgetDoesNotIssueRecoveryQueries() {
+  @Test fun standardizedDataRetriesAreBoundedAndZeroBudgetDoesNotIssueRecoveryQueries() {
     for (budget in listOf(0, 2)) {
       val target = info().copy(remoteUri = Uri.parse("https://example.invalid/budget-$budget"), retriesPerChunk = budget)
-      val output = generated(12)
-      prepare = { PreparedUpload.Generated(output) }
-      query = { _, _ -> 0L }
+      val output = standardized(12)
+      prepare = { PreparedUpload.Standardized(output) }
       work = { _, _, _ -> throw java.io.IOException("Uncertain chunk") }
-      val queryStart = queries
       val chunkStart = chunks.size
       val upload = MuxUpload.create(target)
       upload.start(); pumpRetries { internalInfo(upload).uploadJob!!.isCompleted }
       assertTrue(upload.error is java.io.IOException)
-      assertEquals(budget + 1, queries - queryStart)
       assertEquals(budget + 1, chunks.size - chunkStart)
-      assertTrue(output.file.exists()); assertFalse(readUploadResumeState(target).generatedResumeBlocked)
+      assertTrue(output.file.exists()); assertFalse(readUploadResumeState(target).standardizedResumeBlocked)
       upload.cancel(); pump { !output.file.exists() }
     }
   }
 
-  @Test fun restoredPreparationQueriesItsNewPayloadBeforeSendingAnyBytes() {
-    val partial = SdrGeneratedFile.allocate(context.cacheDir, 1)!!
+  @Test fun interruptedPreparationDeletesItsPartialAndStartsAgainWithoutAQuery() {
+    val partial = SdrStandardizedFile.allocate(context.cacheDir, 1)!!
     owned += partial
-    val saved = GeneratedResumeState(PayloadIdentity.capture(source)!!, ownedPath = partial.file.absolutePath)
-    runBlocking(Dispatchers.IO) { UploadPersistence.writeGenerated(info(), saved) }
-    prepare = { PreparedUpload.Generated(generated(12)) }
-    query = { _, total -> assertEquals(12L, total); 2L }
+    val saved = StandardizedResumeState(PayloadIdentity.capture(source)!!, ownedPath = partial.file.absolutePath)
+    runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(info(), saved) }
+    prepare = { assertFalse(partial.file.exists()); PreparedUpload.Standardized(standardized(12)) }
     val upload = MuxUpload.create(info())
-    upload.start(); pump { internalInfo(upload).uploadJob!!.isCompleted }
-    assertEquals(1, queries); assertTrue(chunks.isEmpty())
-    assertTrue(upload.error is GeneratedResumeBlockedException)
-    assertTrue(readUploadResumeState(info()).generatedResumeBlocked)
-    assertFalse(partial.file.exists())
-  }
-
-
-  @Test fun slowReleaseRestartThenPauseResumesWithoutAnOldOwnersHiddenKey() {
-    val partial = SdrGeneratedFile.allocate(context.cacheDir, 1)!!
-    owned += partial
-    prepare = { running ->
-      val state = running.attempt!!.preparation.generatedState!!.copy(ownedPath = partial.file.absolutePath)
-      running.attempt.preparation.generatedState = state
-      running.attempt.trackCleanup(partial)
-      withContext(Dispatchers.IO) { UploadPersistence.writeGenerated(running, state) }
-      awaitCancellation()
-    }
-    val upload = observe(MuxUpload.create(info()))
-    upload.start(); pump { readUploadResumeState(info()).generated?.ownedPath != null }
-    upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
-    val released = CompletableDeferred<Unit>()
-    internalInfo(upload).attempt!!.preparation.releaseBarrier = { released.await() }
-    // Delay retirement so restart snapshots the untouched record before it becomes abandoned.
-    val retirementEntered = java.util.concurrent.CountDownLatch(1)
-    val allowRetirement = java.util.concurrent.CountDownLatch(1)
-    mockkObject(UploadPersistence)
-    every { UploadPersistence.writeGenerated(any(), match { it.abandoned }) } answers {
-      retirementEntered.countDown()
-      check(allowRetirement.await(3, java.util.concurrent.TimeUnit.SECONDS))
-      callOriginal()
-    }
-    prepare = { PreparedUpload.Generated(generated(12)) }
-    work = { _, _, _ -> awaitCancellation() }
-    try {
-      upload.start(forceRestart = true)
-      pump { retirementEntered.count == 0L }
-      allowRetirement.countDown()
-      pump { context.getSharedPreferences("mux_upload",0).getString("generated_payloads_v1",null)?.contains("\"abandoned\":true") == true }
-      released.complete(Unit)
-      pump { chunks.size == 1 }
-      upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
-      assertFalse(readUploadResumeState(info()).generatedResumeBlocked)
-      assertFalse(readCachedUploadSnapshots().single().resumeState.generatedResumeBlocked)
-      work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
-      upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-      assertEquals(2, preparations); assertEquals(2, queries)
-      assertEquals(1, results.size); assertTrue(results.single().isSuccess)
-    } finally { allowRetirement.countDown(); released.complete(Unit) }
+    upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
+    assertEquals(listOf(0L, 4L, 8L), chunks.map { it.startByte })
+    assertEquals(1, preparations); assertFalse(partial.file.exists())
   }
 
   @Test fun lateRetirementCannotOverwriteANewOwnersRecordOrHideItsSnapshot() {
     val target = info()
-    val state = GeneratedResumeState(PayloadIdentity.capture(source)!!)
-    val oldPreparation = UploadPreparationState().apply { generatedState = state; releaseBarrier = { awaitCancellation() } }
+    val state = StandardizedResumeState(PayloadIdentity.capture(source)!!)
+    val oldPreparation = UploadPreparationState().apply { standardizedState = state }
     val old = target.update(attempt = UploadAttempt(oldPreparation, MuxUpload.Progress()))
-    runBlocking(Dispatchers.IO) { UploadPersistence.writeGenerated(old, state) }
-    UploadPersistence.hideGenerated(old)
+    runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(old, state) }
+    UploadPersistence.hideStandardized(old)
     writeUploadState(old, MuxUpload.Progress())
-    assertFalse(readUploadResumeState(target).generatedResumeBlocked)
+    assertFalse(readUploadResumeState(target).standardizedResumeBlocked)
     assertTrue(readCachedUploadSnapshots().isEmpty())
-    val output = generated(12)
+    val output = standardized(12)
     val fresh = target.update(attempt = UploadAttempt(UploadPreparationState(), MuxUpload.Progress(),
       previousPersistenceOwnerId = old.attempt!!.id))
     val freshState = state.copy(phase = PreparationPhase.Validated, ownedPath = output.file.absolutePath,
       payload = output.validatedIdentity, networkStarted = true)
     runBlocking(Dispatchers.IO) {
-      UploadPersistence.writeGenerated(fresh, freshState)
-      UploadPersistence.scheduleGeneratedRetirement(old).join()
-      UploadPersistence.retireGenerated(old)
+      UploadPersistence.writeStandardized(fresh, freshState)
+      UploadPersistence.scheduleStandardizedRetirement(old).join()
+      UploadPersistence.retireStandardized(old)
     }
     val restored = readUploadResumeState(fresh)
     assertEquals(fresh.attempt!!.id, restored.attemptId)
-    assertEquals(freshState, restored.generated); assertFalse(restored.generatedResumeBlocked)
-    assertFalse(readCachedUploadSnapshots().single().resumeState.generatedResumeBlocked)
+    assertEquals(freshState, restored.standardized); assertFalse(restored.standardizedResumeBlocked)
+    assertFalse(readCachedUploadSnapshots().single().resumeState.standardizedResumeBlocked)
   }
 
-  @Test fun generatedZeroProgressReconcilesAndExhaustionKeepsItsPayload() {
-    val output = generated(12)
-    prepare = { PreparedUpload.Generated(output) }
-    query = { _, _ -> 0L }
-    work = { _, _, _ -> throw GeneratedUploadRetryException("No progress") }
+  @Test fun standardizedZeroProgressRetriesAndExhaustionKeepsItsPayload() {
+    val output = standardized(12)
+    prepare = { PreparedUpload.Standardized(output) }
+    work = { _, _, _ -> throw UploadRetryException("No progress") }
     val upload = MuxUpload.create(info().copy(retriesPerChunk = 2))
     upload.start(); pumpRetries { internalInfo(upload).uploadJob!!.isCompleted }
-    assertTrue(upload.error is GeneratedUploadRetryException)
-    assertEquals(3, chunks.size); assertEquals(3, queries)
-    assertTrue(output.file.exists()); assertFalse(readUploadResumeState(info()).generatedResumeBlocked)
+    assertTrue(upload.error is UploadRetryException)
+    assertEquals(3, chunks.size)
+    assertTrue(output.file.exists()); assertFalse(readUploadResumeState(info()).standardizedResumeBlocked)
     work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
     assertEquals(1, preparations); assertFalse(output.file.exists())
   }
 
-  @Test fun confirmedForwardProgressRenewsTheBudgetUntilGeneratedUploadCompletes() {
-    prepare = { PreparedUpload.Generated(generated(12)) }
-    query = { _, total -> minOf((queries - 1).toLong(), total) }
-    work = { _, _, _ -> throw java.io.IOException("Partial progress, lost response") }
+  @Test fun confirmedForwardProgressRenewsTheBudgetUntilStandardizedUploadCompletes() {
+    prepare = { PreparedUpload.Standardized(standardized(12)) }
+    var retry = true
+    work = { _, _, _ ->
+      if (retry) { retry = false; throw java.io.IOException("Lost response") }
+      retry = true
+      MuxUpload.Progress(bytesUploaded = 1)
+    }
     val upload = observe(MuxUpload.create(info().copy(retriesPerChunk = 1)))
     upload.start(); pumpRetries { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-    assertEquals((0L..11L).toList(), chunks.map { it.startByte })
-    assertEquals(13, queries); assertEquals(1, results.size)
+    assertEquals((0L..11L).flatMap { listOf(it, it) }, chunks.map { it.startByte })
+    assertEquals(1, results.size)
     assertEquals(12L, upload.currentProgress.bytesUploaded)
   }
 
-  @Test fun serverRetryAfterDelaysQueriesAndChunksWithoutBlockingPause() {
-    prepare = { PreparedUpload.Generated(generated(12)) }
-    query = { _, _ -> if (queries == 1) throw GeneratedUploadRetryException("503", 30_000) else 0L }
+  @Test fun serverRetryAfterDelaysChunksWithoutBlockingPause() {
+    prepare = { PreparedUpload.Standardized(standardized(12)) }
+    work = { _, _, _ -> throw UploadRetryException("503", 30_000) }
     val upload = observe(MuxUpload.create(info()))
-    upload.start(); pump { queries == 1 }
+    upload.start(); pump { chunks.size == 1 }
     dispatcher.scheduler.advanceTimeBy(29_999); dispatcher.scheduler.runCurrent()
-    assertEquals(1, queries); assertTrue(chunks.isEmpty())
+    assertEquals(1, chunks.size)
     dispatcher.scheduler.advanceTimeBy(1)
-    work = { _, _, _ -> throw GeneratedUploadRetryException("429", 30_000) }
-    pump { chunks.size == 1 }
+    work = { _, _, _ -> throw UploadRetryException("429", 30_000) }
+    pump { chunks.size == 2 }
     dispatcher.scheduler.advanceTimeBy(29_999); dispatcher.scheduler.runCurrent()
-    assertEquals(2, queries); assertEquals(1, chunks.size)
+    assertEquals(2, chunks.size)
     upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
     dispatcher.scheduler.advanceTimeBy(60_000); dispatcher.scheduler.runCurrent()
-    assertTrue(results.isEmpty()); assertEquals(2, queries)
+    assertTrue(results.isEmpty())
     work = { chunk, _, _ -> MuxUpload.Progress(bytesUploaded = chunk.contentLength.toLong()) }
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
     assertEquals(1, preparations); assertEquals(1, results.size)
@@ -1420,7 +1420,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     setResultListener { results += it }
     setProgressListener { progress += it }
   }
-  private fun generated(size: Int) = SdrGeneratedFile.allocate(context.cacheDir, 1)!!.also {
+  private fun standardized(size: Int) = SdrStandardizedFile.allocate(context.cacheDir, 1)!!.also {
     it.file.writeBytes(ByteArray(size) { 42 }); assertTrue(it.recordValidation()); owned += it
   }
   private fun info() = UploadInfo(remoteUri = Uri.parse("https://example.invalid/upload"), inputFile = source,
@@ -1433,141 +1433,100 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
       dispatcher.scheduler.runCurrent()
     }
   }
-  @Test fun cancelledUnusedDestinationWaitsForSlowReleaseThenCanBeReused() {
-    for (managed in listOf(true, false)) {
-      val target = info().copy(remoteUri = Uri.parse("https://example.invalid/cancel-release-$managed"))
-      val released = CompletableDeferred<Unit>()
-      val partial = SdrGeneratedFile.allocate(context.cacheDir, 1)!!
-      owned += partial
-      prepare = { running ->
-        val state = running.attempt!!.preparation.generatedState!!.copy(ownedPath = partial.file.absolutePath)
-        running.attempt.preparation.generatedState = state
-        running.attempt.trackCleanup(partial)
-        try {
-          withContext(Dispatchers.IO) { UploadPersistence.writeGenerated(running, state) }
-          awaitCancellation()
-        } finally {
-          running.attempt.preparation.releaseBarrier = { released.await() }
-        }
-      }
-      val upload = MuxUpload.Builder(target.remoteUri.toString(), source).manageUploadTask(managed).build()
-      val before = preparations
-      val beforeChunks = chunks.size
-      upload.start(); pump { readUploadResumeState(target).generated?.ownedPath != null }
-      upload.cancel(); pump { internalInfo(upload).uploadJob!!.isCompleted }
-      runBlocking(Dispatchers.IO) { UploadPersistence.scheduleGeneratedRetirement(internalInfo(upload)).join() }
-      assertFalse(readUploadResumeState(target).generatedResumeBlocked)
-      assertEquals(0, queries)
-      prepare = { assertFalse(partial.file.exists()); PreparedUpload.Original() }
-      val fresh = MuxUpload.Builder(target.remoteUri.toString(), source).manageUploadTask(managed).build()
-      fresh.start(); dispatcher.scheduler.runCurrent()
-      assertEquals(before + 1, preparations); assertEquals(beforeChunks, chunks.size)
-      dispatcher.scheduler.advanceTimeBy(PREPARATION_RELEASE_TIMEOUT_MS + 1)
-      pump { internalInfo(fresh).uploadJob!!.isCompleted }
-      assertTrue(fresh.error is PreparationReleasePendingException)
-      assertNotEquals("[]", context.getSharedPreferences("mux_upload", 0).getString("generated_payloads_v1", null))
-      assertFalse(readUploadResumeState(target).generatedResumeBlocked)
-      released.complete(Unit)
-      fresh.start(); pump { fresh.isSuccessful && internalInfo(fresh).uploadJob!!.isCompleted }
-      assertEquals(before + 2, preparations); assertEquals(0, queries)
-      assertFalse(readUploadResumeState(target).generatedResumeBlocked)
-    }
-  }
+
 
   @Test fun cleanupWinningForceRestartRaceDoesNotBlockUnusedDestination() {
     for (managed in listOf(true, false)) {
       val target = info().copy(remoteUri = Uri.parse("https://example.invalid/restart-release-$managed"))
       val released = CompletableDeferred<Unit>()
-      val partial = SdrGeneratedFile.allocate(context.cacheDir, 1)!!
+      val partial = SdrStandardizedFile.allocate(context.cacheDir, 1)!!
       owned += partial
       prepare = { running ->
-        val state = running.attempt!!.preparation.generatedState!!.copy(ownedPath = partial.file.absolutePath)
-        running.attempt.preparation.generatedState = state
+        val state = running.attempt!!.preparation.standardizedState!!.copy(ownedPath = partial.file.absolutePath)
+        running.attempt.preparation.standardizedState = state
         running.attempt.trackCleanup(partial)
-        withContext(Dispatchers.IO) { UploadPersistence.writeGenerated(running, state) }
+        withContext(Dispatchers.IO) { UploadPersistence.writeStandardized(running, state) }
         awaitCancellation()
       }
       val upload = MuxUpload.Builder(target.remoteUri.toString(), source).manageUploadTask(managed).build()
       val before = preparations
       val beforeChunks = chunks.size
-      upload.start(); pump { readUploadResumeState(target).generated?.ownedPath != null }
+      upload.start(); pump { readUploadResumeState(target).standardized?.ownedPath != null }
       upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
       val old = internalInfo(upload)
-      old.attempt!!.preparation.releaseBarrier = { released.await() }
-      beforeCreateJob = { runBlocking(Dispatchers.IO) { UploadPersistence.scheduleGeneratedRetirement(old).join() } }
+      beforeCreateJob = { runBlocking(Dispatchers.IO) { UploadPersistence.scheduleStandardizedRetirement(old).join() } }
       prepare = { assertFalse(partial.file.exists()); PreparedUpload.Original() }
       upload.start(forceRestart = true); dispatcher.scheduler.runCurrent()
-      assertFalse(readUploadResumeState(target).generatedResumeBlocked)
-      assertEquals(before + 1, preparations); assertEquals(beforeChunks, chunks.size)
+      assertFalse(readUploadResumeState(target).standardizedResumeBlocked)
       released.complete(Unit)
       pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-      assertEquals(before + 2, preparations); assertEquals(0, queries)
-      assertFalse(readUploadResumeState(target).generatedResumeBlocked)
+      assertEquals(before + 2, preparations)
+      assertFalse(readUploadResumeState(target).standardizedResumeBlocked)
       beforeCreateJob = {}
     }
   }
 
   @Test fun restoredAbandonedLocalPayloadIsDiscardedAndRepreparedWithoutAnOffsetQuery() {
-    val output = generated(12)
-    val state = GeneratedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Validated,
+    val output = standardized(12)
+    val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Validated,
       output.file.absolutePath, output.validatedIdentity, abandoned = true)
-    runBlocking(Dispatchers.IO) { UploadPersistence.writeGenerated(info(), state) }
+    runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(info(), state) }
     prepare = { assertFalse(output.file.exists()); PreparedUpload.Original() }
     val upload = MuxUpload.create(info())
     upload.start(); pump { upload.isSuccessful && internalInfo(upload).uploadJob!!.isCompleted }
-    assertEquals(1, preparations); assertEquals(0, queries)
+    assertEquals(1, preparations)
     assertEquals(16L, upload.currentProgress.totalBytes)
-    assertFalse(readUploadResumeState(info()).generatedResumeBlocked)
+    assertFalse(readUploadResumeState(info()).standardizedResumeBlocked)
   }
 
   @Test fun abandonedPayloadWithPossibleRemoteBytesStillBlocksDestinationAfterRetirement() {
-    val output = generated(12)
-    val state = GeneratedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Validated,
+    val output = standardized(12)
+    val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Validated,
       output.file.absolutePath, output.validatedIdentity, networkStarted = true, abandoned = true)
-    runBlocking(Dispatchers.IO) { UploadPersistence.writeGenerated(info(), state) }
+    runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(info(), state) }
     val upload = MuxUpload.create(info())
     upload.start(); pump { internalInfo(upload).uploadJob!!.isCompleted }
-    assertTrue(upload.error is GeneratedResumeBlockedException)
-    assertEquals(0, preparations); assertEquals(0, queries); assertTrue(chunks.isEmpty())
-    assertFalse(output.file.exists()); assertTrue(readUploadResumeState(info()).generatedResumeBlocked)
+    assertTrue(upload.error is UploadResumeBlockedException)
+    assertEquals(0, preparations); assertTrue(chunks.isEmpty())
+    assertFalse(output.file.exists()); assertTrue(readUploadResumeState(info()).standardizedResumeBlocked)
   }
 
-  @Test fun lateGeneratedWritesCannotReplaceTheNewOwnersIdentity() {
+  @Test fun lateStandardizedWritesCannotReplaceTheNewOwnersIdentity() {
     val target = info()
-    val state = GeneratedResumeState(PayloadIdentity.capture(source)!!)
+    val state = StandardizedResumeState(PayloadIdentity.capture(source)!!)
     val old = target.update(attempt = UploadAttempt(UploadPreparationState(), MuxUpload.Progress()))
-    val output = generated(12)
+    val output = standardized(12)
     val fresh = target.update(attempt = UploadAttempt(UploadPreparationState(), MuxUpload.Progress(), old.attempt!!.id))
     val validated = state.copy(phase = PreparationPhase.Validated, ownedPath = output.file.absolutePath,
       payload = output.validatedIdentity, networkStarted = true)
     runBlocking(Dispatchers.IO) {
-      UploadPersistence.writeGenerated(old, state)
-      UploadPersistence.writeGenerated(fresh, validated)
+      UploadPersistence.writeStandardized(old, state)
+      UploadPersistence.writeStandardized(fresh, validated)
       for (late in listOf(state, state.copy(abandoned = true))) {
-        assertThrows(GeneratedResumeBlockedException::class.java) { UploadPersistence.writeGenerated(old, late) }
+        assertThrows(UploadResumeBlockedException::class.java) { UploadPersistence.writeStandardized(old, late) }
       }
     }
     val restored = readUploadResumeState(fresh)
-    assertEquals(fresh.attempt!!.id, restored.attemptId); assertEquals(validated, restored.generated)
-    assertFalse(restored.generatedResumeBlocked); assertTrue(output.file.exists())
+    assertEquals(fresh.attempt!!.id, restored.attemptId); assertEquals(validated, restored.standardized)
+    assertFalse(restored.standardizedResumeBlocked); assertTrue(output.file.exists())
   }
 
-  @Test fun stoppedOwnersCannotRecreateRetiredGeneratedRecords() {
+  @Test fun stoppedOwnersCannotRecreateRetiredStandardizedRecords() {
     for (stop in listOf("superseded", "cancelled", "replaced")) {
       val target = info().copy(remoteUri = Uri.parse("https://example.invalid/late-$stop"))
       val old = target.update(attempt = UploadAttempt(UploadPreparationState(), MuxUpload.Progress()))
-      val state = GeneratedResumeState(PayloadIdentity.capture(source)!!)
+      val state = StandardizedResumeState(PayloadIdentity.capture(source)!!)
       when (stop) {
         "superseded" -> old.attempt!!.supersede()
         "cancelled" -> old.attempt!!.cancel {}
         else -> old.attempt!!.replace {}
       }
       runBlocking(Dispatchers.IO) {
-        UploadPersistence.writeGenerated(old, state)
-        UploadPersistence.writeGenerated(old, state.copy(abandoned = true))
+        UploadPersistence.writeStandardized(old, state)
+        UploadPersistence.writeStandardized(old, state.copy(abandoned = true))
       }
-      assertNull(stop, readUploadResumeState(target).generated)
-      assertFalse(stop, readUploadResumeState(target).generatedResumeBlocked)
+      assertNull(stop, readUploadResumeState(target).standardized)
+      assertFalse(stop, readUploadResumeState(target).standardizedResumeBlocked)
       assertTrue(readCachedUploadSnapshots().isEmpty())
     }
   }
@@ -1575,10 +1534,10 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
   @Test fun abandonedPreviousProcessRecordsAreNeverAutoResumedAndTheirFilesAreReclaimed() {
     for (networkStarted in listOf(false, true)) {
       val target = info().copy(remoteUri = Uri.parse("https://example.invalid/abandoned-$networkStarted"))
-      val output = generated(12)
-      val state = GeneratedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Validated,
+      val output = standardized(12)
+      val state = StandardizedResumeState(PayloadIdentity.capture(source)!!, PreparationPhase.Validated,
         output.file.absolutePath, output.validatedIdentity, networkStarted = networkStarted, abandoned = true)
-      runBlocking(Dispatchers.IO) { UploadPersistence.writeGenerated(target, state) }
+      runBlocking(Dispatchers.IO) { UploadPersistence.writeStandardized(target, state) }
       val prefs = context.getSharedPreferences("mux_upload", 0)
       val records = org.json.JSONArray(prefs.getString("generated_payloads_v1", null))
       val row = (0 until records.length()).map { records.getJSONObject(it) }
@@ -1588,10 +1547,10 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
       assertTrue(readCachedUploadSnapshots().isEmpty())
       assertTrue(MuxUploadManager.resumeAllCachedJobs().isEmpty())
       dispatcher.scheduler.runCurrent()
-      assertEquals(0, preparations); assertEquals(0, queries); assertTrue(chunks.isEmpty())
+      assertEquals(0, preparations); assertTrue(chunks.isEmpty())
       runBlocking { UploadPersistence.scheduleBlockedCleanup(context).join() }
-      assertFalse(output.file.exists()); assertNull(readUploadResumeState(target).generated)
-      assertEquals(networkStarted, readUploadResumeState(target).generatedResumeBlocked)
+      assertFalse(output.file.exists()); assertNull(readUploadResumeState(target).standardized)
+      assertEquals(networkStarted, readUploadResumeState(target).standardizedResumeBlocked)
       assertTrue(readCachedUploadSnapshots().isEmpty())
     }
   }

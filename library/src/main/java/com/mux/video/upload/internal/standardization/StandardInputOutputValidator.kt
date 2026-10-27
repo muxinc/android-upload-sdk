@@ -35,7 +35,7 @@ internal class StandardInputOutputValidator(
   private val inspectTimeline: (File, MediaMetadataInspection, () -> Boolean) -> MediaSampleInspection =
     { file, metadata, cancelled -> StandardInputTimelineInspector().inspect(file, metadata, cancelled) },
 ) {
-  fun validateGeneratedOutput(file: File, source: MediaFacts, sourceTimeline: StandardInputTimelineFacts,
+  fun validateStandardizedOutput(file: File, source: MediaFacts, sourceTimeline: StandardInputTimelineFacts,
     conversion: StandardInputConversion,
     isCancelled: () -> Boolean = { Thread.currentThread().isInterrupted }): StandardInputOutputValidation {
     fun rejected(reason: OutputRejection) = StandardInputOutputValidation.Rejected(reason)
@@ -67,7 +67,7 @@ internal class StandardInputOutputValidator(
   fun validateFacts(output: MediaFacts, source: MediaFacts, sourceTimeline: StandardInputTimelineFacts,
     outputTimeline: StandardInputTimelineFacts, conversion: StandardInputConversion,
     outputColor: ColorMetadata = ColorMetadata()): StandardInputOutputValidation {
-    val evaluation = evaluator.evaluate(output, conversion.selection, MediaRole.GeneratedOutput)
+    val evaluation = evaluator.evaluate(output, conversion.selection, MediaRole.StandardizedOutput)
     fun rejected(reason: OutputRejection) = StandardInputOutputValidation.Rejected(reason, evaluation)
     if (evaluation.nonCompliantRequirements.isNotEmpty())
       return rejected(OutputRejection.NonCompliant(evaluation.nonCompliantRequirements))

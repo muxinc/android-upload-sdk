@@ -521,7 +521,7 @@ class StandardInputPlannerTests {
     val plan = planner.plan(source, options(MaximumResolution.Preset2560x1440),
       fullCapabilities().copy(remediableRequirements = setOf(PolicyRequirement.VideoResolution)))
     assertEquals(PolicyStatus.Compliant, plan.evaluation.outcome)
-    assertTrue("Generated output needs the lower-tier bitrate proof: ${plan.action}", plan.action is StandardInputAction.Fallback)
+    assertTrue("Standardized output needs the lower-tier bitrate proof: ${plan.action}", plan.action is StandardInputAction.Fallback)
     val reason = (plan.action as StandardInputAction.Fallback).reason as FallbackReason.UnsupportedConversion
     assertEquals(setOf(ConversionCapabilityFailure.Remediation(PolicyRequirement.AverageBitrate),
       ConversionCapabilityFailure.Remediation(PolicyRequirement.MaximumGopBitrate)), reason.missingCapabilities)
