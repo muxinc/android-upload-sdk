@@ -780,8 +780,8 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     }
     val upload = MuxUpload.create(info())
     upload.start(); pump { upload.isSuccessful }
-    // Selection and its durability flush, four checkpoints, and terminal record removal.
-    verify(atMost = 7) { prefs.edit() }
+    // Startup, selection and its flush, four checkpoints, and terminal record removal.
+    verify(atMost = 8) { prefs.edit() }
     assertTrue(readAllCachedUploads().isEmpty())
   }
 
@@ -1196,11 +1196,30 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
       upload.start(); pump { readUploadResumeState(target).standardized?.ownedPath != null }
       upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
       assertFalse(readUploadResumeState(target).standardized!!.networkStarted)
+      prepare = { awaitCancellation() }
+      val restarted = if (managed) upload else MuxUpload.Builder(url, source).manageUploadTask(false).build()
+      restarted.start(forceRestart = true)
+      if (managed) assertFalse(readUploadResumeState(target).paused)
+      pump { preparations == before + 2 }
+      assertFalse(readUploadResumeState(target).paused)
+      val running = internalInfo(restarted)
+      running.uploadJob!!.cancel(); pump { running.uploadJob.isCompleted }
+      MuxUploadManager.jobFinished(running, forgetJob = false)
+      MuxUploadSdk.initialize(context, resumeStoppedUploads = true)
+      pump { preparations == before + 3 }
+      val restored = MuxUploadManager.findUploadByFile(source)!!
+      assertTrue(restored.isRunning)
+      restored.pause(); pump { internalInfo(restored).uploadJob!!.isCompleted }
+      assertTrue(readUploadResumeState(target).paused)
+      MuxUploadManager.jobFinished(internalInfo(restored), forgetJob = false)
+      MuxUploadSdk.initialize(context, resumeStoppedUploads = true)
+      dispatcher.scheduler.runCurrent()
+      val paused = MuxUploadManager.findUploadByFile(source)!!
+      assertTrue(paused.isPaused); assertEquals(before + 3, preparations)
       prepare = { PreparedUpload.Original() }
-      upload.start(forceRestart = true); pump { internalInfo(upload).uploadJob!!.isCompleted }
+      paused.start(); pump { paused.isSuccessful && internalInfo(paused).uploadJob!!.isCompleted }
       assertFalse(readUploadResumeState(target).standardizedResumeBlocked)
-      assertTrue(upload.isSuccessful); assertEquals(before + 2, preparations)
-      assertFalse(partial.file.exists())
+      assertEquals(before + 4, preparations); assertFalse(partial.file.exists())
     }
     for (managed in listOf(true, false)) for (standardized in listOf(true, false)) {
       val output = standardized(12)

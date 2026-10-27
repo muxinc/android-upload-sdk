@@ -50,6 +50,7 @@ internal class UploadJobFactory internal constructor(
       try {
         uploadInfo.uploadJob?.join()
         ensureActive()
+        writeUploadState(runningInfo, attempt.confirmedProgress())
         val selected = selectPayload(runningInfo, saved)
         ensureActive()
         val fileSize = withContext(Dispatchers.IO) {

@@ -32,7 +32,7 @@ private fun persistenceEntry(uploadInfo: UploadInfo, state: MuxUpload.Progress):
     file = uploadInfo.inputFile,
     url = uploadInfo.remoteUri.toString(),
     savedAtLocalMs = Date().time,
-    state = if (uploadInfo.isRunning()) {
+    state = if (uploadInfo.isRunning() || uploadInfo.attempt?.isRestarting() == true) {
       UploadPersistence.WAS_RUNNING
     } else {
       UploadPersistence.WAS_PAUSED
