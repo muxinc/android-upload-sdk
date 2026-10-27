@@ -24,27 +24,28 @@ internal fun initializeUploadPersistence(appContext: Context) {
 
 @JvmSynthetic
 internal fun writeUploadState(uploadInfo: UploadInfo, state: MuxUpload.Progress) {
-  UploadPersistence.write(
-    UploadEntry(
-      file = uploadInfo.inputFile,
-      url = uploadInfo.remoteUri.toString(),
-      savedAtLocalMs = Date().time,
-      state = if (uploadInfo.isRunning()) {
-        UploadPersistence.WAS_RUNNING
-      } else {
-        UploadPersistence.WAS_PAUSED
-      },
-      bytesSent = state.bytesUploaded,
-      chunkSize = uploadInfo.chunkSize,
-      retriesPerChunk = uploadInfo.retriesPerChunk,
-      optOut = uploadInfo.optOut,
-      inputStandardization = uploadInfo.inputStandardization,
-      originalSelected = uploadInfo.attempt?.preparation?.originalSelected ?: true,
-      attemptId = uploadInfo.attempt?.id,
-      standardizedResumeBlocked = uploadInfo.standardizedResumeBlocked,
-    )
-  )
+  UploadPersistence.write(persistenceEntry(uploadInfo, state))
 }
+
+private fun persistenceEntry(uploadInfo: UploadInfo, state: MuxUpload.Progress): UploadEntry =
+  UploadEntry(
+    file = uploadInfo.inputFile,
+    url = uploadInfo.remoteUri.toString(),
+    savedAtLocalMs = Date().time,
+    state = if (uploadInfo.isRunning()) {
+      UploadPersistence.WAS_RUNNING
+    } else {
+      UploadPersistence.WAS_PAUSED
+    },
+    bytesSent = state.bytesUploaded,
+    chunkSize = uploadInfo.chunkSize,
+    retriesPerChunk = uploadInfo.retriesPerChunk,
+    optOut = uploadInfo.optOut,
+    inputStandardization = uploadInfo.inputStandardization,
+    originalSelected = uploadInfo.attempt?.preparation?.originalSelected ?: true,
+    attemptId = uploadInfo.attempt?.id,
+    standardizedResumeBlocked = uploadInfo.standardizedResumeBlocked,
+  )
 
 internal data class UploadResumeState(
   val bytesSent: Long = 0,
@@ -188,6 +189,31 @@ internal object UploadPersistence {
     prefs.edit().putString(BLOCKS_KEY, JSONArray(blocked.toList()).toString()).apply()
   }
 
+  /** Commit the final original choice and retire preparation in the same preference write. */
+  fun selectOriginal(upload: UploadInfo) {
+    val attempt = checkNotNull(upload.attempt)
+    val entry = persistenceEntry(upload, attempt.confirmedProgress()).copy(originalSelected = true)
+    synchronized(standardizedWriteLock) {
+      val store = synchronized(this) {
+        if (attempt.isCancelled() || attempt.isSuperseded() || attempt.replacementFailure() != null)
+          throw kotlinx.coroutines.CancellationException("Upload stopped")
+        val records = readStandardized()
+        val key = destinationKey(entry.url)
+        records[key]?.let { if (!ownsStandardized(upload, it)) throw UploadResumeBlockedException() }
+        records.remove(key)
+        val entries = fetchEntries()
+        val paused = entries[entry.file.absolutePath]?.takeIf { it.attemptId == entry.attemptId && it.state == WAS_PAUSED }
+        entries[entry.file.absolutePath] = entry.copy(state = paused?.state ?: entry.state)
+        prefs.edit().putString(LIST_KEY, JSONArray(entries.values.map { it.toJson() }).toString())
+          .putString(STANDARDIZED_KEY, JSONArray(records.values.map { it.toJson() }).toString()).apply()
+        hiddenStandardized.remove(key)
+        prefs
+      }
+      // Flush the atomic update after releasing the monitor used by UI pause/cancel.
+      if (!store.edit().commit()) throw UploadResumeBlockedException()
+    }
+  }
+
   fun writeStandardized(upload: UploadInfo, state: StandardizedResumeState) {
     synchronized(standardizedWriteLock) {
       val records = readStandardized()
@@ -250,7 +276,9 @@ internal object UploadPersistence {
   fun write(entry: UploadEntry) {
     checkInitialized()
     val entries = fetchEntries()
-    entries[entry.file.absolutePath] = entry
+    val previous = entries[entry.file.absolutePath]
+    entries[entry.file.absolutePath] = if (previous?.url == entry.url && previous.attemptId == entry.attemptId &&
+      previous.originalSelected) entry.copy(originalSelected = true) else entry
     val blocks = readBlocks()
     if (entry.standardizedResumeBlocked) blocks += destinationKey(entry.url)
     writeEntries(entries, blocks)

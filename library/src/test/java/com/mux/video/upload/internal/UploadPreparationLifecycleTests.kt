@@ -433,7 +433,28 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     assertEquals(2, preparations)
   }
 
-  @Test fun zeroAcknowledgedOriginalRequestRemainsOriginalAfterRestoration() {
+  @Test fun originalChoiceIsSavedBeforeTransportAndSurvivesRestoration() {
+    prepare = { running ->
+      withContext(Dispatchers.IO) {
+        UploadPersistence.writeStandardized(running, running.attempt!!.preparation.standardizedState!!)
+      }
+      PreparedUpload.Original()
+    }
+    mockkObject(UploadPersistence)
+    every { UploadPersistence.selectOriginal(any()) } answers {
+      val running = firstArg<UploadInfo>()
+      if (chunks.isEmpty()) {
+        assertFalse(readUploadResumeState(running).originalSelected)
+        assertNotNull(readCachedUploadSnapshots().single().resumeState.standardized)
+      }
+      callOriginal()
+      assertTrue(readUploadResumeState(running).originalSelected)
+      val saved = readCachedUploadSnapshots().single().resumeState
+      assertTrue(saved.originalSelected); assertNull(saved.standardized)
+      // A pause captured before the in-memory flag changes must not undo the saved choice.
+      writeUploadState(running, running.attempt!!.confirmedProgress())
+      assertTrue(readUploadResumeState(running).originalSelected)
+    }
     work = { _, _, _ -> awaitCancellation() }
     val upload = MuxUpload.create(info())
     upload.start(); pump { chunks.size == 1 }
@@ -759,8 +780,8 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     }
     val upload = MuxUpload.create(info())
     upload.start(); pump { upload.isSuccessful }
-    // Selection once, four acknowledged chunk checkpoints, and terminal record removal.
-    verify(atMost = 6) { prefs.edit() }
+    // Selection and its durability flush, four checkpoints, and terminal record removal.
+    verify(atMost = 7) { prefs.edit() }
     assertTrue(readAllCachedUploads().isEmpty())
   }
 

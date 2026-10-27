@@ -112,10 +112,7 @@ internal class UploadJobFactory internal constructor(
     val attempt = checkNotNull(upload.attempt)
     val state = attempt.preparation
     if (upload.standardizedResumeBlocked || saved.standardizedResumeBlocked) throw UploadResumeBlockedException()
-    if (state.originalSelected) {
-      withContext(Dispatchers.IO) { UploadPersistence.retireStandardized(upload) }
-      return upload.inputFile
-    }
+    if (state.originalSelected) return selectOriginal(upload)
     restoreStandardized(upload)
     state.verified?.let { return it.file }
     if (upload.isStandardizationRequested()) {
@@ -138,12 +135,13 @@ internal class UploadJobFactory internal constructor(
         is PreparedUpload.Original -> MuxUploadSdk.logger.d("MuxUploadPreparation", result.diagnostic.toString())
       }
     }
-    state.originalSelected = true
-    state.standardizedState = null
-    withContext(Dispatchers.IO) {
-      UploadPersistence.retireStandardized(upload)
-    }
-    return upload.inputFile
+    return selectOriginal(upload)
+  }
+
+  private suspend fun selectOriginal(upload: UploadInfo): File = withContext(Dispatchers.IO) {
+    UploadPersistence.selectOriginal(upload)
+    checkNotNull(upload.attempt).preparation.apply { originalSelected = true; standardizedState = null }
+    upload.inputFile
   }
 
   /** Incomplete exports sent no bytes. Completed exports keep their exact validated identity. */

@@ -39,20 +39,20 @@ internal class UploadAttempt(
   val id: String = UUID.randomUUID().toString()
   val status = MutableStateFlow<UploadStatus>(UploadStatus.Started)
   private var stopped = false
-  private var cancelled = false
+  @Volatile private var cancelled = false
   private var restarting = false
   private var terminal = false
-  private var superseded = false
+  @Volatile private var superseded = false
   private var confirmed = initialProgress
-  private var replacement: UploadReplacedException? = null
+  @Volatile private var replacement: UploadReplacedException? = null
 
   @Synchronized fun isStopped() = stopped
-  @Synchronized fun isCancelled() = cancelled
+  fun isCancelled() = cancelled
   @Synchronized fun isRestarting() = restarting
-  @Synchronized fun replacementFailure() = replacement
+  fun replacementFailure() = replacement
   @Synchronized fun confirmedProgress() = confirmed
   @Synchronized fun supersede() { superseded = true }
-  @Synchronized fun isSuperseded() = superseded
+  fun isSuperseded() = superseded
 
   @Synchronized fun retainStandardized(output: SdrStandardizedFile) {
     if (superseded) preparation.discardLateOutput(output)
@@ -78,9 +78,8 @@ internal class UploadAttempt(
 
   @Synchronized fun beginTransport(standardized: Boolean, persist: () -> Unit) {
     if (stopped || terminal || superseded) throw kotlinx.coroutines.CancellationException("Upload stopped")
-    if (!standardized) preparation.originalSelected = true
-    // Claim persistence ownership before the first request of each attempt/payload choice.
-    persist()
+    // Original selection already claimed persistence ownership before preparation was retired.
+    if (standardized) persist()
   }
 
   @Synchronized fun publish(value: UploadStatus) {
