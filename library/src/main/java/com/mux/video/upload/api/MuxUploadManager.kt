@@ -63,9 +63,7 @@ object MuxUploadManager {
   @JvmSynthetic
   @MainThread
   internal fun resumeCachedJobs(includePaused: Boolean): List<MuxUpload> {
-    val restored = readCachedUploadSnapshots().filter { cached ->
-      (cached.resumeState.standardized != null || cached.upload.inputFile.exists()).also { if (!it) forgetUploadState(cached.upload) }
-    }.map { (upload, saved) ->
+    val restored = readCachedUploadSnapshots().map { (upload, saved) ->
       if (!includePaused && saved.paused) {
         uploadsByFilename.getOrPut(upload.inputFile.absolutePath) {
           val attempt = createUploadAttempt(upload, saved)

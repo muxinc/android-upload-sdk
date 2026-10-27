@@ -1136,7 +1136,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     assertEquals(1, preparations); assertFalse(output.file.exists())
   }
 
-  @Test fun deletedOriginalPayloadAfterTransportFailsWithoutStandardizingAgain() {
+  @Test fun restoringDeletedOriginalPayloadFailsWithoutStandardizingAgain() {
     prepare = { PreparedUpload.Original() }
     work = { _, _, _ -> awaitCancellation() }
     val upload = MuxUpload.create(info())
@@ -1144,8 +1144,9 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     upload.pause(); pump { internalInfo(upload).uploadJob!!.isCompleted }
     source.delete()
     prepare = { error("A selected original cannot be standardized again") }
-    upload.start(); pump { internalInfo(upload).uploadJob!!.isCompleted }
-    assertNotNull(upload.error); assertEquals(1, preparations); assertEquals(1, chunks.size); assertEquals(0, queries)
+    val restored = MuxUploadManager.resumeAllCachedJobs().single()
+    pump { internalInfo(restored).uploadJob!!.isCompleted }
+    assertNotNull(restored.error); assertEquals(1, preparations); assertEquals(1, chunks.size); assertEquals(0, queries)
   }
 
   @Test fun finalChunkWithALostResponseIsResentWithoutRepeatingSuccessfulChunks() {
