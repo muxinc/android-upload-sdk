@@ -76,6 +76,11 @@ internal class UploadAttempt(
     confirmed = confirmed.copy(totalBytes = totalBytes, bytesUploaded = bytesUploaded ?: confirmed.bytesUploaded)
   }
 
+  @Synchronized fun persistStartup(persist: () -> Unit) {
+    if (stopped || terminal || superseded) throw kotlinx.coroutines.CancellationException("Upload stopped")
+    persist()
+  }
+
   @Synchronized fun beginTransport(standardized: Boolean, persist: () -> Unit) {
     if (stopped || terminal || superseded) throw kotlinx.coroutines.CancellationException("Upload stopped")
     // Original selection already claimed persistence ownership before preparation was retired.

@@ -280,7 +280,7 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     assertFalse(standardized.file.exists())
   }
 
-  @Test fun cancellationFromStatusCallbackSuppressesProgressAndResult() {
+  @Test fun stopTransitionsSuppressStartupPersistenceAndLateEvents() {
     val upload = MuxUpload.create(info())
     upload.setResultListener { results += it }
     upload.setProgressListener { progress += it }
@@ -293,6 +293,45 @@ class UploadPreparationLifecycleTests : AbsRobolectricTest() {
     dispatcher.scheduler.runCurrent()
     assertTrue(progress.isEmpty()); assertTrue(results.isEmpty())
     assertTrue(readAllCachedUploads().isEmpty())
+    pump { internalInfo(upload).uploadJob!!.isCompleted }
+    for (cancel in listOf(false, true)) {
+      val attempt = UploadAttempt(UploadPreparationState(), MuxUpload.Progress())
+      val running = spyk(info().update(attempt = attempt, statusFlow = attempt.status))
+      val captured = java.util.concurrent.CountDownLatch(1)
+      val release = java.util.concurrent.CountDownLatch(1)
+      val failure = java.util.concurrent.atomic.AtomicReference<Throwable>()
+      val startup = Thread {
+        runCatching { attempt.persistStartup { writeUploadState(running, attempt.confirmedProgress()) } }
+          .onFailure { failure.set(it) }
+      }
+      every { running.isRunning() } answers {
+        val value = callOriginal() as Boolean
+        if (Thread.currentThread() === startup) {
+          captured.countDown(); check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        }
+        value
+      }
+      val stop = Thread {
+        runCatching {
+          if (cancel) attempt.cancel { forgetUploadState(running) }
+          else attempt.pause { writeUploadState(running, it) }
+        }.onFailure { failure.set(it) }
+      }
+      try {
+        startup.start(); pump { captured.count == 0L }
+        stop.start(); pump { stop.state == Thread.State.BLOCKED || !stop.isAlive }
+      } finally {
+        release.countDown(); startup.join(5000); stop.join(5000)
+      }
+      assertFalse(startup.isAlive); assertFalse(stop.isAlive); assertNull(failure.get())
+      if (cancel) assertTrue(readCachedUploadSnapshots().isEmpty())
+      else assertTrue(readUploadResumeState(running).paused)
+      assertThrows(CancellationException::class.java) {
+        attempt.persistStartup { writeUploadState(running, attempt.confirmedProgress()) }
+      }
+      UploadPersistence.removeForFile(running)
+    }
+
   }
 
   @Test fun cancellingAFailedUploadRemovesItsRetainedResumeRecord() {
