@@ -1,5 +1,6 @@
 package com.mux.video.upload.internal.standardization
 
+import com.mux.video.upload.internal.PayloadIdentity
 import android.content.Context
 import android.os.Looper
 import androidx.media3.common.MimeTypes
@@ -19,53 +20,44 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.RandomAccessFile
-import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
 internal sealed interface SdrConversionResult {
   /** Caller owns retention until upload/resume reaches its terminal point. */
-  data class Completed(val output: SdrGeneratedFile, val facts: MediaFacts) : SdrConversionResult
+  data class Completed(val output: SdrStandardizedFile, val facts: MediaFacts) : SdrConversionResult
   data class Failed(val reason: SdrConversionFailure) : SdrConversionResult
   data object Cancelled : SdrConversionResult
 }
 
 /** The only deletion authority returned to orchestration; never accepts an arbitrary path. */
-internal class SdrGeneratedFile private constructor(val file: File) {
-  private var validatedIdentity: FileIdentity? = null
+internal class SdrStandardizedFile private constructor(val file: File) {
+  internal var validatedIdentity: PayloadIdentity? = null
+    private set
   internal fun recordValidation(): Boolean {
-    validatedIdentity = identity()
+    validatedIdentity = PayloadIdentity.capture(file)
     return validatedIdentity != null
   }
-  internal fun matchesValidation(): Boolean = validatedIdentity?.let { it == identity() } == true
-
-  private data class FileIdentity(val size: Long, val modified: Long, val edgeHash: List<Byte>)
-  private fun identity(): FileIdentity? = try {
-    val size = file.length()
-    val modified = file.lastModified()
-    if (!file.isFile || !file.canRead() || size <= 0) null else {
-      val digest = MessageDigest.getInstance("SHA-256")
-      RandomAccessFile(file, "r").use { input ->
-        val first = ByteArray(minOf(size, 64 * 1024L).toInt())
-        input.readFully(first); digest.update(first)
-        if (size > first.size) {
-          val last = ByteArray(minOf(size - first.size, 64 * 1024L).toInt())
-          input.seek(size - last.size); input.readFully(last); digest.update(last)
-        }
-      }
-      if (file.length() != size || file.lastModified() != modified) null
-      else FileIdentity(size, modified, digest.digest().toList())
-    }
-  } catch (_: Exception) { null }
-
-  fun delete(): Boolean = !file.exists() || file.delete()
+  internal fun matchesValidation(): Boolean = validatedIdentity?.matches(file) == true
+  fun delete(): Boolean = try {
+    file.canonicalFile == file.absoluteFile && (!file.exists() || file.delete())
+  } catch (_: Exception) { false }
 
   companion object {
-    fun allocate(cacheDir: File, requiredBytes: Long): SdrGeneratedFile? {
+    /** Restoration accepts only the exact tracked file in the dedicated SDK area. */
+    fun restore(cacheDir: File, path: String, identity: PayloadIdentity? = null): SdrStandardizedFile? = try {
+      val area = File(cacheDir.canonicalFile, "mux-upload/standard-input")
+      val file = File(path)
+      if (area.canonicalFile != area.absoluteFile || file.absolutePath != path ||
+        file.parentFile != area || file.canonicalFile != file.absoluteFile ||
+        !file.name.startsWith("sdr-") || !file.name.endsWith(".mp4")) null
+      else SdrStandardizedFile(file).also { it.validatedIdentity = identity }
+    } catch (_: Exception) { null }
+
+    fun allocate(cacheDir: File, requiredBytes: Long): SdrStandardizedFile? {
       val area = File(cacheDir.canonicalFile, "mux-upload/standard-input")
       if ((!area.isDirectory && !area.mkdirs()) || area.canonicalFile != area.absoluteFile || area.usableSpace < requiredBytes) return null
-      return SdrGeneratedFile(File.createTempFile("sdr-", ".mp4", area))
+      return SdrStandardizedFile(File.createTempFile("sdr-", ".mp4", area))
     }
   }
 }
@@ -83,11 +75,12 @@ internal class SdrConversionAdapter(
   private val preflight: (StandardInputConversion, MediaMetadataInspection, SdrEncodingTargets, () -> Boolean) -> SdrEncoderCapability? =
     SdrCapabilityPreflight()::videoEncoder,
   private val validate: (File, MediaFacts, StandardInputTimelineFacts, StandardInputConversion, () -> Boolean) -> StandardInputOutputValidation =
-    StandardInputOutputValidator()::validateGeneratedOutput,
+    StandardInputOutputValidator()::validateStandardizedOutput,
   private val createEngine: (Context, Looper, StandardInputConversion, SdrEncodingTargets, SdrEncoderCapability) -> SdrExportEngine =
     ::Media3SdrExportEngine,
   private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
-  private val onPendingCleanup: (SdrGeneratedFile) -> Unit = {},
+  private val onAllocated: (SdrStandardizedFile) -> Unit = {},
+  private val onPendingCleanup: (SdrStandardizedFile) -> Unit = {},
 ) {
   private val appContext = context.applicationContext
 
@@ -106,9 +99,9 @@ internal class SdrConversionAdapter(
     private var terminal = false
     private val released = CompletableDeferred<Unit>()
     private var engine: SdrExportEngine? = null
-    private var output: SdrGeneratedFile? = null
+    private var output: SdrStandardizedFile? = null
     /** Exact deletion authority retained if the OS refuses cleanup, including cancellation. */
-    @Volatile var pendingCleanup: SdrGeneratedFile? = null
+    @Volatile var pendingCleanup: SdrStandardizedFile? = null
       private set
     private val sourceLength = input.length()
     private val sourceModified = input.lastModified()
@@ -146,7 +139,8 @@ internal class SdrConversionAdapter(
         val required = source.timeline.durationSeconds.valueOrNull?.let(targets::estimatedOutputBytes)
           ?: return@withContext SdrConversionFailure.InsufficientSourceEvidence
         // Record ownership before returning across a cancellable dispatcher boundary.
-        output = SdrGeneratedFile.allocate(appContext.cacheDir, required)
+        output = SdrStandardizedFile.allocate(appContext.cacheDir, required)
+        output?.let(onAllocated)
         if (output == null) SdrConversionFailure.DiskSpace else null
       }
       if (preparationFailure != null) return SdrConversionResult.Failed(preparationFailure)

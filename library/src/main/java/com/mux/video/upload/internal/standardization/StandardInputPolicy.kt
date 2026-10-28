@@ -3,7 +3,7 @@ package com.mux.video.upload.internal.standardization
 import com.mux.video.upload.internal.MaximumResolution
 
 internal enum class AcceptanceTier { UpTo1080p, HighResolution }
-internal enum class MediaRole { SourceInput, GeneratedOutput }
+internal enum class MediaRole { SourceInput, StandardizedOutput }
 internal enum class PolicyStatus { Compliant, NonCompliant, Unknown }
 internal enum class PolicyRequirement {
   VideoCodec, VideoResolution, FrameRate, AverageBitrate, MaximumGopBitrate,
@@ -12,14 +12,14 @@ internal enum class PolicyRequirement {
 
 internal data class PolicySelection(
   val acceptanceTier: AcceptanceTier,
-  val generatedOutputDimensions: Dimensions,
+  val standardizedOutputDimensions: Dimensions,
 ) {
   constructor(maximumResolution: MaximumResolution) : this(
     acceptanceTier = when (maximumResolution) {
       MaximumResolution.Preset2560x1440, MaximumResolution.Preset3840x2160 -> AcceptanceTier.HighResolution
       else -> AcceptanceTier.UpTo1080p
     },
-    generatedOutputDimensions = Dimensions(maximumResolution.width, maximumResolution.height),
+    standardizedOutputDimensions = Dimensions(maximumResolution.width, maximumResolution.height),
   )
 }
 
@@ -118,7 +118,7 @@ internal class StandardInputPolicyEvaluator(
     val size = fact.valueOrNull?.takeIf { it.isValid } ?: return PolicyStatus.Unknown
     return status(when (role) {
       MediaRole.SourceInput -> size.longSide <= limits.maximumSourceDimension
-      MediaRole.GeneratedOutput -> size.fitsWithin(selection.generatedOutputDimensions)
+      MediaRole.StandardizedOutput -> size.fitsWithin(selection.standardizedOutputDimensions)
     })
   }
 

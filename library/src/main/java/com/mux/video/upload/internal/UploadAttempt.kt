@@ -2,7 +2,7 @@ package com.mux.video.upload.internal
 
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.UploadStatus
-import com.mux.video.upload.internal.standardization.SdrGeneratedFile
+import com.mux.video.upload.internal.standardization.SdrStandardizedFile
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.util.UUID
 
@@ -11,16 +11,16 @@ internal class UploadSession {
   val current = MutableStateFlow<UploadInfo?>(null)
 }
 
-/** Shared across in-process pause/resume, never reconstructed as a generated payload from disk. */
+/** Shared across in-process pause/resume and reconstructed from durable standardized records. */
 internal class UploadPreparationState {
+  @Volatile var standardizedState: StandardizedResumeState? = null
   @Volatile var originalSelected = false
-  @Volatile var verified: SdrGeneratedFile? = null
-  @Volatile var generatedRequestStarted = false
-  private val pendingCleanup = mutableSetOf<SdrGeneratedFile>()
+  @Volatile var verified: SdrStandardizedFile? = null
+  private val pendingCleanup = mutableSetOf<SdrStandardizedFile>()
 
-  @Synchronized fun trackCleanup(output: SdrGeneratedFile) { pendingCleanup += output }
+  @Synchronized fun trackCleanup(output: SdrStandardizedFile) { pendingCleanup += output }
 
-  @Synchronized fun discardLateOutput(output: SdrGeneratedFile) {
+  @Synchronized fun discardLateOutput(output: SdrStandardizedFile) {
     if (verified !== output && !output.delete()) pendingCleanup += output
   }
 
@@ -39,47 +39,52 @@ internal class UploadAttempt(
   val id: String = UUID.randomUUID().toString()
   val status = MutableStateFlow<UploadStatus>(UploadStatus.Started)
   private var stopped = false
-  private var cancelled = false
+  @Volatile private var cancelled = false
   private var restarting = false
   private var terminal = false
-  private var superseded = false
+  @Volatile private var superseded = false
   private var confirmed = initialProgress
-  private var transportPayloadGenerated: Boolean? = null
-  private var replacement: UploadReplacedException? = null
+  @Volatile private var replacement: UploadReplacedException? = null
 
   @Synchronized fun isStopped() = stopped
-  @Synchronized fun isCancelled() = cancelled
+  fun isCancelled() = cancelled
   @Synchronized fun isRestarting() = restarting
-  @Synchronized fun replacementFailure() = replacement
+  fun replacementFailure() = replacement
   @Synchronized fun confirmedProgress() = confirmed
   @Synchronized fun supersede() { superseded = true }
+  fun isSuperseded() = superseded
 
-  @Synchronized fun retainGenerated(output: SdrGeneratedFile) {
+  @Synchronized fun retainStandardized(output: SdrStandardizedFile) {
     if (superseded) preparation.discardLateOutput(output)
     else if (cancelled || replacement != null) {
       preparation.trackCleanup(output)
       preparation.deleteOwnedFile()
-    } else preparation.verified = output
+    } else {
+      preparation.verified = output
+      preparation.standardizedState = preparation.standardizedState?.copy(phase = PreparationPhase.Validated,
+        ownedPath = output.file.absolutePath, payload = output.validatedIdentity)
+    }
   }
 
-  @Synchronized fun trackCleanup(output: SdrGeneratedFile) {
+  @Synchronized fun trackCleanup(output: SdrStandardizedFile) {
     if (superseded) { preparation.discardLateOutput(output); return }
     preparation.trackCleanup(output)
     if (cancelled || terminal) preparation.deleteOwnedFile()
   }
 
-  @Synchronized fun selectPayload(totalBytes: Long) {
-    confirmed = confirmed.copy(totalBytes = totalBytes)
+  @Synchronized fun selectPayload(totalBytes: Long, bytesUploaded: Long? = null) {
+    confirmed = confirmed.copy(totalBytes = totalBytes, bytesUploaded = bytesUploaded ?: confirmed.bytesUploaded)
   }
 
-  @Synchronized fun beginTransport(generated: Boolean, persist: () -> Unit) {
+  @Synchronized fun persistStartup(persist: () -> Unit) {
     if (stopped || terminal || superseded) throw kotlinx.coroutines.CancellationException("Upload stopped")
-    if (transportPayloadGenerated == generated) return
-    if (generated) preparation.generatedRequestStarted = true
-    else preparation.originalSelected = true
-    // Claim persistence ownership before the first request of each attempt/payload choice.
     persist()
-    transportPayloadGenerated = generated
+  }
+
+  @Synchronized fun beginTransport(standardized: Boolean, persist: () -> Unit) {
+    if (stopped || terminal || superseded) throw kotlinx.coroutines.CancellationException("Upload stopped")
+    // Original selection already claimed persistence ownership before preparation was retired.
+    if (standardized) persist()
   }
 
   @Synchronized fun publish(value: UploadStatus) {
@@ -108,7 +113,7 @@ internal class UploadAttempt(
       restarting = forRestart
       forget()
     }
-    preparation.deleteOwnedFile()
+    if (!forRestart || preparation.standardizedState?.payload == null) preparation.deleteOwnedFile()
   }
 
   fun replace(forget: () -> Unit) {
@@ -137,18 +142,19 @@ internal class UploadAttempt(
 internal fun createUploadAttempt(upload: UploadInfo, saved: UploadResumeState): UploadAttempt {
   val preparation = upload.attempt?.preparation ?: UploadPreparationState().apply {
     originalSelected = upload.restoredFromOriginal || saved.originalSelected
+    standardizedState = saved.standardized
   }
   val now = System.currentTimeMillis()
   return UploadAttempt(preparation, MuxUpload.Progress(
-    bytesUploaded = if (saved.generatedResumeBlocked) 0 else saved.bytesSent,
-    totalBytes = upload.inputFile.length(), startTime = now, updatedTime = now),
+    bytesUploaded = if (saved.standardizedResumeBlocked) 0 else saved.bytesSent,
+    totalBytes = saved.standardized?.payload?.size ?: upload.inputFile.length(), startTime = now, updatedTime = now),
     previousPersistenceOwnerId = saved.attemptId)
 }
 
 internal class UploadReplacedException : IllegalStateException("Upload was replaced by a new destination.")
 
-internal class GeneratedResumeBlockedException : IllegalStateException(
-  "Generated payload identity or server offset is unverified. Create a new Direct Upload."
+internal class UploadResumeBlockedException : IllegalStateException(
+  "Upload payload identity or server response is unverified. Create a new Direct Upload."
 )
 
 internal class UploadCancelledException : IllegalStateException("Upload was cancelled. Create a new upload handle.")

@@ -5,7 +5,7 @@ package com.mux.video.upload.api
  */
 fun interface UploadEventListener<EventType> {
   /**
-   * Called when an event is generated
+   * Called when an event is standardized
    */
   fun onEvent(event: EventType)
 }

@@ -63,9 +63,7 @@ object MuxUploadManager {
   @JvmSynthetic
   @MainThread
   internal fun resumeCachedJobs(includePaused: Boolean): List<MuxUpload> {
-    val restored = readCachedUploadSnapshots().filter { cached ->
-      cached.upload.inputFile.exists().also { if (!it) forgetUploadState(cached.upload) }
-    }.map { (upload, saved) ->
+    val restored = readCachedUploadSnapshots().map { (upload, saved) ->
       if (!includePaused && saved.paused) {
         uploadsByFilename.getOrPut(upload.inputFile.absolutePath) {
           val attempt = createUploadAttempt(upload, saved)
@@ -169,10 +167,8 @@ object MuxUploadManager {
     upload.uploadJob?.cancel()
   }
 
-  private fun cancelAttempt(upload: UploadInfo, forgetUnstarted: Boolean = false, forRestart: Boolean = false) {
-    val attempt = upload.attempt
-    if (attempt != null) attempt.cancel(forRestart = forRestart) { forgetUploadState(upload) }
-    else if (forgetUnstarted) forgetUploadState(upload)
+  private fun cancelAttempt(upload: UploadInfo, forRestart: Boolean = false) {
+    upload.attempt?.cancel(forRestart = forRestart) { forgetUploadState(upload) }
     upload.uploadJob?.cancel()
   }
 
@@ -184,14 +180,15 @@ object MuxUploadManager {
       return previous
     var source = previous ?: upload
     if (restart || newDestination) {
-      val generatedMayExistRemotely = !newDestination && (source.generatedResumeBlocked ||
-        source.attempt?.preparation?.generatedRequestStarted == true || readUploadResumeState(upload).generatedResumeBlocked)
+      val standardizedMayExistRemotely = !newDestination && (source.standardizedResumeBlocked || readUploadResumeState(upload).standardizedResumeBlocked)
       if (newDestination) {
         source.attempt?.replace { forgetUploadState(source) }
         source.uploadJob?.cancel()
-      } else cancelAttempt(source, forgetUnstarted = true, forRestart = true)
+      } else cancelAttempt(source, forRestart = true)
       source = upload.update(attempt = null, uploadJob = source.uploadJob,
-        statusFlow = null, restoredFromOriginal = false, generatedResumeBlocked = generatedMayExistRemotely).also {
+        statusFlow = null, restoredFromOriginal = !newDestination &&
+          (source.attempt?.preparation?.originalSelected == true || source.restoredFromOriginal),
+        standardizedResumeBlocked = standardizedMayExistRemotely).also {
         it.session = if (newDestination) upload.session else source.session
       }
     }

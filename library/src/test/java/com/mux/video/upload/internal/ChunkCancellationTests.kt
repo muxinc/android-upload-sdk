@@ -30,6 +30,8 @@ class ChunkCancellationTests : AbsRobolectricTest() {
       every { cancel() } just Runs
     }
     val client = mockk<OkHttpClient> { every { newCall(capture(request)) } returns call }
+    mockkObject(UploadProtocol)
+    every { UploadProtocol.httpClient() } returns client
     mockkObject(MuxUploadSdk)
     every { MuxUploadSdk.httpClient() } returns client
     every { MuxUploadSdk.logger } returns MuxUploadSdk.noLogger()

@@ -33,14 +33,14 @@ enum class MaximumResolution(val width: Int, val height: Int) {
   Preset1920x1080(1920, 1080), // 1080p
 
   /**
-   * Requested maximum generated dimensions of 3840x2160 (2160p/4K), without upscaling.
+   * Requested maximum standardized dimensions of 3840x2160 (2160p/4K), without upscaling.
    * If safe local conversion is unavailable, the original file is uploaded.
    * Configure the matching Direct Upload asset tier separately.
    */
   Preset3840x2160(3840, 2160), // 2160p
 
   /**
-   * Requested maximum generated dimensions of 2560x1440 (1440p), without upscaling.
+   * Requested maximum standardized dimensions of 2560x1440 (1440p), without upscaling.
    * If safe local conversion is unavailable, the original file is uploaded.
    * Configure the matching Direct Upload asset tier separately.
    */
@@ -89,7 +89,7 @@ internal data class UploadInfo(
   @JvmSynthetic internal val statusFlow: StateFlow<UploadStatus>?,
   @JvmSynthetic internal val attempt: UploadAttempt? = null,
   @JvmSynthetic internal val restoredFromOriginal: Boolean = false,
-  @JvmSynthetic internal val generatedResumeBlocked: Boolean = false,
+  @JvmSynthetic internal val standardizedResumeBlocked: Boolean = false,
 ) {
   internal var session = UploadSession()
 
@@ -116,7 +116,7 @@ internal fun UploadInfo.update(
   statusFlow: StateFlow<UploadStatus>? = this.statusFlow,
   attempt: UploadAttempt? = this.attempt,
   restoredFromOriginal: Boolean = this.restoredFromOriginal,
-  generatedResumeBlocked: Boolean = this.generatedResumeBlocked,
+  standardizedResumeBlocked: Boolean = this.standardizedResumeBlocked,
 ) = UploadInfo(
   inputStandardization,
   remoteUri,
@@ -128,5 +128,5 @@ internal fun UploadInfo.update(
   statusFlow,
   attempt,
   restoredFromOriginal,
-  generatedResumeBlocked,
+  standardizedResumeBlocked,
 ).also { it.session = session }

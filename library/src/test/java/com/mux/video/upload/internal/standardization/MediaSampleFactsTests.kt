@@ -276,7 +276,7 @@ class MediaSampleFactsTests : AbsRobolectricTest() {
       sample(200_000, bytes = 2_000_000))
     val time = editedTimeline(listOf(-1.0, 0.0, 0.1, 0.2), 0.2, listOf(1,2), fullEnd = 0.3)
     val facts = VideoSampleFactsReader.read(samples.map { it.second }, time, compliantFacts())
-    val evaluation = StandardInputPolicyEvaluator().evaluate(facts, selection(), MediaRole.GeneratedOutput)
+    val evaluation = StandardInputPolicyEvaluator().evaluate(facts, selection(), MediaRole.StandardizedOutput)
     assertTrue(evaluation.nonCompliantRequirements.contains(PolicyRequirement.AverageBitrate))
     assertTrue(evaluation.nonCompliantRequirements.contains(PolicyRequirement.MaximumGopBitrate))
     assertEquals(known(4_000_200L), facts.maximumGopByteSize)
