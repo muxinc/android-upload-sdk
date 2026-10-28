@@ -73,6 +73,29 @@ class StandardInputOutputValidatorTests {
     mismatch(OutputExpectation.DynamicRange, validate(output.copy(videoCodec = known(VideoCodec.Hevc),
       pixelFormat = known(PixelFormat(10, ChromaSubsampling.Yuv420)), dynamicRange = known(DynamicRange.Hlg)), conversion = hevc))
   }
+  @Test fun toneMappedOutputRequiresInspectedLimitedRangeBt709Color() {
+    val mapped = plan.copy(sourceDynamicRange = DynamicRange.Pq, toneMapsToSdr = true)
+    val color = ColorMetadata(known(android.media.MediaFormat.COLOR_STANDARD_BT709),
+      known(android.media.MediaFormat.COLOR_TRANSFER_SDR_VIDEO), known(android.media.MediaFormat.COLOR_RANGE_LIMITED))
+    val metadata = hdrMetadata(output)
+    val video = metadata.tracks.single()
+    val file = File.createTempFile("tone-map-validation", ".mp4").apply { writeBytes(byteArrayOf(1)) }
+    try {
+      fun check(color: ColorMetadata?) = StandardInputOutputValidator(
+        inspectMetadata = { MetadataInspectionResult.Success(metadata.copy(tracks =
+          if (color == null) emptyList() else listOf(video.copy(video = video.video!!.copy(color = color))))) },
+        inspectTimeline = { _, _, _ -> MediaSampleInspection(output, SampleScanStatus.Complete, timeline = timeline()) })
+        .validateStandardizedOutput(file, source, timeline(), mapped)
+      assertTrue(check(color) is StandardInputOutputValidation.Accepted)
+      mismatch(OutputExpectation.Color, check(color.copy(range = known(android.media.MediaFormat.COLOR_RANGE_FULL))))
+      assertTrue(reason(check(color.copy(standard = MediaFact.Unknown))) is OutputRejection.InsufficientPlanEvidence)
+      mismatch(OutputExpectation.Color, check(color.copy(standard = known(android.media.MediaFormat.COLOR_STANDARD_BT2020))))
+      mismatch(OutputExpectation.Color, check(color.copy(transfer = known(android.media.MediaFormat.COLOR_TRANSFER_HLG))))
+      assertTrue(reason(check(color.copy(range = MediaFact.Unknown))) is OutputRejection.InsufficientPlanEvidence)
+      assertTrue(reason(check(null)) is OutputRejection.InsufficientPlanEvidence)
+    } finally { file.delete() }
+  }
+
   @Test fun expectedAudioCannotDisappearOrAppearAndKnownLayoutIsRetained() {
     mismatch(OutputExpectation.Audio, validate(output.copy(audioTracks = known(emptyList()))))
     mismatch(OutputExpectation.Audio, validate(conversion = plan.copy(outputAudio = OutputAudio.None)))

@@ -57,7 +57,7 @@ internal class Media3SdrExportEngine(
     val sequence = if (targets.audioChannels == null) EditedMediaItemSequence.withVideoFrom(items)
       else EditedMediaItemSequence.withAudioAndVideoFrom(items)
     val composition = Composition.Builder(sequence)
-      .setHdrMode(Composition.HDR_MODE_KEEP_HDR).build()
+      .setHdrMode(conversion.media3HdrMode).build()
     val exporter = Transformer.Builder(context)
       .setLooper(looper)
       .setVideoMimeType(targets.videoMime)
@@ -154,7 +154,8 @@ internal class StrictSdrEncoderFactory(
     val size = conversion.encoderDimensions
     check(format.sampleMimeType == targets.videoMime && format.width == size.width &&
       format.height == size.height && format.rotationDegrees == 0 &&
-      format.colorInfo?.colorTransfer == C.COLOR_TRANSFER_SDR)
+      format.colorInfo?.colorTransfer == C.COLOR_TRANSFER_SDR &&
+      (!conversion.toneMapsToSdr || format.colorInfo == androidx.media3.common.ColorInfo.SDR_BT709_LIMITED))
     return format.buildUpon().setFrameRate(conversion.outputFrameRate.toFloat()).setAverageBitrate(targets.bitrate).build()
   }
 }
@@ -184,3 +185,7 @@ internal object SdrVideoEncoderConfiguration {
     return media
   }
 }
+
+/** Keep pixel conversion explicit; never use Media3's metadata-only interpretation mode. */
+internal val StandardInputConversion.media3HdrMode: Int
+  get() = if (toneMapsToSdr) Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL else Composition.HDR_MODE_KEEP_HDR

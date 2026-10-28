@@ -130,6 +130,30 @@ class SdrConversionAdapterTests {
     val other = facts.copy(videoCodec = known(VideoCodec.Other))
     assertEquals("video/avc", targets(conversion.copy(sourceCodec = VideoCodec.Other), other)!!.videoMime)
   }
+  @Test fun explicitToneMappingRequiresKnownHlgPqColorAndPreservesCodecFamily() {
+    for (codec in listOf(VideoCodec.H264, VideoCodec.Hevc)) for (range in listOf(DynamicRange.Hlg, DynamicRange.Pq)) {
+      val input = compliantFacts(codec, dynamicRange = range,
+        pixelFormat = PixelFormat(if (codec == VideoCodec.Hevc) 10 else 8, ChromaSubsampling.Yuv420))
+        .copy(cadence = known(Cadence.Constant), audioTracks = known(emptyList()))
+      val plan = conversion.copy(sourceCodec = codec, outputCodec = codec, sourceDynamicRange = range,
+        toneMapsToSdr = true, outputAudio = OutputAudio.None)
+      val metadata = hdrMetadata(input)
+      val target = SdrEncodingTargets.from(plan, metadata, samples(input))!!
+      assertEquals(if (codec == VideoCodec.Hevc) "video/hevc" else "video/avc", target.videoMime)
+      assertEquals(if (codec == VideoCodec.Hevc) VideoProfile.HevcMain else VideoProfile.H264Baseline, target.profile)
+      assertNull(SdrEncodingTargets.from(plan.copy(toneMapsToSdr = false), metadata, samples(input)))
+      val track = metadata.tracks.single()
+      val video = track.video!!
+      for (bad in listOf(video.copy(color = video.color.copy(standard = MediaFact.Unknown)),
+        video.copy(color = video.color.copy(standard = known(MediaFormat.COLOR_STANDARD_BT709))),
+        video.copy(color = video.color.copy(transfer = known(MediaFormat.COLOR_TRANSFER_SDR_VIDEO))),
+        video.copy(color = video.color.copy(range = MediaFact.Unknown)), video.copy(profile = MediaFact.Unknown),
+        video.copy(dynamicRange = known(DynamicRange.DolbyVision)), video.copy(pixelFormat = MediaFact.Unknown))) {
+        assertNull(SdrEncodingTargets.from(plan, metadata.copy(tracks = listOf(track.copy(video = bad))), samples(input)))
+      }
+    }
+  }
+
   @Test fun rejectsHdrUnknownTimelineUpscalingAndUnprovenTenBitPath() {
     assertNull(targets(conversion.copy(toneMapsToSdr = true)))
     assertNull(targets(input = facts.copy(dynamicRange = MediaFact.Unknown)))
