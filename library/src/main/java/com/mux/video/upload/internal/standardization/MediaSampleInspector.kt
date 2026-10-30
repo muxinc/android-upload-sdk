@@ -113,7 +113,10 @@ internal object VideoSampleFactsReader {
     ordered.sort()
     val intervals = LongArray(ordered.size - 1) { ordered[it + 1] - ordered[it] }
     if (intervals.any { it <= 0 }) return base
-    val span = (ordered.last() - ordered.first()) / 1e6
+    // Keep proven container precision at policy boundaries such as 60/120 fps.
+    // Rounding each endpoint to microseconds first can turn exactly 60 into 60.000004.
+    val span = presented.maxOf { maxOf(timeline.startSeconds, time(it)) } -
+      presented.minOf { maxOf(timeline.startSeconds, time(it)) }
     if (!span.isFinite() || span <= 0) return base
     val frameInterval = span / (ordered.size - 1)
     val constant = intervals.all { abs(it / 1e6 - frameInterval) <= maxOf(2e-6, frameInterval * 0.001) }

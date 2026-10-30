@@ -60,6 +60,44 @@ class StandardInputTimelineInspectorTests : AbsRobolectricTest() {
       assertEquals(2.0, time.endSeconds, 0.0)
     }
   }
+  @Test fun leadingEmptyAudioEditPreservesStartOffsetAndPlatformTimestampConventions() {
+    for (version in 0..1) {
+      fun entry(duration: Long, start: Long) =
+        (if (version == 0) int(duration.toInt()) + int(start.toInt()) else long(duration) + long(start)) + int(65536)
+      val edits = box("edts", box("elst", byteArrayOf(version.toByte(), 0, 0, 0) + int(2) +
+        entry(56, -1) + entry(30000, 0)))
+      val source = file(track() + track(kind = "soun", edits = edits), scale = 10000)
+      try {
+        val tracks = IsoTimelineReader.read(source, 250000)
+        val audio = tracks.getValue(2)
+        assertEquals(0.0056, audio.startSeconds - tracks.getValue(1).startSeconds, 1e-12)
+        assertEquals(3.0056, audio.endSeconds, 1e-12)
+        assertEquals(3.0, audio.endSeconds - audio.startSeconds, 1e-12)
+        audio.effectivePresentationSeconds.zip(listOf(0.0056, 1.0056, 2.0056)).forEach {
+          (actual, expected) -> assertEquals(expected, actual, 1e-12)
+        }
+        for (shift in listOf(0.0, 0.0056, 0.006)) {
+          val matcher = PlatformTimestampMatcher(audio)
+          assertTrue(audio.presentationSeconds.indices.all { matcher.matches(it, it.toDouble() + shift) })
+        }
+        val mixed = PlatformTimestampMatcher(audio)
+        assertTrue(mixed.matches(0, 0.0056))
+        assertFalse(mixed.matches(1, 1.006))
+      } finally { source.delete() }
+    }
+  }
+  @Test fun multipleMediaEditsAndRepeatedEmptyEditsRemainUnproven() {
+    for (starts in listOf(listOf(0, 1000), listOf(-1, -1))) {
+      val edits = box("edts", box("elst", ByteArray(4) + int(2) +
+        starts.flatMap { (int(1000) + int(it) + int(65536)).toList() }.toByteArray()))
+      val source = file(track(edits = edits))
+      try {
+        try { IsoTimelineReader.read(source, 250000); fail("Unsupported edit sequence was proven") }
+        catch (_: IllegalArgumentException) { }
+        catch (stop: SampleScanStop) { assertEquals(SampleScanStatus.Unsupported, stop.status) }
+      } finally { source.delete() }
+    }
+  }
   @Test fun movieAndMediaTimescalesAreIndependentAndTrimsCannotClaimMissingTail() {
     assertEquals(2.0, read(track(edits = edit(180000, 1000)), scale = 90000).endSeconds, 0.0)
     invalid(track(edits = edit(4000, 0)))
