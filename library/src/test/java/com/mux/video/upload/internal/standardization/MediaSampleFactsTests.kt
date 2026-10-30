@@ -221,6 +221,24 @@ class MediaSampleFactsTests : AbsRobolectricTest() {
     IsoTrackTimeline(times.toDoubleArray(), 0.0, end, fullEnd, presented.map { maxOf(0.0, times[it]) }.sorted(),
       true, 1000, 1.0, presented)
 
+  @Test fun exactPolicyBoundaryRatesUseContainerPrecisionBeforeMicrosecondRounding() {
+    for (rate in listOf(60.0, 120.0, 60.01)) {
+      val times = List(300) { it / rate }
+      val time = editedTimeline(times, 300 / rate, times.indices.toList()).copy(hasEdit = false,
+        mediaStartSeconds = 0.0, timescale = 60000)
+      val facts = VideoSampleFactsReader.read(List(300) { CompressedVideoSample(100000, it == 0, idr) },
+        time, compliantFacts(dimensions = Dimensions(3840, 2160)))
+      assertEquals(rate, facts.frameRate.valueOrNull!!, 1e-12)
+      assertEquals(known(Cadence.Constant), facts.cadence)
+      if (rate == 60.0) {
+        val plan = StandardInputPlanner().plan(facts, options(resolution = com.mux.video.upload.internal.MaximumResolution.Preset3840x2160), fullCapabilities())
+        assertFalse(plan.evaluation.nonCompliantRequirements.contains(PolicyRequirement.FrameRate))
+        val conversion = (plan.action as StandardInputAction.Convert).conversion
+        assertEquals(OutputCadence.PreserveSourceTimestamps, conversion.outputCadence)
+        assertEquals(60.0, conversion.outputFrameRate, 1e-12)
+      }
+    }
+  }
   @Test fun effectiveEditCountsPrerollBytesAndRetainsTheIdrProof() {
     val samples = listOf(sample(-1_000_000, true, 1000), sample(0, bytes = 100), sample(1_000_000, bytes = 100))
     val time = editedTimeline(listOf(-1.0, 0.0, 1.0), 2.0, listOf(1, 2))
