@@ -6,6 +6,7 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.util.concurrent.CancellationException
 import kotlin.math.abs
+import kotlin.math.round
 
 internal sealed interface AudioVideoStartOffset {
   data object NotApplicable : AudioVideoStartOffset
@@ -121,9 +122,11 @@ internal data class IsoTrackTimeline(
   val effectivePresentationSeconds: List<Double>,
   val hasEdit: Boolean,
   val timescale: Long,
+  /** Media timestamp minus effective timestamp, including any leading empty-edit gap. */
   val mediaStartSeconds: Double,
   /** Decode-order indices of samples whose presentation intervals overlap the effective edit. */
   val effectiveSampleIndices: List<Int>,
+  val leadingGapRoundingSeconds: Double = 0.0,
 )
 
 /** A single table-to-platform timestamp convention must agree for the entire track. */
@@ -132,6 +135,7 @@ internal class PlatformTimestampMatcher(private val timing: IsoTrackTimeline) {
   private var raw = true
   private var clamped = true
   private var firstSampleShifted = true
+  private var roundedGapShifted = true
 
   fun matches(index: Int, actual: Double): Boolean {
     val effective = timing.presentationSeconds[index]
@@ -144,7 +148,10 @@ internal class PlatformTimestampMatcher(private val timing: IsoTrackTimeline) {
     clamped = clamped && near(maxOf(0.0, effective))
     // Android Q limits the video shift to the first composition time and clamps early CTS.
     firstSampleShifted = firstSampleShifted && near(maxOf(0.0, unshifted - legacyShift))
-    return shifted || raw || clamped || firstSampleShifted
+    // Some extractors round a leading movie-time gap to the nearest media tick.
+    // Require that same shift for every sample rather than widening timestamp tolerances.
+    roundedGapShifted = roundedGapShifted && near(effective + timing.leadingGapRoundingSeconds)
+    return shifted || raw || clamped || firstSampleShifted || roundedGapShifted
   }
 }
 
@@ -235,9 +242,10 @@ internal object IsoTimelineReader {
         }
         val ends = LongArray(sampleCount) { checkedAdd(starts[it], deltas[it]) }
         require(starts.distinct().size == sampleCount)
-        // Single unit-rate edits cover phone encoder priming and simple trims. Complex edits are
-        // unproven here, including empty leading edits; do not guess how the platform applies them.
+        // Prove one unit-rate media edit, optionally preceded by one empty edit for an A/V gap.
+        // Other edit sequences remain unproven; the full platform scan must match this timeline.
         var mediaStart = 0.0
+        var leadingGap = 0.0
         var editDuration: Double? = null
         val editBoxes = trackChildren.filter { it.type == "edts" }
         require(editBoxes.size <= 1)
@@ -248,31 +256,43 @@ internal object IsoTimelineReader {
           val version = input.readUnsignedByte()
           require(version in 0..1 && input.readUnsignedByte() == 0 && input.readUnsignedShort() == 0)
           val count = uint()
-          if (count > 1) throw SampleScanStop(SampleScanStatus.Unsupported)
+          if (count > 2) throw SampleScanStop(SampleScanStatus.Unsupported)
           require(list.end - list.payload == 8 + count * (if (version == 0) 12 else 20))
-          if (count == 1L) {
+          fun entry(): Pair<Long, Long> {
             val duration = if (version == 0) uint() else input.readLong()
             val time = if (version == 0) input.readInt().toLong() else input.readLong()
-            require(duration > 0 && time >= 0 && input.readInt() == 65536)
+            require(duration > 0 && input.readInt() == 65536)
+            return duration to time
+          }
+          if (count == 2L) {
+            val (duration, time) = entry()
+            if (time != -1L) throw SampleScanStop(SampleScanStatus.Unsupported)
+            leadingGap = duration.toDouble() / movieScale
+          }
+          if (count > 0) {
+            val (duration, time) = entry()
+            require(time >= 0)
             mediaStart = time.toDouble() / scale
             editDuration = duration.toDouble() / movieScale
           }
         }
         val rawStart = starts.min().toDouble() / scale
         val rawEnd = ends.max().toDouble() / scale
-        val start = maxOf(0.0, rawStart - mediaStart)
-        val end = editDuration ?: rawEnd
+        val start = maxOf(0.0, rawStart - mediaStart) + leadingGap
+        val end = (editDuration ?: rawEnd) + leadingGap
         require(start.isFinite() && end.isFinite() && end > start)
         if (editDuration != null) {
           // Table coverage must reach the edit endpoint; movie/track timescale rounding is bounded.
           require(rawStart <= mediaStart + 2.0 / scale &&
-            rawEnd + 2.0 / scale + 1.0 / movieScale >= mediaStart + end)
+            rawEnd + 2.0 / scale + 1.0 / movieScale >= mediaStart + editDuration)
         } else require(rawStart >= 0)
-        val platformTimes = DoubleArray(sampleCount) { starts[it].toDouble() / scale - mediaStart }
+        val platformTimes = DoubleArray(sampleCount) { starts[it].toDouble() / scale - mediaStart + leadingGap }
         val effectiveIndices = starts.indices.filter { ends[it].toDouble() / scale > mediaStart && platformTimes[it] < end }
         val effectiveTimes = effectiveIndices.map { maxOf(start, platformTimes[it]) }.sorted()
         require(effectiveTimes.isNotEmpty())
-        trackId to IsoTrackTimeline(platformTimes, start, end, rawEnd - mediaStart, effectiveTimes, editDuration != null, scale, mediaStart, effectiveIndices)
+        trackId to IsoTrackTimeline(platformTimes, start, end, rawEnd - mediaStart + leadingGap, effectiveTimes,
+          editDuration != null, scale, mediaStart - leadingGap, effectiveIndices,
+          round(leadingGap * scale) / scale - leadingGap)
       }.also { require(it.map { track -> track.first }.distinct().size == it.size) }.toMap()
     }
 }
