@@ -1,234 +1,239 @@
 package com.mux.video.upload.internal
 
-import android.os.Build
-import android.util.Log
-import com.mux.video.upload.BuildConfig
 import com.mux.video.upload.MuxUploadSdk
 import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
 import com.mux.video.upload.api.UploadStatus
+import com.mux.video.upload.internal.standardization.SdrStandardizedFile
+import com.mux.video.upload.internal.standardization.PreparedUpload
+import com.mux.video.upload.internal.standardization.UploadPreparation
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.io.BufferedInputStream
-import java.io.FileInputStream
-import java.io.InputStream
-import java.util.*
+import java.io.File
+import java.io.RandomAccessFile
+import java.io.IOException
+import java.util.UUID
 
-/**
- * Creates a new Upload Job for the given [UploadInfo]. The job is started as soon as it is created.
- * To pause a job, save its last-known state in UploadPersistence and cancel the [Job] in the
- * [UploadInfo] returned by this function
- */
 @JvmSynthetic
-internal fun startUploadJob(upload: UploadInfo): UploadInfo {
-  return MuxUploadSdk.uploadJobFactory()
-    .createUploadJob(upload, CoroutineScope(Dispatchers.Default))
-}
+internal fun startUploadJob(upload: UploadInfo, saved: UploadResumeState? = null): UploadInfo = MuxUploadSdk.uploadJobFactory()
+  .createUploadJob(upload, CoroutineScope(Dispatchers.Default), saved)
 
-/**
- * Creates upload coroutine jobs, which handle uploading a single file and reporting/delegating
- * the state of the upload. To cancel, just call [Deferred.cancel]
- * This class is not intended to be used from outside the SDK
- */
-internal class UploadJobFactory private constructor(
+/** Owns payload selection and the transition from cancellable preparation to transport. */
+internal class UploadJobFactory internal constructor(
+  private val prepare: suspend (UploadInfo) -> PreparedUpload = {
+    UploadPreparation().prepare(it, checkNotNull(MuxUploadManager.appContext), standardizedResumeVerified = true)
+  },
   val createWorker: (ChunkWorker.Chunk, UploadInfo, MutableSharedFlow<MuxUpload.Progress>) -> ChunkWorker =
-    this::createWorkerForSlice
+    ::createWorkerForSlice,
 ) {
-  private val logger get() = MuxUploadSdk.logger
-
   companion object {
-    private const val MIME_TYPE_GENERIC_VIDEO = "video/*"
-
-    @JvmSynthetic
-    internal fun create() = UploadJobFactory()
-
-    @Suppress("unused") // It's used by method-reference, which the linter doesn't see
-    @JvmSynthetic
-    private fun createWorkerForSlice(
-      chunk: ChunkWorker.Chunk,
-      uploadInfo: UploadInfo,
-      progressFlow: MutableSharedFlow<MuxUpload.Progress>
-    ): ChunkWorker = ChunkWorker.create(
-      chunk = chunk,
-      uploadInfo = uploadInfo,
-      videoMimeType = MIME_TYPE_GENERIC_VIDEO,
-      progressFlow = progressFlow,
-    )
+    @JvmSynthetic internal fun create() = UploadJobFactory()
+    private fun createWorkerForSlice(chunk: ChunkWorker.Chunk, uploadInfo: UploadInfo,
+      progressFlow: MutableSharedFlow<MuxUpload.Progress>): ChunkWorker =
+      ChunkWorker.create(chunk, uploadInfo, "video/*", progressFlow)
   }
 
-  fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope): UploadInfo {
-    logger
-    val statusFlow = MutableStateFlow<UploadStatus>(UploadStatus.Ready)
-
-    var fileStream: InputStream = BufferedInputStream(FileInputStream(uploadInfo.inputFile))
-    var fileSize = uploadInfo.inputFile.length()
-    val metrics = UploadMetrics.create()
-
-    val uploadJob = outerScope.async {
-      // Inside the async { }, we have officially started
-      statusFlow.value = UploadStatus.Started
+  fun createUploadJob(uploadInfo: UploadInfo, outerScope: CoroutineScope, resumeState: UploadResumeState? = null): UploadInfo {
+    uploadInfo.attempt?.supersede()
+    val saved = resumeState ?: readUploadResumeState(uploadInfo)
+    val attempt = createUploadAttempt(uploadInfo, saved)
+    var runningInfo = uploadInfo.update(inputStandardization = saved.standardizedOptions ?: uploadInfo.inputStandardization,
+      attempt = attempt, statusFlow = attempt.status.asStateFlow())
+    // Lazy startup lets the returned identity be installed before any completion callback.
+    val job = outerScope.async(start = CoroutineStart.LAZY) {
+      val startTime = attempt.confirmedProgress().startTime
       val sessionId = UUID.randomUUID().toString()
-      // This UploadInfo never gets sent outside this coroutine. It contains info related to
-      // standardizing the the client doesn't need to know/can't know synchronously
-      var innerUploadInfo = uploadInfo
-
-      val startTime = System.currentTimeMillis()
+      val metrics = UploadMetrics.create()
+      var retire = false
       try {
-        // See if the file need to be converted to a standard input.
-        if (uploadInfo.isStandardizationRequested()
-          && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
-        ) {
-          statusFlow.value = UploadStatus.Preparing
-          val tcx = TranscoderContext.create(innerUploadInfo, MuxUploadManager.appContext!!, sessionId)
-          innerUploadInfo = tcx.process()
-          if (tcx.fileTranscoded) {
-            fileStream = withContext(Dispatchers.IO) {
-              BufferedInputStream(FileInputStream(innerUploadInfo.standardizedFile))
-            }
-            // This !! is safe by contract: process() will set the standardizedFile if it transcoded
-            fileSize = innerUploadInfo.standardizedFile!!.length()
-          }
+        uploadInfo.uploadJob?.join()
+        ensureActive()
+        attempt.persistStartup { writeUploadState(runningInfo, attempt.confirmedProgress()) }
+        val selected = selectPayload(runningInfo, saved)
+        ensureActive()
+        val fileSize = withContext(Dispatchers.IO) {
+          check(selected.isFile && selected.canRead() && selected.length() > 0) { "Upload payload is unreadable or empty" }
+          selected.length()
         }
-
-        // Now that we've standardized (or not), start the upload
-
-        var totalBytesSent: Long = getAlreadyTransferredBytes(innerUploadInfo)
-        Log.d("UploadJobFactory", "totalBytesSent: $totalBytesSent")
-        val chunkBuffer = ByteArray(innerUploadInfo.chunkSize)
-
-        // If we're resuming, we must skip to the current file pos
-        if (totalBytesSent != 0L) {
-          withContext(Dispatchers.IO) { fileStream.skip(totalBytesSent) }
+        attempt.selectPayload(fileSize)
+        uploadChunks(runningInfo, selected, fileSize)
+        ensureActive()
+        val final = attempt.confirmedProgress()
+        val success = UploadStatus.UploadSuccess(final)
+        retire = true
+        if (attempt.finish(success)) {
+          if (!uploadInfo.optOut) metrics.reportUploadSucceeded(startTime, final.updatedTime, 0, sessionId, uploadInfo)
+          withContext(Dispatchers.Main) { MuxUploadManager.jobFinished(runningInfo) }
         }
-
-        statusFlow.value = UploadStatus.Uploading(
-          MuxUpload.Progress(
-            bytesUploaded = totalBytesSent,
-            totalBytes = fileSize,
-            startTime = startTime,
-            updatedTime = System.currentTimeMillis()
-          )
-        )
-
-        // Upload each chunk starting from the current head of the stream
-        do {
-          // The last chunk will almost definitely be smaller than a whole chunk
-          val bytesLeft = fileSize - totalBytesSent
-          val thisChunkSize = if (innerUploadInfo.chunkSize > bytesLeft) {
-            bytesLeft.toInt()
-          } else {
-            innerUploadInfo.chunkSize
-          }
-          logger.i("UploadJob", "Trying to read $thisChunkSize bytes")
-          //read-in a chunk
-          val fileReadSize = withContext(Dispatchers.IO) {
-            fileStream.read(chunkBuffer, 0, thisChunkSize)
-          }
-          if (fileReadSize != thisChunkSize) { // Guaranteed unless the file was changed under us or sth
-            throw IllegalStateException("expected to read $thisChunkSize bytes, but read $fileReadSize")
-          }
-
-          val chunk = ChunkWorker.Chunk(
-            contentLength = thisChunkSize,
-            startByte = totalBytesSent,
-            endByte = totalBytesSent + thisChunkSize - 1,
-            totalFileSize = fileSize,
-            sliceData = chunkBuffer,
-          )
-
-          val chunkProgressFlow = callbackFlow<MuxUpload.Progress>()
-          var updateProgressJob: Job? = null
-          try {
-            // Bounce progress updates to callers
-            updateProgressJob = launch {
-              chunkProgressFlow.collect { chunkProgress ->
-                statusFlow.value = UploadStatus.Uploading(
-                  MuxUpload.Progress(
-                    bytesUploaded = chunkProgress.bytesUploaded + totalBytesSent,
-                    totalBytes = fileSize,
-                    startTime = startTime,
-                    updatedTime = chunkProgress.updatedTime,
-                  )
-                ) // statusFlow.value = ... (
-              } // chunkProgressChannel.collect {
-            }
-
-            val chunkFinalState = createWorker(chunk, innerUploadInfo, chunkProgressFlow).upload()
-
-            // Done with a chunk, so update the state again to capture all progress before looping
-            totalBytesSent += chunkFinalState.bytesUploaded
-            val intermediateProgress = MuxUpload.Progress(
-              bytesUploaded = totalBytesSent,
-              totalBytes = fileSize,
-              updatedTime = chunkFinalState.updatedTime,
-              startTime = startTime,
-            )
-            statusFlow.value = UploadStatus.Uploading(intermediateProgress)
-          } finally {
-            updateProgressJob?.cancel()
-          }
-        } while (totalBytesSent < fileSize)
-
-        // We made it!
-        val finalProgress = createFinalState(fileSize, startTime)
-        // finish up
-        MainScope().launch { MuxUploadManager.jobFinished(innerUploadInfo) }
-        val success = UploadStatus.UploadSuccess(finalProgress)
-        if (!innerUploadInfo.optOut) {
-          metrics.reportUploadSucceeded(
-            startTime, finalProgress.updatedTime, 0,
-            sessionId,
-            uploadInfo
-          )
-        }
-        statusFlow.value = success
         Result.success(success)
+      } catch (e: CancellationException) {
+        // Pause/cancel owns the public transition. Cancellation is never an upload result.
+        throw e
       } catch (e: Exception) {
-        MuxUploadSdk.logger.e("MuxUpload", "Upload of ${innerUploadInfo.inputFile} failed", e)
-        val finalState = createFinalState(fileSize, startTime)
-        val failStatus = UploadStatus.UploadFailed(e, finalState)
-        statusFlow.value = failStatus
-        if (!innerUploadInfo.optOut) {
-          metrics.reportUploadFailed(
-            startTime, System.currentTimeMillis(), 0,
-            e.message ?: "no error description",
-            sessionId,
-            uploadInfo
-          )
+        if (e is UploadResumeBlockedException) retire = true
+        val failure = UploadStatus.UploadFailed(e, attempt.confirmedProgress())
+        if (attempt.finish(failure)) {
+          val category = when (e) {
+            is UploadResumeBlockedException -> "StandardizedResumeBlocked"
+            is IOException -> "Io"
+            is IllegalStateException, is IllegalArgumentException -> "InvalidPayload"
+            else -> "Unexpected"
+          }
+          MuxUploadSdk.logger.e("MuxUpload", "Upload failed: $category")
+          if (!uploadInfo.optOut) metrics.reportUploadFailed(startTime, System.currentTimeMillis(), 0,
+            "Upload failed: $category", sessionId, uploadInfo)
+          withContext(Dispatchers.Main) { MuxUploadManager.jobFinished(runningInfo, false) }
         }
-        MainScope().launch { MuxUploadManager.jobFinished(innerUploadInfo, false) }
         Result.failure(e)
       } finally {
-        @Suppress("BlockingMethodInNonBlockingContext") // the streams we use don't block on close
-        fileStream.close()
-        innerUploadInfo.standardizedFile?.delete()
+        withContext(NonCancellable + Dispatchers.IO) {
+          try {
+            val preparation = attempt.preparation
+            val retainForRestart = attempt.isRestarting() && preparation.standardizedState?.payload != null
+            if (retire || attempt.isCancelled() && !retainForRestart || attempt.replacementFailure() != null) {
+              preparation.deleteOwnedFile()
+              UploadPersistence.retireStandardized(runningInfo, block = retire)
+            } else preparation.standardizedState?.let { UploadPersistence.writeStandardized(runningInfo, it) }
+          } catch (_: Exception) {
+            MuxUploadSdk.logger.e("MuxUpload", "Standardized persistence cleanup failed")
+          }
+        }
       }
-    } // val uploadJob = ...
-
-    return uploadInfo.update(
-      statusFlow = statusFlow.asStateFlow(),
-      uploadJob = uploadJob,
-    )
+    }
+    runningInfo = runningInfo.update(uploadJob = job)
+    runningInfo.session.current.value = runningInfo
+    job.start()
+    return runningInfo
   }
 
-  private fun createFinalState(fileSize: Long, startTime: Long): MuxUpload.Progress {
-    return MuxUpload.Progress(
-      bytesUploaded = fileSize,
-      totalBytes = fileSize,
-      startTime = startTime,
-      updatedTime = System.currentTimeMillis(),
-    )
+  /** A selected original bypasses inspection and conversion on every later attempt. */
+  private suspend fun selectPayload(upload: UploadInfo, saved: UploadResumeState): File {
+    val attempt = checkNotNull(upload.attempt)
+    val state = attempt.preparation
+    if (upload.standardizedResumeBlocked || saved.standardizedResumeBlocked) throw UploadResumeBlockedException()
+    if (state.originalSelected) return selectOriginal(upload)
+    restoreStandardized(upload)
+    state.verified?.let { return it.file }
+    if (upload.isStandardizationRequested()) {
+      val source = withContext(Dispatchers.IO) { PayloadIdentity.capture(upload.inputFile) }
+      state.standardizedState = source?.let(::StandardizedResumeState)
+      attempt.publish(UploadStatus.Preparing)
+      when (val result = prepare(upload)) {
+        is PreparedUpload.Standardized -> {
+          attempt.retainStandardized(result.output)
+          currentCoroutineContext().ensureActive()
+          val output = checkNotNull(state.verified)
+          if (!withContext(Dispatchers.IO) { output.matchesValidation() }) throw UploadResumeBlockedException()
+          val record = checkNotNull(state.standardizedState).copy(phase = PreparationPhase.Validated,
+            ownedPath = output.file.absolutePath, payload = output.validatedIdentity)
+          state.standardizedState = record
+          withContext(Dispatchers.IO) { UploadPersistence.writeStandardized(upload, record) }
+          attempt.selectPayload(output.file.length(), 0)
+          return output.file
+        }
+        is PreparedUpload.Original -> MuxUploadSdk.logger.d("MuxUploadPreparation", result.diagnostic.toString())
+      }
+    }
+    return selectOriginal(upload)
   }
 
-  private fun getAlreadyTransferredBytes(file: UploadInfo): Long = readLastByteForFile(file)
+  private suspend fun selectOriginal(upload: UploadInfo): File = withContext(Dispatchers.IO) {
+    UploadPersistence.selectOriginal(upload)
+    checkNotNull(upload.attempt).preparation.apply { originalSelected = true; standardizedState = null }
+    upload.inputFile
+  }
 
-  private fun <T> callbackFlow() =
-    MutableSharedFlow<T>(
-      replay = 1,
-      extraBufferCapacity = 2, // Some slop for UI to miss events
-      onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
+  /** Incomplete exports sent no bytes. Completed exports keep their exact validated identity. */
+  private suspend fun restoreStandardized(upload: UploadInfo) {
+    val attempt = checkNotNull(upload.attempt)
+    val state = attempt.preparation
+    val saved = state.standardizedState ?: return
+    if (state.verified == null) saved.ownedPath?.let { path ->
+      val output = SdrStandardizedFile.restore(checkNotNull(MuxUploadManager.appContext).cacheDir, path, saved.payload)
+        ?: throw UploadResumeBlockedException()
+      if (saved.payload != null && !saved.abandoned) state.verified = output else state.trackCleanup(output)
+    }
+    if (saved.abandoned && saved.networkStarted) throw UploadResumeBlockedException()
+    if (saved.payload != null && !saved.abandoned && withContext(Dispatchers.IO) { state.verified?.matchesValidation() == true })
+      return
+    // Transport fixes the selected bytes. A missing/changed payload must never be replaced then.
+    if (saved.networkStarted) throw UploadResumeBlockedException()
+    // A completed selection is final, even if its file disappears before the first request.
+    if (saved.payload != null && !saved.abandoned) throw UploadResumeBlockedException()
+    if (!withContext(Dispatchers.IO) { saved.source.matches(upload.inputFile) }) throw UploadResumeBlockedException()
+    withContext(Dispatchers.IO) { state.deleteOwnedFile(); UploadPersistence.retireStandardized(upload) }
+    state.standardizedState = null
+    attempt.selectPayload(upload.inputFile.length(), 0)
+  }
+
+  /** Original and standardized payloads share offsets, acknowledgement checks, and retries. */
+  private suspend fun uploadChunks(upload: UploadInfo, selected: File, fileSize: Long) {
+    val attempt = checkNotNull(upload.attempt)
+    val state = attempt.preparation
+    val startTime = attempt.confirmedProgress().startTime
+    var offset = attempt.confirmedProgress().bytesUploaded
+    check(offset in 0..fileSize) { "Saved offset is outside the payload" }
+    withContext(Dispatchers.IO) { RandomAccessFile(selected, "r") }.use { stream ->
+      attempt.publish(UploadStatus.Uploading(attempt.confirmedProgress()))
+      val buffer = ByteArray(upload.chunkSize)
+      var transportSaved = false
+      while (offset < fileSize) {
+        currentCoroutineContext().ensureActive()
+        val count = minOf(buffer.size.toLong(), fileSize - offset).toInt()
+        withContext(Dispatchers.IO) {
+          stream.seek(offset)
+          stream.readFully(buffer, 0, count)
+        }
+        val chunk = ChunkWorker.Chunk(offset, offset + count - 1, fileSize, count, buffer)
+        val progress = MutableSharedFlow<MuxUpload.Progress>(replay = 1,
+          extraBufferCapacity = 2, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+        val chunkStart = offset
+        coroutineScope {
+          val observer = launch {
+            progress.collect { value -> attempt.publish(UploadStatus.Uploading(value.copy(
+              bytesUploaded = value.bytesUploaded + chunkStart, totalBytes = fileSize, startTime = startTime))) }
+          }
+          try {
+            if (!transportSaved) {
+              state.standardizedState?.let { record ->
+                state.standardizedState = record.copy(phase = PreparationPhase.Uploading, networkStarted = true)
+                withContext(Dispatchers.IO) { UploadPersistence.writeStandardized(upload, checkNotNull(state.standardizedState)) }
+              }
+              currentCoroutineContext().ensureActive()
+              attempt.beginTransport(state.verified != null) { writeUploadState(upload, attempt.confirmedProgress()) }
+              transportSaved = true
+            }
+            val final = withUploadRetries(upload.retriesPerChunk) {
+              withContext(Dispatchers.IO) {
+                check(selected.isFile && selected.canRead() && selected.length() == fileSize &&
+                  state.verified?.matchesValidation() != false) { "Upload payload changed. Create a new Direct Upload." }
+              }
+              createWorker(chunk, upload, progress).upload()
+            }
+            currentCoroutineContext().ensureActive()
+            check(final.bytesUploaded in 1..(fileSize - chunkStart)) { "Invalid chunk acknowledgement" }
+            offset += final.bytesUploaded
+            val acknowledged = final.copy(bytesUploaded = offset, totalBytes = fileSize, startTime = startTime)
+            attempt.acknowledge(acknowledged) { writeUploadState(upload, acknowledged) }
+          } finally { observer.cancelAndJoin() }
+        }
+      }
+    }
+  }
+}
+
+/** Retry the same byte range; accepted overlapping PUTs make a recovery query unnecessary. */
+private suspend fun <T> withUploadRetries(limit: Int, request: suspend () -> T): T {
+  var used = 0
+  while (true) {
+    currentCoroutineContext().ensureActive()
+    try { return request() } catch (e: IOException) {
+      if (used >= limit) throw e
+      val waitMs = maxOf(1_000L shl used.coerceAtMost(3), (e as? UploadRetryException)?.retryAfterMs ?: 0)
+      used++
+      delay(waitMs)
+    }
+  }
 }
