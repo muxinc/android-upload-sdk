@@ -11,7 +11,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
+import com.mux.video.upload.api.HdrHandling
 import com.mux.video.upload.api.MuxUpload
+import com.mux.video.upload.internal.MaximumResolution
 import com.mux.video.vod.demo.UploadNotificationService
 import com.mux.video.vod.demo.backend.ImaginaryBackend
 import com.mux.video.vod.demo.upload.model.MediaStoreVideo
@@ -64,7 +66,11 @@ class CreateUploadViewModel(private val app: Application) : AndroidViewModel(app
       MuxUpload.Builder(
         videoState.value!!.uploadUri!!,
         videoState.value!!.chosenFile!!
-      ).build()
+      )
+
+        .standardizationRequested(true, MaximumResolution.Preset1280x720)
+        .hdrHandling(HdrHandling.ToneMapToSDR)
+        .build()
         // Force restart when creating brand new uploads (because we're making new Direct uploads)
         .start(forceRestart = true)
 
