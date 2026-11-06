@@ -59,21 +59,60 @@ class StandardInputOptionsTests : AbsRobolectricTest() {
   @Test
   fun featureOptionsDoNotChangeTransportOrAnalyticsSettings() {
     val builder = MuxUpload.Builder("https://example.invalid/upload", File("input"))
-    // Seed non-default internal settings without relying on the unrelated Builder setters,
-    // whose fixes are outside this feature. Resetting them during a feature update must fail.
-    val original = info(builder.build()).update(
-      chunkSize = 256 * 1024,
-      retriesPerChunk = 7,
-      optOut = true,
-    )
-    MuxUpload.Builder::class.java.getDeclaredField("uploadInfo")
-      .apply { isAccessible = true }.set(builder, original)
+      .chunkSize(256 * 1024).retriesPerChunk(7).optOutOfEventTracking(true)
+    val original = info(builder.build())
+    assertEquals(256 * 1024, original.chunkSize)
+    assertEquals(7, original.retriesPerChunk)
+    assertTrue(original.optOut)
     val result = info(builder.standardizationRequested(false, MaximumResolution.Preset2560x1440)
       .hdrHandling(HdrHandling.ToneMapToSDR).build())
     assertEquals(original.chunkSize, result.chunkSize)
     assertEquals(original.retriesPerChunk, result.retriesPerChunk)
     assertEquals(original.optOut, result.optOut)
     assertEquals(InputStandardization(false, MaximumResolution.Preset2560x1440, HdrHandling.ToneMapToSDR), result.inputStandardization)
+  }
+
+  @Test
+  fun transportAndAnalyticsDefaultsRemainUnchanged() {
+    val defaults = info(MuxUpload.Builder("https://example.invalid/upload", File("input")).build())
+    assertEquals(8 * 1024 * 1024, defaults.chunkSize)
+    assertEquals(3, defaults.retriesPerChunk)
+    assertFalse(defaults.optOut)
+  }
+
+  @Test
+  fun analyticsOptOutCanBeChangedWithoutMutatingAnAlreadyBuiltUpload() {
+    val builder = MuxUpload.Builder("https://example.invalid/upload", File("input"))
+    val optedOut = builder.optOutOfEventTracking(true).build()
+    val optedIn = builder.optOutOfEventTracking(false).build()
+    assertTrue(info(optedOut).optOut)
+    assertFalse(info(optedIn).optOut)
+    // Runtime reads use session.current, so checking only the constructor's field is insufficient.
+    assertTrue(info(optedOut).session.current.value!!.optOut)
+    assertFalse(info(optedIn).session.current.value!!.optOut)
+    assertNotSame(info(optedOut).session, info(optedIn).session)
+  }
+
+  @Test
+  fun chunkSizesAreNormalizedToPositiveProtocolAlignedValues() {
+    val unit = 256 * 1024
+    val cases = listOf(Int.MIN_VALUE to unit, -1 to unit, 0 to unit, unit - 1 to unit,
+      unit to unit, unit + 1 to unit, 2 * unit + 7 to 2 * unit,
+      Int.MAX_VALUE to 2_147_221_504)
+    for ((requested, expected) in cases) {
+      val upload = MuxUpload.Builder("https://example.invalid/upload", File("input"))
+        .chunkSize(requested).build()
+      assertEquals("Requested $requested", expected, info(upload).chunkSize)
+    }
+  }
+
+  @Test
+  fun retryBudgetRetainsPositiveValuesAndClampsNegativeValuesToZero() {
+    for ((requested, expected) in listOf(Int.MIN_VALUE to 0, -1 to 0, 0 to 0, 7 to 7)) {
+      val upload = MuxUpload.Builder("https://example.invalid/upload", File("input"))
+        .retriesPerChunk(requested).build()
+      assertEquals(expected, info(upload).retriesPerChunk)
+    }
   }
 
   private fun info(upload: MuxUpload): UploadInfo = MuxUpload::class.java

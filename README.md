@@ -99,6 +99,8 @@ Use `Preset2560x1440` for 1440p. Configure the matching `new_asset_settings.max_
 
 To request HDR-to-SDR tone mapping, use `HdrHandling.ToneMapToSDR`. Support depends on the input and device; HDR preservation does not guarantee HDR playback. Unsupported or failed preparation uploads the original unless canceled. Files with multiple audio tracks also upload unchanged.
 
+To see why a file was converted or uploaded unchanged, enable SDK logging with `MuxUploadSdk.useLogger(MuxUploadSdk.logcatLogger())`. Decisions are logged under the `MuxUploadStandardization` tag, for example `standard_input event=plan_selected plan=convert ...`.
+
 #### Try it out
 
 An example use case can be found in our [Example App](app/).

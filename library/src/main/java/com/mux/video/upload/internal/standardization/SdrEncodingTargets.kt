@@ -137,8 +137,9 @@ internal data class SdrEncodingTargets(
       }
       return SdrEncodingTargets(
         if (expectedCodec == VideoCodec.Hevc) MimeTypes.VIDEO_H265 else MimeTypes.VIDEO_H264,
-        if (expectedCodec == VideoCodec.Hevc) VideoProfile.HevcMain else VideoProfile.H264Baseline,
-        if (expectedCodec == VideoCodec.Hevc) CodecProfileLevel.HEVCProfileMain else CodecProfileLevel.AVCProfileBaseline,
+        // H.264 prefers High like iOS; preflight may select Baseline when High is unavailable.
+        if (expectedCodec == VideoCodec.Hevc) VideoProfile.HevcMain else VideoProfile.H264High,
+        if (expectedCodec == VideoCodec.Hevc) CodecProfileLevel.HEVCProfileMain else CodecProfileLevel.AVCProfileHigh,
         minOf(6_000_000L.takeIf { size.longSide <= 2048 } ?: 15_000_000L,
           conversion.outputPolicyLimits.maximumAverageBitrate * 3 / 4).toInt().takeIf { it > 0 } ?: return null,
         maxOf(1, gopSeconds), channels, sampleRate, copy, first?.sourceTrackId?.valueOrNull?.toString(), sourceRate,
@@ -151,9 +152,34 @@ internal data class SdrEncodingTargets(
 internal val StandardInputConversion.encoderDimensions: Dimensions
   get() = Dimensions(maxOf(outputDimensions.width, outputDimensions.height), minOf(outputDimensions.width, outputDimensions.height))
 
-internal data class SdrEncoderCapability(val name: String, val level: Int)
+/**
+ * The encoder chosen by preflight. [profile]/[platformProfile] override the targets' preferred
+ * profile when the encoder only supports a fallback profile (for example, H.264 Baseline).
+ */
+internal data class SdrEncoderCapability(
+  val name: String,
+  val level: Int,
+  val profile: VideoProfile? = null,
+  val platformProfile: Int? = null,
+)
 
-/** Bounded advertised-format guard. This does not manufacture planner/device-path proof. */
+/** The encoder settings actually used for export and output validation. */
+internal fun SdrEncodingTargets.withEncoder(capability: SdrEncoderCapability): SdrEncodingTargets =
+  if (capability.profile == null || capability.platformProfile == null) this
+  else copy(profile = capability.profile, platformProfile = capability.platformProfile)
+
+/** Each part of the device/source conversion path, reported separately for planning and diagnostics. */
+internal data class SdrPreflight(
+  /** Null when an earlier gate (cancellation, tone-mapping support) made the check pointless. */
+  val sourceDecodable: Boolean?,
+  val audioPreparable: Boolean?,
+  val toneMapSupported: Boolean,
+  val encoder: SdrEncoderCapability?,
+) {
+  val supported: Boolean get() = sourceDecodable == true && audioPreparable == true && toneMapSupported && encoder != null
+}
+
+/** Bounded advertised-format guard. Export and output reinspection remain authoritative. */
 internal class SdrCapabilityPreflight(
   private val codecInfos: () -> Array<MediaCodecInfo> = { MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos },
   private val nanoTime: () -> Long = System::nanoTime,
@@ -161,12 +187,19 @@ internal class SdrCapabilityPreflight(
   private val supportsHdrOpenGl: () -> Boolean = ::supportsHdrOpenGl,
 ) {
   fun videoEncoder(conversion: StandardInputConversion, metadata: MediaMetadataInspection,
-    targets: SdrEncodingTargets, isCancelled: () -> Boolean): SdrEncoderCapability? {
-    if (isCancelled()) return null
-    if (conversion.toneMapsToSdr && (sdk < 29 || !supportsHdrOpenGl() || isCancelled())) return null
+    targets: SdrEncodingTargets, isCancelled: () -> Boolean): SdrEncoderCapability? =
+    inspect(conversion, metadata, targets, isCancelled).takeIf { it.supported }?.encoder
+
+  fun inspect(conversion: StandardInputConversion, metadata: MediaMetadataInspection,
+    targets: SdrEncodingTargets, isCancelled: () -> Boolean): SdrPreflight {
+    val unsupported = SdrPreflight(null, null, false, null)
+    if (isCancelled()) return unsupported
+    // Tone mapping needs API 29+ and the HDR GL path; without them no codec query can help.
+    if (conversion.toneMapsToSdr && (sdk < 29 || !supportsHdrOpenGl() || isCancelled())) return unsupported
+    val toneMap = true
     val infos = codecInfos()
     // Native enumeration cannot be interrupted; budget subsequent capability queries.
-    if (isCancelled()) return null
+    if (isCancelled()) return unsupported
     val started = nanoTime()
     var queries = 0
     fun withinBudget() = !isCancelled() && nanoTime() - started < 500_000_000L
@@ -175,9 +208,6 @@ internal class SdrCapabilityPreflight(
       queries++
       return runCatching { info.getCapabilitiesForType(mime).isFormatSupported(format) }.getOrDefault(false)
     }
-    val video = metadata.tracks.singleOrNull { it.kind == TrackKind.Video } ?: return null
-    val sourceMime = video.mimeType.valueOrNull ?: return null
-    val sourceSize = video.video?.encodedDimensions?.valueOrNull ?: return null
     fun supportsDecode(mime: String, format: MediaFormat): Boolean {
       for (info in infos) {
         if (!withinBudget()) return false
@@ -185,6 +215,9 @@ internal class SdrCapabilityPreflight(
       }
       return false
     }
+    val video = metadata.tracks.singleOrNull { it.kind == TrackKind.Video } ?: return unsupported
+    val sourceMime = video.mimeType.valueOrNull ?: return unsupported
+    val sourceSize = video.video?.encodedDimensions?.valueOrNull ?: return unsupported
     val sourceFormat = MediaFormat.createVideoFormat(sourceMime, sourceSize.width, sourceSize.height)
     val sourceProfile = when (video.video.profile.valueOrNull) {
       VideoProfile.H264Baseline -> CodecProfileLevel.AVCProfileBaseline
@@ -195,41 +228,100 @@ internal class SdrCapabilityPreflight(
       else -> null
     }
     if (sourceProfile != null) sourceFormat.setInteger(MediaFormat.KEY_PROFILE, sourceProfile)
-    if (conversion.toneMapsToSdr) {
-      if (sourceProfile == null) return null
+    val decodable = if (conversion.toneMapsToSdr && (sourceProfile == null || targets.sourceFrameRate == null)) false else {
       // isFormatSupported checks profile/size/rate, not HDR color handling. Export must still succeed.
-      sourceFormat.setFloat(MediaFormat.KEY_FRAME_RATE, targets.sourceFrameRate?.toFloat() ?: return null)
+      if (conversion.toneMapsToSdr) sourceFormat.setFloat(MediaFormat.KEY_FRAME_RATE, targets.sourceFrameRate!!.toFloat())
+      supportsDecode(sourceMime, sourceFormat)
     }
-    if (!supportsDecode(sourceMime, sourceFormat)) return null
-    if (targets.audioChannels != null && !targets.copyAac) {
-      val audioMime = metadata.tracks.first { it.sourceTrackId.valueOrNull?.toString() == targets.firstAudioTrackId }.mimeType.valueOrNull ?: return null
-      if (!supportsDecode(audioMime, MediaFormat.createAudioFormat(audioMime, targets.audioSampleRate!!, targets.audioChannels))) return null
-      val aac = MediaFormat.createAudioFormat(MimeTypes.AUDIO_AAC, targets.audioSampleRate, targets.audioChannels)
-      aac.setInteger(MediaFormat.KEY_BIT_RATE, SdrEncodingTargets.AAC_BITRATE)
-      aac.setInteger(MediaFormat.KEY_AAC_PROFILE, SdrEncodingTargets.AAC_PROFILE)
-      if (infos.none { withinBudget() && it.isEncoder && it.supportedTypes.contains(MimeTypes.AUDIO_AAC) &&
-          supports(it, MimeTypes.AUDIO_AAC, aac) }) return null
+    val audio = if (targets.audioChannels == null || targets.copyAac) true else {
+      val audioMime = metadata.tracks.firstOrNull { it.sourceTrackId.valueOrNull?.toString() == targets.firstAudioTrackId }
+        ?.mimeType?.valueOrNull
+      audioMime != null &&
+        supportsDecode(audioMime, MediaFormat.createAudioFormat(audioMime, targets.audioSampleRate!!, targets.audioChannels)) && run {
+          val aac = MediaFormat.createAudioFormat(MimeTypes.AUDIO_AAC, targets.audioSampleRate, targets.audioChannels)
+          aac.setInteger(MediaFormat.KEY_BIT_RATE, SdrEncodingTargets.AAC_BITRATE)
+          aac.setInteger(MediaFormat.KEY_AAC_PROFILE, SdrEncodingTargets.AAC_PROFILE)
+          infos.any { withinBudget() && it.isEncoder && it.supportedTypes.contains(MimeTypes.AUDIO_AAC) &&
+            supports(it, MimeTypes.AUDIO_AAC, aac) }
+        }
     }
-    for (info in infos) {
-      if (!withinBudget()) return null
-      if (!info.isEncoder || !info.supportedTypes.contains(targets.videoMime)) continue
-      if (queries >= 128) return null
-      queries++
-      val candidate = runCatching {
-        val caps = info.getCapabilitiesForType(targets.videoMime)
-        val level = caps.profileLevels.filter { it.profile == targets.platformProfile }.maxOfOrNull { it.level } ?: return@runCatching null
-        val size = conversion.encoderDimensions
-        if (caps.videoCapabilities?.areSizeAndRateSupported(size.width, size.height, conversion.outputFrameRate) != true)
-          return@runCatching null
-        val requested = Format.Builder().setSampleMimeType(targets.videoMime).setWidth(size.width).setHeight(size.height)
-          .setFrameRate(conversion.outputFrameRate.toFloat()).setAverageBitrate(targets.bitrate)
-          .apply { if (conversion.toneMapsToSdr) setColorInfo(ColorInfo.SDR_BT709_LIMITED) }.build()
-        val format = SdrVideoEncoderConfiguration.create(requested, targets, level)
-        if (caps.isFormatSupported(format)) SdrEncoderCapability(info.name, level) else null
-      }.getOrNull()
-      if (candidate != null && withinBudget()) return candidate
+    return SdrPreflight(decodable, audio, toneMap, findEncoder(conversion, targets, infos, ::withinBudget) {
+      if (queries >= 128) false else { queries++; true }
+    })
+  }
+
+  /** Prefer the targets' profile, then any listed fallback, across all encoders in platform order. */
+  private fun findEncoder(conversion: StandardInputConversion, targets: SdrEncodingTargets,
+    infos: Array<MediaCodecInfo>, withinBudget: () -> Boolean, takeQuery: () -> Boolean): SdrEncoderCapability? {
+    for ((profile, platformProfile) in targets.encoderProfiles()) {
+      val candidateTargets = targets.copy(profile = profile, platformProfile = platformProfile)
+      for (info in infos) {
+        if (!withinBudget()) return null
+        if (!info.isEncoder || !info.supportedTypes.contains(targets.videoMime)) continue
+        if (!takeQuery()) return null
+        val candidate = runCatching {
+          val caps = info.getCapabilitiesForType(targets.videoMime)
+          val level = caps.profileLevels.filter { it.profile == platformProfile }.maxOfOrNull { it.level } ?: return@runCatching null
+          val size = conversion.encoderDimensions
+          if (caps.videoCapabilities?.areSizeAndRateSupported(size.width, size.height, conversion.outputFrameRate) != true)
+            return@runCatching null
+          val requested = Format.Builder().setSampleMimeType(targets.videoMime).setWidth(size.width).setHeight(size.height)
+            .setFrameRate(conversion.outputFrameRate.toFloat()).setAverageBitrate(targets.bitrate)
+            .apply { if (conversion.toneMapsToSdr) setColorInfo(ColorInfo.SDR_BT709_LIMITED) }.build()
+          val format = SdrVideoEncoderConfiguration.create(requested, candidateTargets, level)
+          if (caps.isFormatSupported(format)) SdrEncoderCapability(info.name, level, profile, platformProfile) else null
+        }.getOrNull()
+        if (candidate != null && withinBudget()) return candidate
+      }
     }
     return null
+  }
+}
+
+/** H.264 prefers High (matching iOS) and accepts Baseline only when no encoder offers High. */
+internal fun SdrEncodingTargets.encoderProfiles(): List<Pair<VideoProfile, Int>> =
+  if (videoMime == MimeTypes.VIDEO_H264 && profile == VideoProfile.H264High)
+    listOf(VideoProfile.H264High to CodecProfileLevel.AVCProfileHigh,
+      VideoProfile.H264Baseline to CodecProfileLevel.AVCProfileBaseline)
+  else listOf(profile to platformProfile)
+
+/**
+ * Source and device proof for one concrete conversion, supplied to the planner before it may
+ * choose conversion. Unproven parts become explicit missing capabilities and select the original.
+ */
+internal class SdrPlanningCapabilityProbe(
+  private val preflight: (StandardInputConversion, MediaMetadataInspection, SdrEncodingTargets, () -> Boolean) -> SdrPreflight =
+    SdrCapabilityPreflight()::inspect,
+) {
+  fun capabilities(conversion: StandardInputConversion, metadata: MediaMetadataInspection,
+    source: MediaSampleInspection, isCancelled: () -> Boolean): PlanningCapabilities {
+    if (isCancelled()) return PlanningCapabilities()
+    // Targets prove the complete source timeline, cadence handling, and single-track audio selection.
+    // Export sizes its output from the effective duration; without it no conversion can be proven.
+    val duration = source.timeline.durationSeconds.valueOrNull
+    val targets = SdrEncodingTargets.from(conversion, metadata, source)
+      ?.takeIf { duration != null && duration.isFinite() && duration > 0 }
+    if (targets == null || isCancelled()) {
+      StandardInputDiagnostics.capabilities(targetsAvailable = false, preflight = null)
+      return PlanningCapabilities()
+    }
+    val result = preflight(conversion, metadata, targets, isCancelled)
+    StandardInputDiagnostics.capabilities(targetsAvailable = true, preflight = result)
+    val encodes = result.encoder != null
+    return PlanningCapabilities(
+      sourceIsDecodable = result.sourceDecodable == true,
+      sourceTimelineIsProven = true,
+      encodableVideoCodecs = if (encodes) setOf(conversion.outputCodec) else emptySet(),
+      // Targets prove the transformations this adapter implements. Decode/encode, audio and
+      // tone mapping have separate gates; actual output must still pass reinspection.
+      remediableRequirements = setOf(PolicyRequirement.VideoCodec, PolicyRequirement.VideoResolution,
+        PolicyRequirement.FrameRate, PolicyRequirement.AverageBitrate, PolicyRequirement.MaximumGopBitrate,
+        PolicyRequirement.KeyframeInterval, PolicyRequirement.GopStructure, PolicyRequirement.PixelFormat,
+        PolicyRequirement.EditList),
+      toneMappableDynamicRanges = if (conversion.toneMapsToSdr && result.toneMapSupported)
+        setOf(conversion.sourceDynamicRange) else emptySet(),
+      canPrepareCompliantAacAudio = result.audioPreparable == true,
+    )
   }
 }
 

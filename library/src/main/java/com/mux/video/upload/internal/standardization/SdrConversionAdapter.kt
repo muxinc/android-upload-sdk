@@ -130,10 +130,12 @@ internal class SdrConversionAdapter(
     }
 
     private suspend fun convert(): SdrConversionResult {
-      val targets = withContext(ioDispatcher) { SdrEncodingTargets.from(conversion, metadata, source) }
+      val preferred = withContext(ioDispatcher) { SdrEncodingTargets.from(conversion, metadata, source) }
         ?: return SdrConversionResult.Failed(SdrConversionFailure.UnsupportedPlan)
-      val capability = withContext(ioDispatcher) { preflight(conversion, metadata, targets) { !job.isActive } }
+      val capability = withContext(ioDispatcher) { preflight(conversion, metadata, preferred) { !job.isActive } }
         ?: return SdrConversionResult.Failed(SdrConversionFailure.CapabilityUnavailable)
+      // Export and validation use the profile the selected encoder actually supports.
+      val targets = preferred.withEncoder(capability)
       val preparationFailure = withContext(ioDispatcher) {
         if (!sourceUnchanged()) return@withContext SdrConversionFailure.SourceChanged
         val required = source.timeline.durationSeconds.valueOrNull?.let(targets::estimatedOutputBytes)

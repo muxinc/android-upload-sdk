@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.FloatingActionButton
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material.Icon
 import androidx.compose.material.LinearProgressIndicator
 import androidx.compose.material.MaterialTheme
@@ -108,6 +109,8 @@ private fun ScreenContent(
 private fun CreateUploadFab(uploadClick: () -> Unit) {
   FloatingActionButton(
     onClick = { uploadClick() },
+    // Keep the button above the system navigation bar (edge-to-edge on Android 15+)
+    modifier = Modifier.navigationBarsPadding(),
     backgroundColor = MaterialTheme.colors.primary,
   ) {
     Icon(painterResource(id = R.drawable.ic_add), contentDescription = "Start new upload")

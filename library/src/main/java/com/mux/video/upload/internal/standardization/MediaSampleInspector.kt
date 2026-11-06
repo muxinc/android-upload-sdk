@@ -5,12 +5,18 @@ import kotlin.math.abs
 import kotlin.math.roundToLong
 
 internal enum class SampleScanStatus { Complete, Unsupported, Unreadable, LimitExceeded, Cancelled }
+/**
+ * Like iOS, inspection reads the whole file: it has no wall-clock or total-byte budget, so long
+ * recordings and slow or busy devices still get a complete scan. Cancellation stops it between reads.
+ * [maximumSamples] retains the existing per-sample timing memory bound; files that exceed it keep
+ * their original bytes. Tests may set the other limits.
+ */
 internal data class SampleScanLimits(
   val maximumSampleBytes: Int = 4 * 1024 * 1024,
   val maximumSamples: Int = 250_000,
-  val maximumReadBytes: Long = 1024L * 1024 * 1024,
+  val maximumReadBytes: Long = Long.MAX_VALUE,
   /** Checked between platform reads; a blocking native call cannot be preempted. */
-  val maximumElapsedNanos: Long = 5_000_000_000,
+  val maximumElapsedNanos: Long = Long.MAX_VALUE,
 ) {
   init {
     require(maximumSampleBytes > 0 && maximumSamples > 0 && maximumReadBytes > 0 && maximumElapsedNanos > 0)

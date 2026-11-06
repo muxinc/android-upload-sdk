@@ -179,7 +179,7 @@ class MediaMetadataReaderTests : AbsRobolectricTest() {
     val f = MediaTrackMetadataReader.facts(listOf(dolby, MediaTrackMetadataReader.read(1, video("video/hevc"))))
     assertEquals(MediaFact.Known(DynamicRange.DolbyVision), f.dynamicRange)
     assertEquals(MediaFact.Unknown, f.videoTrackCount)
-    assertEquals(StandardInputAction.Fallback(FallbackReason.UnsupportedHdr(DynamicRange.DolbyVision)), StandardInputPlanner().plan(f).action)
+    assertEquals(StandardInputAction.Fallback(FallbackReason.UnsupportedHdr(DynamicRange.DolbyVision)), StandardInputPlanner().plan(f, capabilities = PlanningCapabilities()).action)
     val multiple = MediaTrackMetadataReader.facts(listOf(MediaTrackMetadataReader.read(0, video()), MediaTrackMetadataReader.read(1, video())))
     assertEquals(MediaFact.Known(2), multiple.videoTrackCount)
     assertEquals(MediaFact.Unknown, multiple.videoCodec)

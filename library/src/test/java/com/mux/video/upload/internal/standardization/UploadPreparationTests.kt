@@ -25,6 +25,9 @@ class UploadPreparationTests : AbsRobolectricTest() {
     audioTracks = known(emptyList()), cadence = known(Cadence.Constant))
   private fun metadata(facts: MediaFacts) = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia),
     emptyList(), facts, 0)
+  /** Adapter bridge tests supply availability; the production probe is covered separately. */
+  private val capable: (StandardInputConversion, MediaMetadataInspection, MediaSampleInspection, () -> Boolean) -> PlanningCapabilities =
+    { _, _, _, _ -> fullCapabilities() }
   private fun upload() = UploadInfo(remoteUri = Uri.parse("https://example.invalid/upload"),
     inputFile = File("unused"), chunkSize = 4, retriesPerChunk = 3, optOut = true, uploadJob = null, statusFlow = null)
 
@@ -64,6 +67,7 @@ class UploadPreparationTests : AbsRobolectricTest() {
       var result: SdrConversionResult = SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid)
       val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata(facts)) },
         inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) },
+        inspectCapabilities = capable,
         convert = { _, _, _, _, plan ->
           assertEquals(codec, plan.outputCodec)
           assertFalse(plan.toneMapsToSdr)
@@ -97,6 +101,7 @@ class UploadPreparationTests : AbsRobolectricTest() {
       var result: SdrConversionResult = SdrConversionResult.Failed(SdrConversionFailure.CapabilityUnavailable)
       val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(hdrMetadata(facts)) },
         inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) },
+        inspectCapabilities = capable,
         convert = { _, _, _, _, plan ->
           exports++
           assertTrue(plan.toneMapsToSdr); assertEquals(VideoCodec.Hevc, plan.outputCodec)
@@ -137,19 +142,66 @@ class UploadPreparationTests : AbsRobolectricTest() {
 
   @Test fun supportedPlannerConversionReachesAdapter() = runBlocking {
     val facts = source().copy(averageBitrate = known(9_000_000L))
-    val plan = StandardInputPlanner().plan(facts, options(), fullCapabilities())
-    assertTrue(plan.action is StandardInputAction.Convert)
-    mockkConstructor(StandardInputPlanner::class)
-    try {
-      every { anyConstructed<StandardInputPlanner>().plan(any(), any(), any()) } returns plan
-      var exports = 0
+    var exports = 0
+    val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata(facts)) },
+      inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) },
+      inspectCapabilities = capable,
+      convert = { _, _, _, _, _ -> exports++; SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid) })
+    assertEquals(PreparedUpload.Original(PreparationDiagnostic.ConversionFailed(SdrConversionFailure.OutputInvalid)),
+      preparation.prepare(upload(), context, true))
+    assertEquals(1, exports)
+  }
+
+  @Test fun unprovenCapabilitiesKeepOriginalAndNeverExport() = runBlocking {
+    // Regression: a fallback plan must never reach export, whatever the missing capability.
+    val facts = source().copy(averageBitrate = known(9_000_000L))
+    val partial = listOf(PlanningCapabilities(), fullCapabilities().copy(sourceIsDecodable = false),
+      fullCapabilities().copy(encodableVideoCodecs = emptySet()), fullCapabilities().copy(sourceTimelineIsProven = false),
+      fullCapabilities().copy(remediableRequirements = emptySet()))
+    for (capabilities in partial) {
+      var probed = 0
       val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata(facts)) },
         inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) },
-        convert = { _, _, _, _, _ -> exports++; SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid) })
-      assertEquals(PreparedUpload.Original(PreparationDiagnostic.ConversionFailed(SdrConversionFailure.OutputInvalid)),
-        preparation.prepare(upload(), context, true))
-      assertEquals(1, exports)
-    } finally { unmockkConstructor(StandardInputPlanner::class) }
+        inspectCapabilities = { conversion, _, _, _ ->
+          probed++; assertEquals(VideoCodec.H264, conversion.outputCodec); capabilities },
+        convert = { _, _, _, _, _ -> error("Unproven conversion must not export") })
+      assertEquals(PreparedUpload.Original(PreparationDiagnostic.UnsupportedPlan), preparation.prepare(upload(), context, true))
+      assertEquals(1, probed)
+    }
+  }
+
+  @Test fun originalDecisionsNeverProbeTheDevice() = runBlocking {
+    for (facts in listOf(source(), source().copy(averageBitrate = known(9_000_000L),
+      audioTracks = known(listOf(AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.Stereo))),
+        AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.Mono)))))))) {
+      val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata(facts)) },
+        inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) },
+        inspectCapabilities = { _, _, _, _ -> error("Original-file decisions need no device probe") },
+        convert = { _, _, _, _, _ -> error("Must not export") })
+      assertTrue(preparation.prepare(upload(), context, true) is PreparedUpload.Original)
+    }
+  }
+
+  @Test fun sourceSpecificCapabilitiesAreEvaluatedBeforeConversion() = runBlocking {
+    val facts = source().copy(averageBitrate = known(9_000_000L))
+    var probed = false
+    val preparation = UploadPreparation(
+      inspectMetadata = { MetadataInspectionResult.Success(metadata(facts)) },
+      inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) },
+      inspectCapabilities = { conversion, inspectedMetadata, inspectedSource, cancelled ->
+        assertEquals(VideoCodec.H264, conversion.outputCodec)
+        assertEquals(facts, inspectedMetadata.facts)
+        assertEquals(timeline, inspectedSource.timeline)
+        assertFalse(cancelled())
+        probed = true
+        fullCapabilities()
+      },
+      convert = { _, _, _, _, _ ->
+        assertTrue(probed)
+        SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid)
+      })
+    assertEquals(PreparedUpload.Original(PreparationDiagnostic.ConversionFailed(SdrConversionFailure.OutputInvalid)),
+      preparation.prepare(upload(), context, true))
   }
 
   @Test fun cancellationRequestsAdapterCleanupWithoutBlockingThePreparationJob() = runBlocking {
@@ -167,7 +219,8 @@ class UploadPreparationTests : AbsRobolectricTest() {
       started.complete(Unit); export
     }
     val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata(facts)) },
-      inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) })
+      inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) },
+        inspectCapabilities = capable)
     val job = launch(Dispatchers.Default) { preparation.prepare(upload(), context, true) }
     try {
       withTimeout(5000) { started.await() }
@@ -202,7 +255,8 @@ class UploadPreparationTests : AbsRobolectricTest() {
     val attempt = UploadAttempt(state, MuxUpload.Progress())
     try {
       val preparation = UploadPreparation(inspectMetadata = { MetadataInspectionResult.Success(metadata(facts)) },
-        inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) })
+        inspectSamples = { _, _, _ -> MediaSampleInspection(facts, SampleScanStatus.Complete, timeline = timeline) },
+        inspectCapabilities = capable)
       val job = launch(Dispatchers.Default) { preparation.prepare(upload().copy(attempt = attempt), context, true) }
       withTimeout(5000) { started.await() }
       if (cancel) attempt.cancel {} else attempt.pause {}

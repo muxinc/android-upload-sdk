@@ -492,11 +492,13 @@ class MuxUpload private constructor(
      * The Upload SDK will upload your file in smaller chunks, which can be more reliable in adverse
      * network conditions.
      *
-     * @param sizeBytes The chunk size in bytes. Mux's default is 8M
+     * @param sizeBytes The chunk size in bytes. Mux's default is 8M. The size is rounded down
+     *   to a multiple of 256 KiB (minimum 256 KiB).
      */
     @Suppress("unused")
     fun chunkSize(sizeBytes: Int): Builder {
-      uploadInfo.update(chunkSize = sizeBytes)
+      val unit = 256 * 1024
+      uploadInfo = uploadInfo.update(chunkSize = maxOf(unit, sizeBytes / unit * unit))
       return this
     }
 
@@ -509,7 +511,7 @@ class MuxUpload private constructor(
      */
     @Suppress("unused")
     fun optOutOfEventTracking(optOut: Boolean): Builder {
-      uploadInfo.update(optOut = optOut)
+      uploadInfo = uploadInfo.update(optOut = optOut)
       return this
     }
 
@@ -517,18 +519,19 @@ class MuxUpload private constructor(
      * The Upload SDK will upload your file in smaller chunks, which can be more reliable in adverse
      * network conditions. Each chunk can be retried individually, up to the given number of times
      *
-     * @param retries The number of retries per chunk. Mux's default is 3
+     * @param retries The number of retries per chunk. Mux's default is 3; negative values use 0.
      */
     @Suppress("unused")
     fun retriesPerChunk(retries: Int): Builder {
-      uploadInfo.update(retriesPerChunk = retries)
+      uploadInfo = uploadInfo.update(retriesPerChunk = retries.coerceAtLeast(0))
       return this
     }
 
     /**
      * Creates a new [MuxUpload] with the given configuration.
      */
-    fun build() = MuxUpload(uploadInfo, manageTask)
+    // Each built upload needs its own session, including when the Builder is reused.
+    fun build() = MuxUpload(uploadInfo.copy(), manageTask)
   }
 
   internal companion object {
