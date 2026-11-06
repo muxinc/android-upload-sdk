@@ -10,6 +10,8 @@ an [upload URL created by a backend server](https://docs.mux.com/guides/video/up
 
 Android API 23+, Kotlin 2.1+, AGP 8.10+, and `compileSdk` 36+.
 
+On Android 6.0 (API 23), the SDK uploads original files without standardization. On-device conversion requires Android 7.0 (API 24)+ and a supported input and device.
+
 ## Usage
 
 To use this SDK, you must first add it as a dependency. The Mux Android Upload SDK is
