@@ -16,7 +16,7 @@ class StandardInputPlannerTests {
           val facts = compliantFacts(codec, Dimensions(resolution.width, resolution.height),
             pixelFormat = PixelFormat(depth, ChromaSubsampling.Yuv420))
           assertEquals("$codec $resolution $depth", StandardInputAction.UploadOriginal(OriginalReason.StandardInput),
-            planner.plan(facts, options(resolution)).action)
+            planner.plan(facts, options(resolution), capabilities = PlanningCapabilities()).action)
         }
       }
     }
@@ -27,15 +27,15 @@ class StandardInputPlannerTests {
       val facts = compliantFacts(VideoCodec.Other, dynamicRange = range).copy(videoTrackCount = known(2),
         frameRate = known(121.0), editList = known(EditList.Complex))
       assertEquals(StandardInputAction.UploadOriginal(OriginalReason.StandardizationNotRequested),
-        planner.plan(facts, InputStandardization(false, MaximumResolution.Default, HdrHandling.ToneMapToSDR)).action)
+        planner.plan(facts, InputStandardization(false, MaximumResolution.Default, HdrHandling.ToneMapToSDR), capabilities = PlanningCapabilities()).action)
     }
   }
 
   @Test fun unknownOnlyFactsUploadOriginalWithoutConversion() {
     for (facts in listOf(MediaFacts(), compliantFacts().copy(maximumGopBitrate = MediaFact.Unknown),
       compliantFacts().copy(dynamicRange = MediaFact.Unknown), compliantFacts().copy(audioTracks = MediaFact.Unknown))) {
-      assertEquals(StandardInputAction.UploadOriginal(OriginalReason.NoKnownStandardInputViolation), planner.plan(facts).action)
-      assertEquals(PolicyStatus.Unknown, planner.plan(facts).evaluation.outcome)
+      assertEquals(StandardInputAction.UploadOriginal(OriginalReason.NoKnownStandardInputViolation), planner.plan(facts, capabilities = PlanningCapabilities()).action)
+      assertEquals(PolicyStatus.Unknown, planner.plan(facts, capabilities = PlanningCapabilities()).evaluation.outcome)
     }
   }
 
@@ -71,7 +71,7 @@ class StandardInputPlannerTests {
       val facts = compliantFacts(codec).copy(audioTracks = known(listOf(AudioTrack(known(AudioFormat.OtherCodec)))))
       val conversion = conversion(facts)
       assertTrue(conversion.requirementsToRemediate.isEmpty())
-      assertEquals(setOf(PolicyRequirement.Audio), planner.plan(facts).evaluation.nonCompliantRequirements)
+      assertEquals(setOf(PolicyRequirement.Audio), planner.plan(facts, capabilities = PlanningCapabilities()).evaluation.nonCompliantRequirements)
       assertEquals(codec, conversion.outputCodec)
       assertEquals(OutputAudio.AacFromFirstTrack, conversion.outputAudio)
     }
@@ -80,8 +80,8 @@ class StandardInputPlannerTests {
   @Test fun multipleAudioTracksAloneDoNotForceConversion() {
     val tracks = listOf(AudioTrack(known(AudioFormat.OtherCodec)), AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.Stereo))))
     val facts = compliantFacts().copy(audioTracks = known(tracks))
-    assertEquals(StandardInputAction.UploadOriginal(OriginalReason.NoKnownStandardInputViolation), planner.plan(facts).action)
-    assertEquals(setOf(PolicyRequirement.Audio), planner.plan(facts).evaluation.unknownRequirements)
+    assertEquals(StandardInputAction.UploadOriginal(OriginalReason.NoKnownStandardInputViolation), planner.plan(facts, capabilities = PlanningCapabilities()).action)
+    assertEquals(setOf(PolicyRequirement.Audio), planner.plan(facts, capabilities = PlanningCapabilities()).evaluation.unknownRequirements)
   }
 
   @Test fun conversionWithMultipleAudioTracksFallsBackEvenWithFullEncoderCapabilities() {
@@ -93,7 +93,7 @@ class StandardInputPlannerTests {
         assertEquals(FallbackReason.UnverifiedAudioSelection, fallback(source))
         assertTrue(planner.plan(source, capabilities = fullCapabilities()).evaluation.nonCompliantRequirements.isNotEmpty())
       }
-      assertEquals(StandardInputAction.UploadOriginal(OriginalReason.NoKnownStandardInputViolation), planner.plan(facts).action)
+      assertEquals(StandardInputAction.UploadOriginal(OriginalReason.NoKnownStandardInputViolation), planner.plan(facts, capabilities = PlanningCapabilities()).action)
     }
   }
 
@@ -135,7 +135,7 @@ class StandardInputPlannerTests {
     assertTrue(planner.plan(facts.copy(audioTracks = known(emptyList())), capabilities = videoOnly).action
       is StandardInputAction.Convert)
     // Lack of a local audio pipeline must never block compliant original bytes.
-    assertEquals(StandardInputAction.UploadOriginal(OriginalReason.StandardInput), planner.plan(compliantFacts()).action)
+    assertEquals(StandardInputAction.UploadOriginal(OriginalReason.StandardInput), planner.plan(compliantFacts(), capabilities = PlanningCapabilities()).action)
   }
 
   @Test fun toneMappingWithUnknownCodecReportsInsufficientEvidence() {
@@ -274,7 +274,7 @@ class StandardInputPlannerTests {
     assertEquals(OutputAudio.AacFromFirstTrack, reason.conversion.outputAudio)
     // Accepted 5.1 remains eligible for unchanged upload without any preparation capability.
     assertEquals(StandardInputAction.UploadOriginal(OriginalReason.StandardInput), planner.plan(facts.copy(
-      audioTracks = known(listOf(AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.FivePointOne))))))).action)
+      audioTracks = known(listOf(AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.FivePointOne)))))), capabilities = PlanningCapabilities()).action)
   }
 
   @Test fun otherDecodableSdrCodecConvertsToH264() {
@@ -370,14 +370,14 @@ class StandardInputPlannerTests {
 
   @Test fun eligibleHlgAndPqAreIntentionalOriginalPlansWithoutLocalEncoder() {
     for (range in listOf(DynamicRange.Hlg, DynamicRange.Pq)) {
-      assertEquals(StandardInputAction.UploadOriginal(OriginalReason.PreserveHdr(range)), planner.plan(hdrFacts(range)).action)
+      assertEquals(StandardInputAction.UploadOriginal(OriginalReason.PreserveHdr(range)), planner.plan(hdrFacts(range), capabilities = PlanningCapabilities()).action)
     }
   }
 
   @Test fun eligibleHdrWithUnrelatedUnknownFactsStillUploadsOriginal() {
     val facts = hdrFacts().copy(maximumGopBitrate = MediaFact.Unknown,
       audioTracks = known(listOf(AudioTrack(), AudioTrack())))
-    val plan = planner.plan(facts)
+    val plan = planner.plan(facts, capabilities = PlanningCapabilities())
     assertEquals(StandardInputAction.UploadOriginal(OriginalReason.PreserveHdr(DynamicRange.Hlg)), plan.action)
     assertEquals(setOf(PolicyRequirement.MaximumGopBitrate, PolicyRequirement.Audio), plan.evaluation.unknownRequirements)
   }
@@ -440,7 +440,7 @@ class StandardInputPlannerTests {
   @Test fun sdrDoesNotToneMapBecauseOptionIsSet() {
     val facts = compliantFacts().copy(frameRate = known(121.0))
     assertFalse(conversion(facts, toneMapOptions()).toneMapsToSdr)
-    assertEquals(StandardInputAction.UploadOriginal(OriginalReason.StandardInput), planner.plan(compliantFacts(), toneMapOptions()).action)
+    assertEquals(StandardInputAction.UploadOriginal(OriginalReason.StandardInput), planner.plan(compliantFacts(), toneMapOptions(), capabilities = PlanningCapabilities()).action)
   }
 
   @Test fun tenBitHevcSdrConversionKeepsTenBit420() {

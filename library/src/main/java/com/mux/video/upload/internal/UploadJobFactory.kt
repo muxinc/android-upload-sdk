@@ -5,6 +5,7 @@ import com.mux.video.upload.api.MuxUpload
 import com.mux.video.upload.api.MuxUploadManager
 import com.mux.video.upload.api.UploadStatus
 import com.mux.video.upload.internal.standardization.SdrStandardizedFile
+import com.mux.video.upload.internal.standardization.StandardInputDiagnostics
 import com.mux.video.upload.internal.standardization.PreparedUpload
 import com.mux.video.upload.internal.standardization.UploadPreparation
 import kotlinx.coroutines.*
@@ -131,9 +132,10 @@ internal class UploadJobFactory internal constructor(
           state.standardizedState = record
           withContext(Dispatchers.IO) { UploadPersistence.writeStandardized(upload, record) }
           attempt.selectPayload(output.file.length(), 0)
+          StandardInputDiagnostics.payloadSelected(standardized = true, bytes = output.file.length())
           return output.file
         }
-        is PreparedUpload.Original -> MuxUploadSdk.logger.d("MuxUploadPreparation", result.diagnostic.toString())
+        is PreparedUpload.Original -> StandardInputDiagnostics.preparationOriginal(result.diagnostic)
       }
     }
     return selectOriginal(upload)
@@ -142,6 +144,7 @@ internal class UploadJobFactory internal constructor(
   private suspend fun selectOriginal(upload: UploadInfo): File = withContext(Dispatchers.IO) {
     UploadPersistence.selectOriginal(upload)
     checkNotNull(upload.attempt).preparation.apply { originalSelected = true; standardizedState = null }
+    if (upload.isStandardizationRequested()) StandardInputDiagnostics.payloadSelected(standardized = false, bytes = upload.inputFile.length())
     upload.inputFile
   }
 

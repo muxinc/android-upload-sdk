@@ -1,5 +1,11 @@
 package com.mux.video.upload.internal.standardization
 
+import org.robolectric.shadows.ShadowMediaCodecList
+import com.mux.video.upload.internal.InputStandardization
+import com.mux.video.upload.internal.UploadInfo
+import android.net.Uri
+import kotlinx.coroutines.runBlocking
+import java.io.File
 import android.content.Context
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
@@ -174,8 +180,8 @@ class SdrMedia3ConfigurationTests {
     val queried = mutableListOf<MediaFormat>()
     SupportedFormatShadow.supported = { queried.add(it); true }
     val preflight = SdrCapabilityPreflight(codecInfos = { now += 800_000_000L; infos }, nanoTime = { now })
-    assertEquals(SdrEncoderCapability("chosen", MediaCodecInfo.CodecProfileLevel.AVCLevel51),
-      preflight.videoEncoder(conversion, metadata, targets) { false })
+    assertEquals(SdrEncoderCapability("chosen", MediaCodecInfo.CodecProfileLevel.AVCLevel51, VideoProfile.H264Baseline,
+      MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline), preflight.videoEncoder(conversion, metadata, targets) { false })
     assertEquals(2, queried.size)
     assertEquals(18, queried.last().getInteger(MediaFormat.KEY_I_FRAME_INTERVAL))
     assertEquals(1, queried.last().getInteger(MediaFormat.KEY_PRIORITY))
@@ -212,6 +218,78 @@ class SdrMedia3ConfigurationTests {
     SupportedFormatShadow.supported = { queries++; false }
     assertNull(SdrCapabilityPreflight({ Array(200) { rejected } }, { 0L }).videoEncoder(conversion, metadata, targets) { false })
     assertEquals(128, queries)
+  }
+
+  @Test fun h264PrefersHighAndFallsBackToBaselineOnlyWhenNoEncoderOffersHigh() {
+    SupportedFormatShadow.supported = { true }
+    val high = targets.copy(profile = VideoProfile.H264High, platformProfile = MediaCodecInfo.CodecProfileLevel.AVCProfileHigh)
+    val decoder = codec(false, "video/avc")
+    val baselineOnly = codec(true, "video/avc", MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
+    val highCapable = codec(true, "video/avc", MediaCodecInfo.CodecProfileLevel.AVCProfileHigh)
+    assertEquals(VideoProfile.H264High, SdrCapabilityPreflight({ arrayOf(decoder, baselineOnly, highCapable) }, { 0L })
+      .videoEncoder(conversion, metadata, high) { false }!!.profile)
+    val fallback = SdrCapabilityPreflight({ arrayOf(decoder, baselineOnly) }, { 0L }).videoEncoder(conversion, metadata, high) { false }!!
+    assertEquals(VideoProfile.H264Baseline, fallback.profile)
+    assertEquals(MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline, high.withEncoder(fallback).platformProfile)
+  }
+
+  @Test fun preflightReportsDecoderAndEncoderSeparately() {
+    SupportedFormatShadow.supported = { true }
+    val noDecoder = SdrCapabilityPreflight({ arrayOf(codec(true, "video/avc")) }, { 0L }).inspect(conversion, metadata, targets) { false }
+    assertEquals(false, noDecoder.sourceDecodable); assertNotNull(noDecoder.encoder); assertFalse(noDecoder.supported)
+    val noEncoder = SdrCapabilityPreflight({ arrayOf(codec(false, "video/avc")) }, { 0L }).inspect(conversion, metadata, targets) { false }
+    assertEquals(true, noEncoder.sourceDecodable); assertNull(noEncoder.encoder); assertFalse(noEncoder.supported)
+  }
+
+  // Ported from Codex's capability re-acceptance: real planner + real default probe + codec shadows.
+  @Test fun productionPreparationProbesDeviceCapabilitiesBeforeApprovingConversion() = runBlocking {
+    val input = facts.copy(averageBitrate = known(9_000_000L), audioTracks = known(emptyList()))
+    var inspected = metadata.copy(facts = input)
+    val timeline = StandardInputTimelineFacts(durationSeconds = known(1.0),
+      audioVideoStartOffset = known(AudioVideoStartOffset.NotApplicable),
+      videoPresentationSeconds = known((0 until 30).map { it / 30.0 }), videoDurationSeconds = known(1.0))
+    var samples = MediaSampleInspection(input, SampleScanStatus.Complete, timeline = timeline)
+    val upload = UploadInfo(remoteUri = Uri.parse("https://example.invalid/upload"), inputFile = File("unused"),
+      inputStandardization = InputStandardization(), chunkSize = 4, retriesPerChunk = 3,
+      optOut = true, uploadJob = null, statusFlow = null)
+    var exports = 0
+    val preparation = UploadPreparation(
+      inspectMetadata = { MetadataInspectionResult.Success(inspected) }, inspectSamples = { _, _, _ -> samples },
+      convert = { _, _, _, _, _ -> exports++; SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid) })
+    ShadowMediaCodecList.reset()
+    try {
+      // No injected PlanningCapabilities or planner: exercise the production wiring and Android probe.
+      assertEquals(PreparedUpload.Original(PreparationDiagnostic.UnsupportedPlan), preparation.prepare(upload, context, true))
+      assertEquals(0, exports)
+      ShadowMediaCodecList.reset()
+      ShadowMediaCodecList.addCodec(codec(false, "video/avc"))
+      ShadowMediaCodecList.addCodec(codec(true, "video/avc"))
+      assertEquals(PreparedUpload.Original(PreparationDiagnostic.ConversionFailed(SdrConversionFailure.OutputInvalid)),
+        preparation.prepare(upload, context, true))
+      assertEquals(1, exports)
+      SupportedFormatShadow.supported = { false }
+      assertEquals(PreparedUpload.Original(PreparationDiagnostic.UnsupportedPlan), preparation.prepare(upload, context, true))
+      assertEquals(1, exports)
+      // An otherwise compliant source must not query codecs at all.
+      SupportedFormatShadow.supported = { error("Pass-through must not probe local codecs") }
+      val compliant = input.copy(averageBitrate = known(4_000_000L))
+      inspected = inspected.copy(facts = compliant)
+      samples = samples.copy(facts = compliant)
+      assertEquals(PreparedUpload.Original(), preparation.prepare(upload, context, true))
+    } finally { ShadowMediaCodecList.reset(); SupportedFormatShadow.supported = { true } }
+  }
+
+  // Ported from Codex's capability re-acceptance.
+  @Test fun planningProbeRequiresTheEffectiveSourceDurationBeforeQueryingCodecs() {
+    val input = facts.copy(audioTracks = known(emptyList()))
+    val samples = MediaSampleInspection(input, SampleScanStatus.Complete, timeline = StandardInputTimelineFacts(
+      audioVideoStartOffset = known(AudioVideoStartOffset.NotApplicable),
+      videoPresentationSeconds = known((0 until 30).map { it / 30.0 }), videoDurationSeconds = known(1.0)))
+    val probe = SdrPlanningCapabilityProbe { _, _, _, _ -> error("Unproven timeline must not query codecs") }
+    val capabilities = probe.capabilities(conversion.copy(outputAudio = OutputAudio.None), metadata.copy(facts = input), samples) { false }
+    assertFalse(capabilities.sourceTimelineIsProven)
+    assertFalse(capabilities.sourceIsDecodable)
+    assertTrue(capabilities.encodableVideoCodecs.isEmpty())
   }
 
   @Test fun firstTrackSelectorIgnoresPreferredSecondaryAndFailsOnMissingIdentity() {
