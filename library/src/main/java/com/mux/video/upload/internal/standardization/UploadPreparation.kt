@@ -30,6 +30,8 @@ internal class UploadPreparation(
   private val inspectMetadata: (java.io.File) -> MetadataInspectionResult = MediaMetadataInspector()::inspect,
   private val inspectSamples: (java.io.File, MediaMetadataInspection, () -> Boolean) -> MediaSampleInspection =
     { file, metadata, cancelled -> StandardInputTimelineInspector().inspect(file, metadata, cancelled) },
+  private val inspectCapabilities: (StandardInputConversion, MediaMetadataInspection, MediaSampleInspection, () -> Boolean) -> PlanningCapabilities =
+    SdrPlanningCapabilityProbe()::capabilities,
   private val convert: suspend (Context, UploadInfo, MediaMetadataInspection, MediaSampleInspection, StandardInputConversion) -> SdrConversionResult =
     { context, upload, metadata, source, conversion ->
       suspendCancellableCoroutine { continuation ->
@@ -56,30 +58,40 @@ internal class UploadPreparation(
     if (!upload.isStandardizationRequested()) return@withContext original(PreparationDiagnostic.Original)
     if (!standardizedResumeVerified) return@withContext original(PreparationDiagnostic.StandardizedResumeUnavailable)
     val job = coroutineContext
+    val isCancelled = { !job[kotlinx.coroutines.Job]!!.isActive }
     try {
       val metadata = (inspectMetadata(upload.inputFile) as? MetadataInspectionResult.Success)?.inspection
-        ?: return@withContext original(PreparationDiagnostic.InspectionFailed)
+        ?: return@withContext original(PreparationDiagnostic.InspectionFailed).also { StandardInputDiagnostics.inspectionFailed() }
       job.ensureActive()
-      val source = inspectSamples(upload.inputFile, metadata) { !job[kotlinx.coroutines.Job]!!.isActive }
+      val source = inspectSamples(upload.inputFile, metadata, isCancelled)
       job.ensureActive()
-      val action = StandardInputPlanner().plan(source.facts, upload.inputStandardization).action
+      StandardInputDiagnostics.inspection("source", source.status, source.facts, source.sampleCount, source.elapsedNanos)
+      val planner = StandardInputPlanner()
+      val proposal = planner.propose(source.facts, upload.inputStandardization)
+      val capabilities = if (proposal is StandardInputProposal.NeedsCapabilities) {
+        inspectCapabilities(proposal.conversion, metadata, source, isCancelled).also { job.ensureActive() }
+      } else PlanningCapabilities()
+      val plan = planner.plan(proposal, capabilities)
+      StandardInputDiagnostics.plan(plan, upload.inputStandardization)
+      val action = plan.action
       if (action is StandardInputAction.UploadOriginal) return@withContext original(PreparationDiagnostic.Original)
-      // The adapter provides source-specific preflight and proves actual output. Planning keeps
-      // unsupported HDR and unsafe structure out of this SDR boundary.
-      val conversion = when (action) {
-        is StandardInputAction.Convert -> action.conversion
-        is StandardInputAction.Fallback -> (action.reason as? FallbackReason.UnsupportedConversion)?.conversion
-        is StandardInputAction.UploadOriginal -> null
-      } ?: return@withContext original(PreparationDiagnostic.UnsupportedPlan)
-      if (SdrEncodingTargets.from(conversion, metadata, source) == null)
-        return@withContext original(PreparationDiagnostic.UnsupportedPlan)
+      val conversion = (action as? StandardInputAction.Convert)?.conversion
+        ?: return@withContext original(PreparationDiagnostic.UnsupportedPlan)
+      StandardInputDiagnostics.conversionStarted()
+      val started = System.nanoTime()
       when (val result = convert(context, upload, metadata, source, conversion)) {
-        is SdrConversionResult.Completed -> PreparedUpload.Standardized(result.output)
-        is SdrConversionResult.Failed -> original(PreparationDiagnostic.ConversionFailed(result.reason))
+        is SdrConversionResult.Completed -> {
+          StandardInputDiagnostics.conversionCompleted(System.nanoTime() - started, result.output.file.length(), result.facts)
+          PreparedUpload.Standardized(result.output)
+        }
+        is SdrConversionResult.Failed -> {
+          StandardInputDiagnostics.conversionFailed(System.nanoTime() - started, result.reason)
+          original(PreparationDiagnostic.ConversionFailed(result.reason))
+        }
         SdrConversionResult.Cancelled -> throw kotlinx.coroutines.CancellationException("Preparation cancelled")
       }
     } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-      catch (_: LinkageError) { original(PreparationDiagnostic.InspectionFailed) }
-      catch (_: Exception) { original(PreparationDiagnostic.InspectionFailed) }
+      catch (e: LinkageError) { StandardInputDiagnostics.unexpectedFailure(e); original(PreparationDiagnostic.InspectionFailed) }
+      catch (e: Exception) { StandardInputDiagnostics.unexpectedFailure(e); original(PreparationDiagnostic.InspectionFailed) }
   }
 }

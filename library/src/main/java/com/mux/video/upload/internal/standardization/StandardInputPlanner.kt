@@ -119,19 +119,45 @@ internal sealed interface StandardInputAction {
 /** Evaluation describes published source compliance; the action also enforces the selected output size. */
 internal data class StandardInputPlan(val action: StandardInputAction, val evaluation: PolicyEvaluation)
 
+/** A conversion proposal is not permission to export; the final plan requires capability results. */
+internal sealed interface StandardInputProposal {
+  data class NoConversion(val plan: StandardInputPlan) : StandardInputProposal
+  data class NeedsCapabilities(val conversion: StandardInputConversion, val evaluation: PolicyEvaluation) : StandardInputProposal
+}
+
 internal class StandardInputPlanner(
   private val evaluator: StandardInputPolicyEvaluator = StandardInputPolicyEvaluator(),
 ) {
   fun plan(
     facts: MediaFacts,
     options: InputStandardization = InputStandardization(),
-    capabilities: PlanningCapabilities = PlanningCapabilities(),
-  ): StandardInputPlan {
+    capabilities: PlanningCapabilities,
+  ): StandardInputPlan = plan(propose(facts, options), capabilities)
+
+  fun plan(proposal: StandardInputProposal, capabilities: PlanningCapabilities): StandardInputPlan = when (proposal) {
+    is StandardInputProposal.NoConversion -> {
+      val reason = (proposal.plan.action as? StandardInputAction.UploadOriginal)?.reason as? OriginalReason.PreserveHdr
+      if (reason != null && reason.dynamicRange !in capabilities.preservableHdrDynamicRanges)
+        proposal.plan.copy(action = StandardInputAction.Fallback(FallbackReason.HdrPreservationUnavailable(reason.dynamicRange)))
+      else proposal.plan
+    }
+    is StandardInputProposal.NeedsCapabilities -> {
+      val missing = capabilities.missingCapabilities(proposal.conversion)
+      StandardInputPlan(if (missing.isEmpty()) StandardInputAction.Convert(proposal.conversion)
+        else StandardInputAction.Fallback(FallbackReason.UnsupportedConversion(proposal.conversion, missing)), proposal.evaluation)
+    }
+  }
+
+  /** Pure policy/target selection, before the caller performs any source-specific device probes. */
+  fun propose(
+    facts: MediaFacts,
+    options: InputStandardization,
+  ): StandardInputProposal {
     val selection = PolicySelection(options.maximumResolution)
     // Retain source diagnostics even when preparation is disabled; this does no inspection or device probing.
     val evaluation = evaluator.evaluate(facts, selection)
-    fun original(reason: OriginalReason) = StandardInputPlan(StandardInputAction.UploadOriginal(reason), evaluation)
-    fun fallback(reason: FallbackReason) = StandardInputPlan(StandardInputAction.Fallback(reason), evaluation)
+    fun original(reason: OriginalReason) = StandardInputProposal.NoConversion(StandardInputPlan(StandardInputAction.UploadOriginal(reason), evaluation))
+    fun fallback(reason: FallbackReason) = StandardInputProposal.NoConversion(StandardInputPlan(StandardInputAction.Fallback(reason), evaluation))
 
     if (!options.standardizationRequested) return original(OriginalReason.StandardizationNotRequested)
     val trackCount = facts.videoTrackCount.valueOrNull
@@ -156,9 +182,6 @@ internal class StandardInputPlanner(
             PolicyStatus.NonCompliant -> return fallback(FallbackReason.UnsupportedHdr(range))
             PolicyStatus.Compliant -> Unit
           }
-          if (range !in capabilities.preservableHdrDynamicRanges) {
-            return fallback(FallbackReason.HdrPreservationUnavailable(range))
-          }
           if (requirements.isNotEmpty()) return fallback(FallbackReason.NonStandardHdr(range, requirements.toSet()))
           return original(OriginalReason.PreserveHdr(range))
         }
@@ -177,9 +200,7 @@ internal class StandardInputPlanner(
 
     val conversion = buildConversion(facts, selection, toneMap)
       ?: return fallback(FallbackReason.InsufficientEvidence)
-    val missingCapabilities = capabilities.missingCapabilities(conversion)
-    return if (missingCapabilities.isEmpty()) StandardInputPlan(StandardInputAction.Convert(conversion), evaluation)
-    else fallback(FallbackReason.UnsupportedConversion(conversion, missingCapabilities))
+    return StandardInputProposal.NeedsCapabilities(conversion, evaluation)
   }
 
   private fun buildConversion(

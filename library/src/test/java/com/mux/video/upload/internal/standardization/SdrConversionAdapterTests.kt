@@ -34,7 +34,7 @@ class SdrConversionAdapterTests {
   @Before fun setUpDispatchers() { Dispatchers.setMain(dispatcher) }
   @After fun resetDispatchers() { Dispatchers.resetMain() }
   private val context = ApplicationProvider.getApplicationContext<Context>()
-  private val facts = compliantFacts().copy(cadence = known(Cadence.Constant), videoProfile = known(VideoProfile.H264Baseline))
+  private val facts = compliantFacts().copy(cadence = known(Cadence.Constant), videoProfile = known(VideoProfile.H264High))
   private val conversion = (StandardInputPlanner().plan(facts.copy(averageBitrate = known(9_000_000L)),
     options(), fullCapabilities()).action as StandardInputAction.Convert).conversion
   private val timeline = StandardInputTimelineFacts(known(3.0), known(AudioVideoStartOffset.Seconds(0.0)),
@@ -123,7 +123,9 @@ class SdrConversionAdapterTests {
     assertEquals("video/avc", targets()!!.videoMime)
     assertEquals(6_000_000, targets()!!.bitrate)
     assertEquals(18, targets()!!.keyframeIntervalSeconds)
-    assertEquals(VideoProfile.H264Baseline, targets()!!.profile)
+    // H.264 prefers High like iOS; preflight may select Baseline when no encoder offers High.
+    assertEquals(VideoProfile.H264High, targets()!!.profile)
+    assertEquals(listOf(VideoProfile.H264High, VideoProfile.H264Baseline), targets()!!.encoderProfiles().map { it.first })
     val hevc = facts.copy(videoCodec = known(VideoCodec.Hevc))
     assertEquals("video/hevc", targets(conversion.copy(sourceCodec = VideoCodec.Hevc, outputCodec = VideoCodec.Hevc), hevc)!!.videoMime)
     assertNull(targets(conversion.copy(sourceCodec = VideoCodec.Hevc), hevc))
@@ -140,7 +142,7 @@ class SdrConversionAdapterTests {
       val metadata = hdrMetadata(input)
       val target = SdrEncodingTargets.from(plan, metadata, samples(input))!!
       assertEquals(if (codec == VideoCodec.Hevc) "video/hevc" else "video/avc", target.videoMime)
-      assertEquals(if (codec == VideoCodec.Hevc) VideoProfile.HevcMain else VideoProfile.H264Baseline, target.profile)
+      assertEquals(if (codec == VideoCodec.Hevc) VideoProfile.HevcMain else VideoProfile.H264High, target.profile)
       assertNull(SdrEncodingTargets.from(plan.copy(toneMapsToSdr = false), metadata, samples(input)))
       val track = metadata.tracks.single()
       val video = track.video!!
@@ -217,9 +219,11 @@ class SdrConversionAdapterTests {
     val sourceFile = File.createTempFile("customer-", ".mp4", context.cacheDir).apply { writeText("original") }
     val unrelated = File(context.cacheDir, "mux-upload/customer-copy.mp4").apply { parentFile!!.mkdirs(); writeText("customer") }
     val engine = FakeEngine()
+    var engineTargets: SdrEncodingTargets? = null
     val results = CopyOnWriteArrayList<SdrConversionResult>()
     val adapter = SdrConversionAdapter(context, preflight = { _, _, _, _ -> duringPreflight?.invoke(); capability },
-      validate = { _, _, _, _, _ -> duringValidation?.invoke(); validation }, createEngine = { _, _, _, _, _ -> engine },
+      validate = { _, _, _, _, _ -> duringValidation?.invoke(); validation },
+      createEngine = { _, _, _, targets, _ -> engineTargets = targets; engine },
       ioDispatcher = dispatcher, onAllocated = onAllocated)
     val attempt = adapter.start(sourceFile, inputMetadata, samples(), conversion, results::add)
     fun idle() { dispatcher.scheduler.runCurrent() }
@@ -327,7 +331,7 @@ class SdrConversionAdapterTests {
     assertFalse(run.engine.output!!.exists()); run.assertInputSafe()
   }
   @Test fun wrongProfileOrAudioLayoutRejectsEvenAnAcceptedSharedVerdict() {
-    for (wrong in listOf(facts.copy(videoProfile = known(VideoProfile.H264High)),
+    for (wrong in listOf(facts.copy(videoProfile = known(VideoProfile.H264Baseline)),
       facts.copy(audioTracks = known(listOf(AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.Mono)))))))) {
       val run = Run(StandardInputOutputValidation.Accepted(wrong, StandardInputPolicyEvaluator().evaluate(wrong, selection())))
       run.idle(); run.engine.complete(); run.idle()
@@ -373,4 +377,46 @@ class SdrConversionAdapterTests {
     run.assertInputSafe()
   }
 
+
+  @Test fun exportAndValidationUseTheProfileTheSelectedEncoderSupports() {
+    val baseline = SdrEncoderCapability("fake", 1, VideoProfile.H264Baseline,
+      android.media.MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
+    val baselineFacts = facts.copy(videoProfile = known(VideoProfile.H264Baseline))
+    val accepted = Run(StandardInputOutputValidation.Accepted(baselineFacts,
+      StandardInputPolicyEvaluator().evaluate(baselineFacts, selection())), capability = baseline)
+    accepted.idle(); accepted.engine.complete(); accepted.idle()
+    assertEquals(android.media.MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline, accepted.engineTargets!!.platformProfile)
+    assertTrue(accepted.results.single() is SdrConversionResult.Completed)
+    (accepted.results.single() as SdrConversionResult.Completed).output.delete()
+    // Output that does not match the encoder actually used is rejected.
+    val mismatched = Run(capability = baseline)
+    mismatched.idle(); mismatched.engine.complete(); mismatched.idle()
+    assertEquals(SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid), mismatched.results.single())
+  }
+
+  @Test fun planningProbeReportsEachMissingCapabilityAndOnlyProvenPathsConvert() {
+    val input = facts.copy(averageBitrate = known(9_000_000L))
+    fun plan(preflight: SdrPreflight?, scan: MediaSampleInspection = samples(input)): StandardInputAction {
+      var preflights = 0
+      val probe = SdrPlanningCapabilityProbe { _, _, _, _ -> preflights++; preflight!! }
+      val planner = StandardInputPlanner()
+      val proposal = planner.propose(input, options())
+      val capabilities = if (proposal is StandardInputProposal.NeedsCapabilities)
+        probe.capabilities(proposal.conversion, metadata(), scan) { false } else PlanningCapabilities()
+      val action = planner.plan(proposal, capabilities).action
+      if (preflight == null) assertEquals(0, preflights)
+      return action
+    }
+    val encoder = SdrEncoderCapability("c2.fake.avc.encoder", 1, VideoProfile.H264High,
+      android.media.MediaCodecInfo.CodecProfileLevel.AVCProfileHigh)
+    assertTrue(plan(SdrPreflight(true, true, true, encoder)) is StandardInputAction.Convert)
+    fun missing(action: StandardInputAction) =
+      ((action as StandardInputAction.Fallback).reason as FallbackReason.UnsupportedConversion).missingCapabilities
+    assertEquals(setOf(ConversionCapabilityFailure.VideoEncode), missing(plan(SdrPreflight(true, true, true, null))))
+    assertEquals(setOf(ConversionCapabilityFailure.SourceDecode), missing(plan(SdrPreflight(false, true, true, encoder))))
+    assertEquals(setOf(ConversionCapabilityFailure.AacAudioPreparation), missing(plan(SdrPreflight(true, false, true, encoder))))
+    // An incomplete scan cannot prove targets; the device is never queried.
+    assertTrue(ConversionCapabilityFailure.SourceTimeline in missing(plan(null,
+      MediaSampleInspection(input, SampleScanStatus.LimitExceeded, timeline = timeline))))
+  }
 }
