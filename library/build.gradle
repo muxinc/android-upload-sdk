@@ -51,7 +51,7 @@ muxDistribution {
   dokkaConfig {
     moduleName = "Mux Upload SDK"
     footer = "(c) " + new Date().format("yyyy") + " Mux, Inc. Have questions or need help?" +
-            " Contact support@mux.com"
+            " Visit https://www.mux.com/support"
   }
   pom {
     description "The Mux Upload SDK for Android"
