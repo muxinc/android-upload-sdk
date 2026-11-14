@@ -1,0 +1,80 @@
+package com.mux.video.upload.internal
+
+import com.mux.video.upload.MuxUploadSdk
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.Request
+import okhttp3.OkHttpClient
+import okhttp3.Response
+import java.io.IOException
+import kotlin.coroutines.resumeWithException
+
+/** Verified on small Mux test Direct Uploads; never follows an ambiguous response. */
+internal object UploadProtocol {
+  private var originalClient: OkHttpClient? = null
+  private var transportClient: OkHttpClient? = null
+
+  @Synchronized internal fun httpClient(): OkHttpClient {
+    val client = MuxUploadSdk.httpClient()
+    if (originalClient !== client) {
+      transportClient = client.newBuilder().followRedirects(false).followSslRedirects(false)
+        .build()
+      originalClient = client
+    }
+    return checkNotNull(transportClient)
+  }
+
+  fun acknowledge(response: Response, chunk: ChunkWorker.Chunk): Long {
+    val next = when (response.code) {
+      308 -> acknowledgedOffset(response, chunk.totalFileSize)
+      200, 201 -> if (response.headers.values("Range").isEmpty()) chunk.totalFileSize else blocked()
+      else -> failedResponse(response)
+    }
+    // An overlapping PUT can acknowledge bytes beyond this chunk that were already received.
+    if (next < chunk.startByte) blocked()
+    if (next == chunk.startByte) throw UploadRetryException("Upload acknowledged no new bytes")
+    return next - chunk.startByte
+  }
+
+  internal fun acknowledgedOffset(response: Response, total: Long): Long {
+    val ranges = response.headers.values("Range")
+    if (ranges.isEmpty()) return 0
+    if (ranges.size != 1) blocked()
+    val match = Regex("bytes=0-([0-9]+)").matchEntire(ranges.single()) ?: blocked()
+    val end = match.groupValues[1].toLongOrNull() ?: blocked()
+    // 308 is incomplete; an endpoint at/past total is contradictory.
+    if (end >= total - 1) blocked()
+    return end + 1
+  }
+
+  private fun failedResponse(response: Response): Nothing {
+    val code = response.code
+    if (code == 408 || code == 429 || code in 500..599)
+      throw UploadRetryException("Upload request failed: $code", retryAfterMs(response))
+    blocked()
+  }
+
+  private fun retryAfterMs(response: Response): Long {
+    val header = response.headers.values("Retry-After").singleOrNull()?.trim()?.takeIf { it.isNotEmpty() } ?: return 0
+    // Cap server-directed waits at one minute; malformed headers use ordinary backoff.
+    if (header.all { it in '0'..'9' }) return (header.toLongOrNull() ?: Long.MAX_VALUE).coerceAtMost(60) * 1_000
+    val date = response.headers.getDate("Retry-After") ?: return 0
+    return (date.time - System.currentTimeMillis()).coerceIn(0, 60_000)
+  }
+
+  private fun blocked(): Nothing = throw UploadResumeBlockedException()
+}
+
+internal class UploadRetryException(message: String, val retryAfterMs: Long = 0) : IOException(message)
+
+internal suspend fun executeUploadRequest(request: Request, client: OkHttpClient): Response = suspendCancellableCoroutine { continuation ->
+  val call = client.newCall(request)
+  continuation.invokeOnCancellation { call.cancel() }
+  call.enqueue(object : Callback {
+    override fun onFailure(call: Call, e: IOException) { continuation.resumeWithException(e) }
+    override fun onResponse(call: Call, response: Response) {
+      continuation.resume(response) { _, value, _ -> value.close() }
+    }
+  })
+}

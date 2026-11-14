@@ -35,9 +35,12 @@ internal class UploadMetrics private constructor() {
     if (inputFileDurationMs <= 0) {
       videoDuration = withContext(Dispatchers.IO) {
         try {
-          MediaMetadataRetriever().use { retriever ->
+          val retriever = MediaMetadataRetriever()
+          try {
             retriever.setDataSource(uploadInfo.inputFile.absolutePath)
             retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toInt()
+          } finally {
+            retriever.release()
           }
         } catch (e: Exception) {
           MuxUploadSdk.logger.e("UploadMetrics", "Failed to get video duration", e)

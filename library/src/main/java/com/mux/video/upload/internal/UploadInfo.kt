@@ -1,6 +1,7 @@
 package com.mux.video.upload.internal
 
 import android.net.Uri
+import com.mux.video.upload.api.HdrHandling
 import com.mux.video.upload.api.UploadStatus
 import com.mux.video.upload.api.MuxUpload
 import kotlinx.coroutines.Deferred
@@ -32,19 +33,39 @@ enum class MaximumResolution(val width: Int, val height: Int) {
   Preset1920x1080(1920, 1080), // 1080p
 
   /**
-   *  The standardized input will be scaled down
-   *  to 3840x2160 (2160p/4K) from a larger size.
-   *  Inputs with smaller dimensions won't be scaled
-   *  up.
+   * Requested maximum standardized dimensions of 3840x2160 (2160p/4K), without upscaling.
+   * If safe local conversion is unavailable, the original file is uploaded.
+   * Configure the matching Direct Upload asset tier separately.
    */
-  Preset3840x2160(3840, 2160) // 2160p
+  Preset3840x2160(3840, 2160), // 2160p
+
+  /**
+   * Requested maximum standardized dimensions of 2560x1440 (1440p), without upscaling.
+   * If safe local conversion is unavailable, the original file is uploaded.
+   * Configure the matching Direct Upload asset tier separately.
+   */
+  Preset2560x1440(2560, 1440) // 1440p
 }
 
 data class InputStandardization(
-  @JvmSynthetic internal val standardizationRequested: Boolean = true,
-  @JvmSynthetic internal val maximumResolution: MaximumResolution = MaximumResolution.Default,
+  @JvmSynthetic internal val standardizationRequested: Boolean,
+  @JvmSynthetic internal val maximumResolution: MaximumResolution,
+  @JvmSynthetic internal val hdrHandling: HdrHandling,
 ) {
+  // Keep the original constructor and its Kotlin default-argument JVM signature.
+  @JvmOverloads
+  constructor(
+    standardizationRequested: Boolean = true,
+    maximumResolution: MaximumResolution = MaximumResolution.Default,
+  ) : this(standardizationRequested, maximumResolution, HdrHandling.Preserve)
 
+  // The data class's original copy and copy$default are callable from compiled Kotlin clients.
+  fun copy(
+    standardizationRequested: Boolean = this.standardizationRequested,
+    maximumResolution: MaximumResolution = this.maximumResolution,
+  ): InputStandardization = InputStandardization(
+    standardizationRequested, maximumResolution, hdrHandling,
+  )
 }
 
 /**
@@ -61,17 +82,21 @@ internal data class UploadInfo(
   @JvmSynthetic internal val inputStandardization: InputStandardization = InputStandardization(),
   @JvmSynthetic internal val remoteUri: Uri,
   @JvmSynthetic internal val inputFile: File,
-  @JvmSynthetic internal val standardizedFile: File? = null,
   @JvmSynthetic internal val chunkSize: Int,
   @JvmSynthetic internal val retriesPerChunk: Int,
   @JvmSynthetic internal val optOut: Boolean,
   @JvmSynthetic internal val uploadJob: Deferred<Result<UploadStatus>>?,
   @JvmSynthetic internal val statusFlow: StateFlow<UploadStatus>?,
+  @JvmSynthetic internal val attempt: UploadAttempt? = null,
+  @JvmSynthetic internal val restoredFromOriginal: Boolean = false,
+  @JvmSynthetic internal val standardizedResumeBlocked: Boolean = false,
 ) {
-  fun isRunning(): Boolean = 
-    statusFlow?.value?.let {
+  internal var session = UploadSession()
+
+  fun isRunning(): Boolean = attempt?.isStopped() != true &&
+    (statusFlow?.value?.let {
       it is UploadStatus.Uploading || it is UploadStatus.Started || it is UploadStatus.Preparing
-    } ?: false
+    } ?: false)
   fun isStandardizationRequested(): Boolean = inputStandardization.standardizationRequested
 }
 
@@ -81,23 +106,27 @@ internal data class UploadInfo(
  */
 @JvmSynthetic
 internal fun UploadInfo.update(
-  inputStandardization: InputStandardization = InputStandardization(),
+  inputStandardization: InputStandardization = this.inputStandardization,
   remoteUri: Uri = this.remoteUri,
   file: File = this.inputFile,
-  standardizedFile: File? = this.standardizedFile,
   chunkSize: Int = this.chunkSize,
   retriesPerChunk: Int = this.retriesPerChunk,
   optOut: Boolean = this.optOut,
   uploadJob: Deferred<Result<UploadStatus>>? = this.uploadJob,
   statusFlow: StateFlow<UploadStatus>? = this.statusFlow,
+  attempt: UploadAttempt? = this.attempt,
+  restoredFromOriginal: Boolean = this.restoredFromOriginal,
+  standardizedResumeBlocked: Boolean = this.standardizedResumeBlocked,
 ) = UploadInfo(
   inputStandardization,
   remoteUri,
   file,
-  standardizedFile,
   chunkSize,
   retriesPerChunk,
   optOut,
   uploadJob,
   statusFlow,
-)
+  attempt,
+  restoredFromOriginal,
+  standardizedResumeBlocked,
+).also { it.session = session }

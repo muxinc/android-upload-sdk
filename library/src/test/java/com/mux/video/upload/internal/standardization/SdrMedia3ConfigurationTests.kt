@@ -1,0 +1,349 @@
+package com.mux.video.upload.internal.standardization
+
+import org.robolectric.shadows.ShadowMediaCodecList
+import com.mux.video.upload.internal.InputStandardization
+import com.mux.video.upload.internal.UploadInfo
+import android.net.Uri
+import kotlinx.coroutines.runBlocking
+import java.io.File
+import android.content.Context
+import android.media.MediaCodecInfo
+import android.media.MediaFormat
+import android.util.Pair
+import androidx.media3.common.C
+import androidx.media3.common.ColorInfo
+import androidx.media3.common.Format
+import androidx.media3.common.MediaItem
+import androidx.media3.common.TrackGroup
+import androidx.media3.exoplayer.source.TrackGroupArray
+import androidx.media3.exoplayer.trackselection.MappingTrackSelector
+import androidx.media3.exoplayer.trackselection.ExoTrackSelection
+import androidx.media3.transformer.Composition
+import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.EditedMediaItemSequence
+import androidx.media3.transformer.ExportException
+import androidx.media3.transformer.ExportResult
+import androidx.media3.transformer.TransformationRequest
+import androidx.test.core.app.ApplicationProvider
+import io.mockk.*
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.After
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
+import org.robolectric.shadows.MediaCodecInfoBuilder
+import org.robolectric.shadows.ShadowBuild
+import java.lang.reflect.InvocationTargetException
+
+@RunWith(RobolectricTestRunner::class)
+@Config(manifest = Config.NONE, sdk = [28], shadows = [SupportedFormatShadow::class])
+class SdrMedia3ConfigurationTests {
+  @After fun resetAdvertisedFormats() { SupportedFormatShadow.supported = { true } }
+  private val context = ApplicationProvider.getApplicationContext<Context>()
+  private val facts = compliantFacts().copy(cadence = known(Cadence.Constant))
+  private val conversion = (StandardInputPlanner().plan(facts.copy(averageBitrate = known(9_000_000L)),
+    options(), fullCapabilities()).action as StandardInputAction.Convert).conversion
+  private val targets = SdrEncodingTargets("video/avc", VideoProfile.H264Baseline,
+    MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline, 6_000_000, 18, null, null, false, null)
+  private val format = Format.Builder().setSampleMimeType("video/avc").setWidth(conversion.outputDimensions.width)
+    .setHeight(conversion.outputDimensions.height).setFrameRate(30f).setAverageBitrate(targets.bitrate)
+    .setColorInfo(ColorInfo.SDR_BT709_LIMITED).build()
+  private val video = MediaTrackMetadataReader.read(0, MediaFormat.createVideoFormat("video/avc", 1920, 1080))
+  private val metadata = MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), listOf(video), facts, 0)
+
+  @Test fun strictFactoryRejectsMimeDimensionsRotationAndLinearBeforeCodecCreation() {
+    val factory = StrictSdrEncoderFactory(context, conversion, targets, SdrEncoderCapability("chosen", 4))
+    val configuration = SdrVideoEncoderConfiguration.create(format, targets, 4)
+    assertEquals(targets.platformProfile, configuration.getInteger(MediaFormat.KEY_PROFILE))
+    assertEquals(4, configuration.getInteger(MediaFormat.KEY_LEVEL))
+    assertEquals(18, configuration.getInteger(MediaFormat.KEY_I_FRAME_INTERVAL))
+    assertEquals(1, configuration.getInteger(MediaFormat.KEY_PRIORITY))
+    val portrait = conversion.copy(outputDimensions = Dimensions(conversion.outputDimensions.height, conversion.outputDimensions.width))
+    val portraitFactory = StrictSdrEncoderFactory(context, portrait, targets, SdrEncoderCapability("chosen", 4))
+    val requested = StrictSdrEncoderFactory::class.java.getDeclaredMethod("requestedVideoFormat", Format::class.java)
+      .apply { isAccessible = true }.invoke(portraitFactory, format) as Format
+    assertEquals(format.width, requested.width); assertEquals(format.height, requested.height)
+    assertThrows(IllegalStateException::class.java) {
+      portraitFactory.createForVideoEncoding(format.buildUpon().setWidth(portrait.outputDimensions.width)
+        .setHeight(portrait.outputDimensions.height).build(), null)
+    }
+    for (bad in listOf(format.buildUpon().setSampleMimeType("video/hevc").build(),
+      format.buildUpon().setWidth(640).build(), format.buildUpon().setRotationDegrees(90).build(),
+      format.buildUpon().setColorInfo(ColorInfo.SDR_BT709_LIMITED.buildUpon().setColorTransfer(C.COLOR_TRANSFER_LINEAR).build()).build())) {
+      assertThrows(IllegalStateException::class.java) { factory.createForVideoEncoding(bad, null) }
+    }
+  }
+
+  @Test fun performanceSettingsRetainApiAndChipsetExceptionsWithoutChangingProfile() {
+    val old = SdrVideoEncoderConfiguration.create(format, targets, 4, sdk = 23)
+    assertFalse(old.containsKey(MediaFormat.KEY_PRIORITY)); assertFalse(old.containsKey(MediaFormat.KEY_OPERATING_RATE))
+    assertEquals(30, SdrVideoEncoderConfiguration.create(format, targets, 4, sdk = 26).getInteger(MediaFormat.KEY_OPERATING_RATE))
+    val affected = SdrVideoEncoderConfiguration.create(format, targets, 4, sdk = 31, soc = "SM8550")
+    assertEquals(1000, affected.getInteger(MediaFormat.KEY_OPERATING_RATE))
+    assertEquals(targets.platformProfile, affected.getInteger(MediaFormat.KEY_PROFILE))
+    assertEquals(0, affected.getInteger(MediaFormat.KEY_MAX_B_FRAMES))
+    assertEquals(Int.MAX_VALUE, SdrVideoEncoderConfiguration.create(format, targets, 4, sdk = 35, soc = "SM8550")
+      .getInteger(MediaFormat.KEY_OPERATING_RATE))
+  }
+
+  @Test fun redmiRejectsUnprovenRateHintsInsteadOfChangingBitrateOrGop() {
+    for (rate in listOf(5f, 24f, 60f, 120f)) {
+      val requested = format.buildUpon().setFrameRate(rate).build()
+      assertThrows(IllegalStateException::class.java) {
+        SdrVideoEncoderConfiguration.create(requested, targets, 4, sdk = 29, device = "joyeuse")
+      }
+      assertEquals(rate, SdrVideoEncoderConfiguration.create(requested, targets, 4, sdk = 30, device = "joyeuse")
+        .getFloat(MediaFormat.KEY_FRAME_RATE), 0f)
+    }
+    val accepted = SdrVideoEncoderConfiguration.create(format, targets, 4, sdk = 29, device = "joyeuse")
+    assertEquals(30f, accepted.getFloat(MediaFormat.KEY_FRAME_RATE), 0f)
+    assertEquals(targets.bitrate, accepted.getInteger(MediaFormat.KEY_BIT_RATE))
+    assertEquals(targets.keyframeIntervalSeconds, accepted.getInteger(MediaFormat.KEY_I_FRAME_INTERVAL))
+  }
+
+  @Test fun redmiPreflightRejectsNonThirtyFpsBeforeEncoding() {
+    ShadowBuild.setDevice("joyeuse")
+    val infos = arrayOf(codec(false, "video/avc"), codec(true, "video/avc"))
+    assertNull(SdrCapabilityPreflight({ infos }, { 0L })
+      .videoEncoder(conversion.copy(outputFrameRate = 60.0), metadata, targets) { false })
+    assertNotNull(SdrCapabilityPreflight({ infos }, { 0L }).videoEncoder(conversion, metadata, targets) { false })
+  }
+
+  @Test fun toneMappingRequiresApiGlDecoderAndExactSdrEncoderSupport() {
+    assertEquals(Composition.HDR_MODE_KEEP_HDR, conversion.media3HdrMode)
+    for (codec in listOf(VideoCodec.H264, VideoCodec.Hevc)) for (range in listOf(DynamicRange.Hlg, DynamicRange.Pq)) {
+      val hevc = codec == VideoCodec.Hevc
+      val mime = if (hevc) "video/hevc" else "video/avc"
+      val sourceProfile = if (hevc) MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10 else MediaCodecInfo.CodecProfileLevel.AVCProfileHigh
+      val input = compliantFacts(codec, dynamicRange = range,
+        pixelFormat = PixelFormat(if (hevc) 10 else 8, ChromaSubsampling.Yuv420))
+        .copy(audioTracks = known(emptyList()), cadence = known(Cadence.Constant))
+      val metadata = hdrMetadata(input).copy(facts = input.copy(frameRate = MediaFact.Unknown))
+      val plan = conversion.copy(sourceCodec = codec, outputCodec = codec,
+        sourceDynamicRange = range, toneMapsToSdr = true, outputAudio = OutputAudio.None)
+      val target = if (hevc) targets.copy(videoMime = mime, profile = VideoProfile.HevcMain,
+        platformProfile = MediaCodecInfo.CodecProfileLevel.HEVCProfileMain, sourceFrameRate = 30.0)
+        else targets.copy(sourceFrameRate = 30.0)
+      val infos = arrayOf(codec(false, mime, sourceProfile), codec(true, mime))
+      val queried = mutableListOf<MediaFormat>()
+      SupportedFormatShadow.supported = { queried.add(it); true }
+      assertEquals(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL, plan.media3HdrMode)
+      assertNull(SdrCapabilityPreflight({ error("API gate") }, { 0L }, sdk = 28, supportsHdrOpenGl = { error("API gate") })
+        .videoEncoder(plan, metadata, target) { false })
+      assertNull(SdrCapabilityPreflight({ error("GL gate") }, { 0L }, sdk = 29, supportsHdrOpenGl = { false })
+        .videoEncoder(plan, metadata, target) { false })
+      val preflight = SdrCapabilityPreflight({ infos }, { 0L }, sdk = 29, supportsHdrOpenGl = { true })
+      assertNotNull(preflight.videoEncoder(plan, metadata, target) { false })
+      assertEquals(mime, queried.first().getString(MediaFormat.KEY_MIME))
+      assertEquals(sourceProfile, queried.first().getInteger(MediaFormat.KEY_PROFILE))
+      assertEquals(30f, queried.first().getFloat(MediaFormat.KEY_FRAME_RATE), 0f)
+      assertEquals(mime, queried.last().getString(MediaFormat.KEY_MIME))
+      assertEquals(MediaFormat.COLOR_STANDARD_BT709, queried.last().getInteger(MediaFormat.KEY_COLOR_STANDARD))
+      assertEquals(MediaFormat.COLOR_TRANSFER_SDR_VIDEO, queried.last().getInteger(MediaFormat.KEY_COLOR_TRANSFER))
+      SupportedFormatShadow.supported = { it.getString(MediaFormat.KEY_MIME) != mime }
+      assertNull(preflight.videoEncoder(plan, metadata, target) { false })
+      SupportedFormatShadow.supported = { it.getInteger(MediaFormat.KEY_PROFILE) == sourceProfile }
+      assertNull(preflight.videoEncoder(plan, metadata, target) { false })
+      val factory = StrictSdrEncoderFactory(context, plan, target, SdrEncoderCapability("chosen", 4))
+      assertThrows(IllegalStateException::class.java) {
+        factory.createForVideoEncoding(format.buildUpon().setSampleMimeType(mime)
+          .setColorInfo(ColorInfo.SDR_BT709_LIMITED.buildUpon().setColorSpace(C.COLOR_SPACE_BT2020).build()).build(), null)
+      }
+    }
+  }
+
+  private fun codec(encoder: Boolean, mime: String, requestedProfile: Int? = null): MediaCodecInfo {
+    val capabilityFormat = if (mime.startsWith("video/")) MediaFormat.createVideoFormat(mime, 1920, 1080)
+      else MediaFormat.createAudioFormat(mime, 48_000, 2)
+    val capabilities = MediaCodecInfoBuilder.CodecCapabilitiesBuilder.newBuilder().setMediaFormat(capabilityFormat)
+      .setIsEncoder(encoder).apply {
+        if (mime.startsWith("video/")) setColorFormats(intArrayOf(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface))
+      }
+      .setProfileLevels(arrayOf(MediaCodecInfo.CodecProfileLevel().apply {
+        profile = requestedProfile ?: if (mime == "video/hevc") MediaCodecInfo.CodecProfileLevel.HEVCProfileMain else targets.platformProfile
+        level = if (mime == "video/hevc") MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51
+          else MediaCodecInfo.CodecProfileLevel.AVCLevel51
+      })).build()
+    return MediaCodecInfoBuilder.newBuilder().setName(if (encoder) "chosen" else "decoder")
+      .setIsEncoder(encoder).setCapabilities(capabilities).build()
+  }
+
+  @Test fun coldEnumerationDoesNotConsumeQueryBudgetAndUnrelatedCodecsDoNotExhaustQueries() {
+    var now = 0L
+    val unrelated = codec(false, "audio/mpeg")
+    val encoder = codec(true, "video/avc")
+    val decoder = codec(false, "video/avc")
+    val infos = Array(200) { unrelated } + arrayOf(decoder, encoder)
+    val queried = mutableListOf<MediaFormat>()
+    SupportedFormatShadow.supported = { queried.add(it); true }
+    val preflight = SdrCapabilityPreflight(codecInfos = { now += 800_000_000L; infos }, nanoTime = { now })
+    assertEquals(SdrEncoderCapability("chosen", MediaCodecInfo.CodecProfileLevel.AVCLevel51, VideoProfile.H264Baseline,
+      MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline), preflight.videoEncoder(conversion, metadata, targets) { false })
+    assertEquals(2, queried.size)
+    assertEquals(18, queried.last().getInteger(MediaFormat.KEY_I_FRAME_INTERVAL))
+    assertEquals(1, queried.last().getInteger(MediaFormat.KEY_PRIORITY))
+    queried.clear()
+    val portrait = conversion.copy(outputDimensions = Dimensions(conversion.outputDimensions.height, conversion.outputDimensions.width))
+    assertNotNull(preflight.videoEncoder(portrait, metadata, targets) { false })
+    assertEquals(conversion.outputDimensions.width, queried.last().getInteger(MediaFormat.KEY_WIDTH))
+    assertEquals(conversion.outputDimensions.height, queried.last().getInteger(MediaFormat.KEY_HEIGHT))
+  }
+
+  @Test fun preflightAcceptsSlowEnumerationButBoundsQueriesAndCancellation() {
+    var now = 0L
+    val encoder = codec(true, "video/avc")
+    val slowDecoder = codec(false, "video/avc")
+    var queries = 0
+    val infos = arrayOf(slowDecoder, encoder)
+    SupportedFormatShadow.supported = { queries++; true }
+    assertNotNull(SdrCapabilityPreflight({ now += 3_000_000_000L; infos }, { now })
+      .videoEncoder(conversion, metadata, targets) { false })
+    assertEquals(2, queries)
+    queries = 0
+    SupportedFormatShadow.supported = { queries++; now += 500_000_000L; true }
+    now = 0
+    assertNull(SdrCapabilityPreflight({ infos }, { now }).videoEncoder(conversion, metadata, targets) { false })
+    assertEquals(1, queries)
+    var enumerated = false
+    assertNull(SdrCapabilityPreflight({ enumerated = true; infos }, { 0L }).videoEncoder(conversion, metadata, targets) { true })
+    assertFalse(enumerated)
+    var cancelled = false
+    assertNull(SdrCapabilityPreflight({ cancelled = true; infos }, { 0L })
+      .videoEncoder(conversion, metadata, targets) { cancelled })
+    val rejected = codec(false, "video/avc")
+    queries = 0
+    SupportedFormatShadow.supported = { queries++; false }
+    assertNull(SdrCapabilityPreflight({ Array(200) { rejected } }, { 0L }).videoEncoder(conversion, metadata, targets) { false })
+    assertEquals(128, queries)
+  }
+
+  @Test fun h264PrefersHighAndFallsBackToBaselineOnlyWhenNoEncoderOffersHigh() {
+    SupportedFormatShadow.supported = { true }
+    val high = targets.copy(profile = VideoProfile.H264High, platformProfile = MediaCodecInfo.CodecProfileLevel.AVCProfileHigh)
+    val decoder = codec(false, "video/avc")
+    val baselineOnly = codec(true, "video/avc", MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
+    val highCapable = codec(true, "video/avc", MediaCodecInfo.CodecProfileLevel.AVCProfileHigh)
+    assertEquals(VideoProfile.H264High, SdrCapabilityPreflight({ arrayOf(decoder, baselineOnly, highCapable) }, { 0L })
+      .videoEncoder(conversion, metadata, high) { false }!!.profile)
+    val fallback = SdrCapabilityPreflight({ arrayOf(decoder, baselineOnly) }, { 0L }).videoEncoder(conversion, metadata, high) { false }!!
+    assertEquals(VideoProfile.H264Baseline, fallback.profile)
+    assertEquals(MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline, high.withEncoder(fallback).platformProfile)
+  }
+
+  @Test fun preflightReportsDecoderAndEncoderSeparately() {
+    SupportedFormatShadow.supported = { true }
+    val noDecoder = SdrCapabilityPreflight({ arrayOf(codec(true, "video/avc")) }, { 0L }).inspect(conversion, metadata, targets) { false }
+    assertEquals(false, noDecoder.sourceDecodable); assertNotNull(noDecoder.encoder); assertFalse(noDecoder.supported)
+    val noEncoder = SdrCapabilityPreflight({ arrayOf(codec(false, "video/avc")) }, { 0L }).inspect(conversion, metadata, targets) { false }
+    assertEquals(true, noEncoder.sourceDecodable); assertNull(noEncoder.encoder); assertFalse(noEncoder.supported)
+  }
+
+  // Ported from Codex's capability re-acceptance: real planner + real default probe + codec shadows.
+  @Test fun productionPreparationProbesDeviceCapabilitiesBeforeApprovingConversion() = runBlocking {
+    val input = facts.copy(averageBitrate = known(9_000_000L), audioTracks = known(emptyList()))
+    var inspected = metadata.copy(facts = input)
+    val timeline = StandardInputTimelineFacts(durationSeconds = known(1.0),
+      audioVideoStartOffset = known(AudioVideoStartOffset.NotApplicable),
+      videoPresentationSeconds = known((0 until 30).map { it / 30.0 }), videoDurationSeconds = known(1.0))
+    var samples = MediaSampleInspection(input, SampleScanStatus.Complete, timeline = timeline)
+    val upload = UploadInfo(remoteUri = Uri.parse("https://example.invalid/upload"), inputFile = File("unused"),
+      inputStandardization = InputStandardization(), chunkSize = 4, retriesPerChunk = 3,
+      optOut = true, uploadJob = null, statusFlow = null)
+    var exports = 0
+    val preparation = UploadPreparation(
+      inspectMetadata = { MetadataInspectionResult.Success(inspected) }, inspectSamples = { _, _, _ -> samples },
+      convert = { _, _, _, _, _ -> exports++; SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid) })
+    ShadowMediaCodecList.reset()
+    try {
+      // No injected PlanningCapabilities or planner: exercise the production wiring and Android probe.
+      assertEquals(PreparedUpload.Original(PreparationDiagnostic.UnsupportedPlan), preparation.prepare(upload, context, true))
+      assertEquals(0, exports)
+      ShadowMediaCodecList.reset()
+      ShadowMediaCodecList.addCodec(codec(false, "video/avc"))
+      ShadowMediaCodecList.addCodec(codec(true, "video/avc"))
+      assertEquals(PreparedUpload.Original(PreparationDiagnostic.ConversionFailed(SdrConversionFailure.OutputInvalid)),
+        preparation.prepare(upload, context, true))
+      assertEquals(1, exports)
+      SupportedFormatShadow.supported = { false }
+      assertEquals(PreparedUpload.Original(PreparationDiagnostic.UnsupportedPlan), preparation.prepare(upload, context, true))
+      assertEquals(1, exports)
+      // An otherwise compliant source must not query codecs at all.
+      SupportedFormatShadow.supported = { error("Pass-through must not probe local codecs") }
+      val compliant = input.copy(averageBitrate = known(4_000_000L))
+      inspected = inspected.copy(facts = compliant)
+      samples = samples.copy(facts = compliant)
+      assertEquals(PreparedUpload.Original(), preparation.prepare(upload, context, true))
+    } finally { ShadowMediaCodecList.reset(); SupportedFormatShadow.supported = { true } }
+  }
+
+  // Ported from Codex's capability re-acceptance.
+  @Test fun planningProbeRequiresTheEffectiveSourceDurationBeforeQueryingCodecs() {
+    val input = facts.copy(audioTracks = known(emptyList()))
+    val samples = MediaSampleInspection(input, SampleScanStatus.Complete, timeline = StandardInputTimelineFacts(
+      audioVideoStartOffset = known(AudioVideoStartOffset.NotApplicable),
+      videoPresentationSeconds = known((0 until 30).map { it / 30.0 }), videoDurationSeconds = known(1.0)))
+    val probe = SdrPlanningCapabilityProbe { _, _, _, _ -> error("Unproven timeline must not query codecs") }
+    val capabilities = probe.capabilities(conversion.copy(outputAudio = OutputAudio.None), metadata.copy(facts = input), samples) { false }
+    assertFalse(capabilities.sourceTimelineIsProven)
+    assertFalse(capabilities.sourceIsDecodable)
+    assertTrue(capabilities.encodableVideoCodecs.isEmpty())
+  }
+
+  @Test fun firstTrackSelectorIgnoresPreferredSecondaryAndFailsOnMissingIdentity() {
+    val first = Format.Builder().setId("2").setSampleMimeType("audio/mp4a-latm").setChannelCount(2).build()
+    val secondary = first.buildUpon().setId("3").setSelectionFlags(C.SELECTION_FLAG_DEFAULT).setChannelCount(1).build()
+    val groups = TrackGroupArray(TrackGroup("secondary", secondary), TrackGroup("first", first))
+    val mapped = mockk<MappingTrackSelector.MappedTrackInfo> {
+      every { rendererCount } returns 1
+      every { getRendererType(0) } returns C.TRACK_TYPE_AUDIO
+      every { getTrackGroups(0) } returns groups
+    }
+    val selection = selectAudioTrack(FirstAudioTrackSelector(context, "2"), mapped)!!
+    assertEquals("2", selection.first.group.getFormat(selection.first.tracks.single()).id)
+    assertNull(selectAudioTrack(FirstAudioTrackSelector(context, null), mapped))
+    assertThrows(IllegalStateException::class.java) { selectAudioTrack(FirstAudioTrackSelector(context, "missing"), mapped) }
+  }
+
+  private fun selectAudioTrack(selector: FirstAudioTrackSelector,
+    mapped: MappingTrackSelector.MappedTrackInfo): Pair<ExoTrackSelection.Definition, Int>? {
+    val method = FirstAudioTrackSelector::class.java.declaredMethods.single { it.name == "selectAudioTrack" }
+    method.isAccessible = true
+    try {
+      @Suppress("UNCHECKED_CAST")
+      return method.invoke(selector, mapped, emptyArray<Array<IntArray>>(), intArrayOf(), selector.parameters)
+        as Pair<ExoTrackSelection.Definition, Int>?
+    } catch (error: InvocationTargetException) {
+      throw error.cause!!
+    }
+  }
+
+  @Test fun exportListenerRoutesMuxerWatchdogAndFallbackToFailureAndChecksCopiedAudio() {
+    val composition = Composition.Builder(EditedMediaItemSequence.withVideoFrom(listOf(
+      EditedMediaItem.Builder(MediaItem.fromUri("file:///test.mp4")).build()))).build()
+    val failures = mutableListOf<SdrConversionFailure>()
+    var completed = false
+    val listener = SdrExportListener(targets.copy(audioChannels = 2, audioSampleRate = 48_000, copyAac = true),
+      { _, _ -> completed = true }, failures::add)
+    listener.onError(composition, ExportResult.Builder().build(), muxerTimeoutException())
+    listener.onFallbackApplied(composition, TransformationRequest.Builder().build(), TransformationRequest.Builder().build())
+    listener.onCompleted(composition, ExportResult.Builder().setChannelCount(1).setSampleRate(48_000).build())
+    assertEquals(listOf(SdrConversionFailure.Export, SdrConversionFailure.ForbiddenFallback, SdrConversionFailure.OutputInvalid), failures)
+    assertFalse(completed)
+    listener.onCompleted(composition, ExportResult.Builder().setChannelCount(2).setSampleRate(48_000).build())
+    assertTrue(completed)
+  }
+}
+
+internal fun muxerTimeoutException(): ExportException = ExportException::class.java
+  .getDeclaredMethod("createForMuxer", Throwable::class.java, Int::class.javaPrimitiveType)
+  .apply { isAccessible = true }.invoke(null, IllegalStateException("No samples"), ExportException.ERROR_CODE_MUXING_TIMEOUT) as ExportException
+
+/** Only advertised format answers are faked; codec roles, MIME and profiles use Android objects. */
+@Implements(MediaCodecInfo.CodecCapabilities::class)
+class SupportedFormatShadow {
+  @Implementation fun isFormatSupported(format: MediaFormat): Boolean = supported(format)
+  companion object { var supported: (MediaFormat) -> Boolean = { true } }
+}

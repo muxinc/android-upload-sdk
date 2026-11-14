@@ -1,0 +1,422 @@
+package com.mux.video.upload.internal.standardization
+
+import android.content.Context
+import android.media.MediaFormat
+import android.os.Looper
+import androidx.media3.common.MediaItem
+import androidx.media3.transformer.Composition
+import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.EditedMediaItemSequence
+import androidx.media3.transformer.ExportResult
+import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.setMain
+import org.junit.After
+import org.junit.Before
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.LooperMode
+import java.io.File
+import java.util.concurrent.CopyOnWriteArrayList
+
+@RunWith(RobolectricTestRunner::class)
+@Config(manifest = Config.NONE, sdk = [28])
+@LooperMode(LooperMode.Mode.PAUSED)
+@OptIn(ExperimentalCoroutinesApi::class)
+class SdrConversionAdapterTests {
+  private val dispatcher = StandardTestDispatcher()
+  @Before fun setUpDispatchers() { Dispatchers.setMain(dispatcher) }
+  @After fun resetDispatchers() { Dispatchers.resetMain() }
+  private val context = ApplicationProvider.getApplicationContext<Context>()
+  private val facts = compliantFacts().copy(cadence = known(Cadence.Constant), videoProfile = known(VideoProfile.H264High))
+  private val conversion = (StandardInputPlanner().plan(facts.copy(averageBitrate = known(9_000_000L)),
+    options(), fullCapabilities()).action as StandardInputAction.Convert).conversion
+  private val timeline = StandardInputTimelineFacts(known(3.0), known(AudioVideoStartOffset.Seconds(0.0)),
+    known(listOf(0.0, 1.0, 2.0)), known(3.0), known(3.0), known(90_000L))
+  private fun audio(channels: Int = 2, format: MediaFact<AudioFormat> = known(AudioFormat.Aac(AudioChannelLayout.Stereo)),
+    id: Int = 2, index: Int = 1) = TrackMetadata(index, known(index), known(id), TrackKind.Audio,
+    known(if (format.valueOrNull is AudioFormat.Aac) "audio/mp4a-latm" else "audio/mpeg"), known(3.0),
+    MediaFact.Unknown, MediaFact.Unknown, audio = AudioTrackMetadata(format, known(channels), known(48_000), known(0), known(0)))
+  private fun metadata(tracks: List<TrackMetadata> = listOf(audio())) =
+    MediaMetadataInspection(known(ContainerKind.IsoBaseMedia), tracks, facts, 0)
+  private fun samples(input: MediaFacts = facts) = MediaSampleInspection(input, SampleScanStatus.Complete, timeline = timeline)
+  private fun targets(plan: StandardInputConversion = conversion, input: MediaFacts = facts,
+    tracks: List<TrackMetadata> = listOf(audio())) = SdrEncodingTargets.from(plan, metadata(tracks), samples(input))
+
+  @Test fun vfrGopTargetUsesActualFrameWindowsAndValidatorStillChecksActualOutput() {
+    val times = (0..900).map { if (it <= 450) it / 60.0 else 7.5 + (it - 450) / 20.0 }
+    val variable = facts.copy(cadence = known(Cadence.Variable))
+    val time = timeline.copy(durationSeconds = known(30.0), videoDurationSeconds = known(30.0),
+      firstAudioDurationSeconds = known(30.0), videoPresentationSeconds = known(times))
+    val source = samples(variable).copy(timeline = time)
+    val target = SdrEncodingTargets.from(conversion, metadata(), source)!!
+    assertEquals(12, target.keyframeIntervalSeconds)
+    // Model an encoder that converts seconds to a frame count at the nominal 30 fps.
+    fun exportedGap(seconds: Int): Double {
+      val frames = seconds * 30
+      return times.indices.filter { it + frames < times.size }.maxOf { times[it + frames] - times[it] }
+    }
+    fun validate(seconds: Int) = StandardInputOutputValidator().validateFacts(variable.copy(
+      maximumKeyframeIntervalSeconds = known(exportedGap(seconds)), encodedDimensions = known(conversion.outputDimensions),
+      rotationDegrees = known(0)), variable, time, time, conversion)
+    assertTrue(validate(18) is StandardInputOutputValidation.Rejected)
+    assertTrue(validate(target.keyframeIntervalSeconds) is StandardInputOutputValidation.Accepted)
+  }
+
+  @Test fun isolatedVfrPausesShortenGopOnlyByTheirActualSpan() {
+    for ((pause, expected) in listOf(0.05 to 17, 0.2 to 17, 0.61 to 17, 1.0 to 17, 3.0 to 15)) {
+      val times = (0 until 1800).map { it / 30.0 + if (it >= 900) pause else 0.0 }
+      assertEquals("pause=$pause", expected, vfrTargets(times, 60.0 + pause)!!.keyframeIntervalSeconds)
+    }
+  }
+
+  @Test fun repeatedScreenRecordingPausesUseWorstActualWindow() {
+    val times = (0 until 1800).map { it / 30.0 + (it / 300) * 3.0 }
+    assertEquals(12, vfrTargets(times, 75.0)!!.keyframeIntervalSeconds)
+  }
+
+  @Test fun highResolutionHevcVfrDoesNotRejectAnIsolatedHitch() {
+    val plan = conversion.copy(sourceCodec = VideoCodec.Hevc, outputCodec = VideoCodec.Hevc,
+      outputFrameRate = 60.0, outputPolicyLimits = StandardInputPolicyProfile.PublishedMux.highResolution)
+    val times = (0 until 3600).map { it / 60.0 + if (it >= 1800) 0.1 else 0.0 }
+    assertEquals(5, vfrTargets(times, 60.1, plan)!!.keyframeIntervalSeconds)
+  }
+
+  @Test fun vfrGopIncludesLastSampleDurationAndRejectsUnusableWindows() {
+    val times = (0 until 60).map { it / 30.0 }
+    assertEquals(1, vfrTargets(times, 19.0)!!.keyframeIntervalSeconds)
+    assertNull(vfrTargets(times, 20.0))
+    assertNull(vfrTargets(listOf(0.0, 0.1, 0.1), 1.0))
+    assertNull(vfrTargets(listOf(0.0, Double.NaN), 1.0))
+    assertNull(vfrTargets(times, 1.0))
+  }
+
+  private fun vfrTargets(times: List<Double>, duration: Double,
+    plan: StandardInputConversion = conversion): SdrEncodingTargets? {
+    val variable = facts.copy(cadence = known(Cadence.Variable), videoCodec = known(plan.sourceCodec),
+      frameRate = known(plan.outputFrameRate))
+    val time = timeline.copy(durationSeconds = known(duration), videoDurationSeconds = known(duration),
+      firstAudioDurationSeconds = known(duration), videoPresentationSeconds = known(times))
+    return SdrEncodingTargets.from(plan, metadata(), samples(variable).copy(timeline = time))
+  }
+
+  @Test fun linearTaggedSdrIsRejectedBeforeAllocatingOrStartingExport() {
+    val format = MediaFormat.createVideoFormat("video/avc", 1920, 1080).apply {
+      setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_LINEAR)
+    }
+    val video = MediaTrackMetadataReader.read(0, format)
+    val inspection = metadata().copy(tracks = listOf(video, audio()))
+    assertEquals(known(DynamicRange.Sdr), video.video!!.dynamicRange)
+    assertNull(SdrEncodingTargets.from(conversion, inspection, samples()))
+    val run = Run(inputMetadata = inspection); run.idle()
+    assertEquals(SdrConversionResult.Failed(SdrConversionFailure.UnsupportedPlan), run.results.single())
+    assertEquals(0, run.engine.starts); run.assertInputSafe()
+  }
+
+  @Test fun pinsCodecFamilyAndTargetsBelowPublishedCeilings() {
+    assertEquals("video/avc", targets()!!.videoMime)
+    assertEquals(6_000_000, targets()!!.bitrate)
+    assertEquals(18, targets()!!.keyframeIntervalSeconds)
+    // H.264 prefers High like iOS; preflight may select Baseline when no encoder offers High.
+    assertEquals(VideoProfile.H264High, targets()!!.profile)
+    assertEquals(listOf(VideoProfile.H264High, VideoProfile.H264Baseline), targets()!!.encoderProfiles().map { it.first })
+    val hevc = facts.copy(videoCodec = known(VideoCodec.Hevc))
+    assertEquals("video/hevc", targets(conversion.copy(sourceCodec = VideoCodec.Hevc, outputCodec = VideoCodec.Hevc), hevc)!!.videoMime)
+    assertNull(targets(conversion.copy(sourceCodec = VideoCodec.Hevc), hevc))
+    val other = facts.copy(videoCodec = known(VideoCodec.Other))
+    assertEquals("video/avc", targets(conversion.copy(sourceCodec = VideoCodec.Other), other)!!.videoMime)
+  }
+  @Test fun explicitToneMappingRequiresKnownHlgPqColorAndPreservesCodecFamily() {
+    for (codec in listOf(VideoCodec.H264, VideoCodec.Hevc)) for (range in listOf(DynamicRange.Hlg, DynamicRange.Pq)) {
+      val input = compliantFacts(codec, dynamicRange = range,
+        pixelFormat = PixelFormat(if (codec == VideoCodec.Hevc) 10 else 8, ChromaSubsampling.Yuv420))
+        .copy(cadence = known(Cadence.Constant), audioTracks = known(emptyList()))
+      val plan = conversion.copy(sourceCodec = codec, outputCodec = codec, sourceDynamicRange = range,
+        toneMapsToSdr = true, outputAudio = OutputAudio.None)
+      val metadata = hdrMetadata(input)
+      val target = SdrEncodingTargets.from(plan, metadata, samples(input))!!
+      assertEquals(if (codec == VideoCodec.Hevc) "video/hevc" else "video/avc", target.videoMime)
+      assertEquals(if (codec == VideoCodec.Hevc) VideoProfile.HevcMain else VideoProfile.H264High, target.profile)
+      assertNull(SdrEncodingTargets.from(plan.copy(toneMapsToSdr = false), metadata, samples(input)))
+      val track = metadata.tracks.single()
+      val video = track.video!!
+      for (bad in listOf(video.copy(color = video.color.copy(standard = MediaFact.Unknown)),
+        video.copy(color = video.color.copy(standard = known(MediaFormat.COLOR_STANDARD_BT709))),
+        video.copy(color = video.color.copy(transfer = known(MediaFormat.COLOR_TRANSFER_SDR_VIDEO))),
+        video.copy(color = video.color.copy(range = MediaFact.Unknown)), video.copy(profile = MediaFact.Unknown),
+        video.copy(dynamicRange = known(DynamicRange.DolbyVision)), video.copy(pixelFormat = MediaFact.Unknown))) {
+        assertNull(SdrEncodingTargets.from(plan, metadata.copy(tracks = listOf(track.copy(video = bad))), samples(input)))
+      }
+    }
+  }
+
+  @Test fun rejectsHdrUnknownTimelineUpscalingAndUnprovenTenBitPath() {
+    assertNull(targets(conversion.copy(toneMapsToSdr = true)))
+    assertNull(targets(input = facts.copy(dynamicRange = MediaFact.Unknown)))
+    assertNull(targets(conversion.copy(outputDimensions = Dimensions(1922, 1080))))
+    assertNull(targets(conversion.copy(outputPixelFormat = PixelFormat(10, ChromaSubsampling.Yuv420))))
+    assertNull(SdrEncodingTargets.from(conversion, metadata(), samples().copy(timeline = StandardInputTimelineFacts())))
+  }
+  @Test fun preservesMonoStereoForNonAacWithoutInventingSurroundDownmix() {
+    for (channels in listOf(1, 2)) {
+      val nonAac = facts.copy(audioTracks = known(listOf(AudioTrack(known(AudioFormat.OtherCodec)))))
+      val target = targets(input = nonAac, tracks = listOf(audio(channels, known(AudioFormat.OtherCodec))))!!
+      assertEquals(channels, target.audioChannels)
+      assertFalse(target.copyAac)
+    }
+    assertNull(targets(tracks = listOf(audio(6, known(AudioFormat.OtherCodec)))))
+    assertNull(targets(tracks = listOf(audio(2, MediaFact.Unknown))))
+    assertTrue(targets(tracks = listOf(audio(6, known(AudioFormat.Aac(AudioChannelLayout.FivePointOne)))))!!.copyAac)
+  }
+  @Test fun multipleAudioTracksCannotCreateAnEncoderTarget() {
+    val multi = facts.copy(audioTracks = known(listOf(AudioTrack(), AudioTrack())))
+    assertNull(targets(input = multi, tracks = listOf(audio(id = 99, index = 3), audio(id = 42, index = 1))))
+    assertNull(targets(input = multi))
+    assertNull(targets(tracks = listOf(audio(id = 99, index = 3), audio(id = 42, index = 1))))
+    assertEquals("42", targets(tracks = listOf(audio(id = 42, index = 1)))!!.firstAudioTrackId)
+    assertNull(targets(tracks = listOf(audio().copy(sourceTrackId = MediaFact.Unknown))))
+  }
+  @Test fun permitsOnlyProvenIntegralCadenceReductionAndKeepsVfrTimestamps() {
+    assertNotNull(SdrEncodingTargets.from(conversion, metadata(), samples(facts.copy(cadence = known(Cadence.Variable)))
+      .copy(timeline = timeline.copy(videoPresentationSeconds = known(listOf(0.0, 0.03, 0.08))))))
+    val cfr = conversion.copy(outputCadence = OutputCadence.ConstantFrameRate)
+    assertNotNull(targets(cfr, facts.copy(frameRate = known(240.0))))
+    assertNotNull(targets(cfr, facts.copy(frameRate = known(240.00004008351402))))
+    assertNull(targets(cfr, facts.copy(frameRate = known(240.0), cadence = known(Cadence.Variable))))
+    assertNull(targets(cfr, facts.copy(frameRate = known(2.0))))
+    assertNull(targets(cfr, facts.copy(frameRate = known(239.76))))
+  }
+
+  private class FakeEngine : SdrExportEngine {
+    var output: File? = null
+    var completions: ((String?, String?) -> Unit)? = null
+    var failures: ((SdrConversionFailure) -> Unit)? = null
+    var starts = 0
+    var cancellations = 0
+    override fun start(input: File, output: File, completed: (String?, String?) -> Unit, failed: (SdrConversionFailure) -> Unit) {
+      assertEquals(Looper.getMainLooper(), Looper.myLooper())
+      starts++; this.output = output; completions = completed; failures = failed
+      output.writeText("owned partial bytes")
+    }
+    override fun cancel() { assertEquals(Looper.getMainLooper(), Looper.myLooper()); cancellations++ }
+    fun complete(video: String? = "video/avc", audio: String? = "audio/mp4a-latm") { completions!!(video, audio) }
+  }
+  private inner class Run(
+    validation: StandardInputOutputValidation = StandardInputOutputValidation.Accepted(facts,
+      StandardInputPolicyEvaluator().evaluate(facts, selection())),
+    capability: SdrEncoderCapability? = SdrEncoderCapability("fake", 1),
+    duringValidation: (() -> Unit)? = null,
+    duringPreflight: (() -> Unit)? = null,
+    onAllocated: (SdrStandardizedFile) -> Unit = {},
+    inputMetadata: MediaMetadataInspection = metadata(),
+  ) {
+    val sourceFile = File.createTempFile("customer-", ".mp4", context.cacheDir).apply { writeText("original") }
+    val unrelated = File(context.cacheDir, "mux-upload/customer-copy.mp4").apply { parentFile!!.mkdirs(); writeText("customer") }
+    val engine = FakeEngine()
+    var engineTargets: SdrEncodingTargets? = null
+    val results = CopyOnWriteArrayList<SdrConversionResult>()
+    val adapter = SdrConversionAdapter(context, preflight = { _, _, _, _ -> duringPreflight?.invoke(); capability },
+      validate = { _, _, _, _, _ -> duringValidation?.invoke(); validation },
+      createEngine = { _, _, _, targets, _ -> engineTargets = targets; engine },
+      ioDispatcher = dispatcher, onAllocated = onAllocated)
+    val attempt = adapter.start(sourceFile, inputMetadata, samples(), conversion, results::add)
+    fun idle() { dispatcher.scheduler.runCurrent() }
+    fun assertInputSafe() { assertEquals("original", sourceFile.readText()); assertEquals("customer", unrelated.readText()) }
+  }
+  @Test fun successRetainsVerifiedFileUntilOwnerDeletesItAndIgnoresLateEvents() {
+    val run = Run(); run.idle(); run.engine.complete(); run.idle()
+    val result = run.results.single() as SdrConversionResult.Completed
+    assertTrue(result.output.file.exists()); assertTrue(result.output.matchesValidation()); run.assertInputSafe()
+    run.engine.failures!!(SdrConversionFailure.Export); run.attempt.cancel()
+    assertEquals(1, run.results.size)
+    assertTrue(result.output.delete()); assertTrue(result.output.delete())
+    assertEquals(1, run.engine.cancellations)
+  }
+  @Test fun directMultiAudioExportStopsBeforeCreatingEngineOrOutput() {
+    val run = Run(inputMetadata = metadata(listOf(audio(id = 2), audio(id = 3, index = 2))))
+    run.idle()
+    assertEquals(listOf(SdrConversionResult.Failed(SdrConversionFailure.UnsupportedPlan)), run.results)
+    assertEquals(0, run.engine.starts)
+    assertNull(run.engine.output)
+    run.assertInputSafe()
+  }
+  @Test fun exportFailureDeletesPartialAndPublishesExactlyOnce() {
+    val run = Run(); run.idle(); run.engine.failures!!(SdrConversionFailure.Export); run.idle()
+    assertEquals(listOf(SdrConversionResult.Failed(SdrConversionFailure.Export)), run.results)
+    assertFalse(run.engine.output!!.exists()); run.assertInputSafe()
+    run.engine.complete(); assertEquals(1, run.results.size)
+  }
+  @Test fun media3MuxerWatchdogErrorUsesTerminalCleanupAndSuppressesLateCompletion() {
+    val run = Run(); run.idle()
+    val composition = Composition.Builder(EditedMediaItemSequence.withVideoFrom(listOf(
+      EditedMediaItem.Builder(MediaItem.fromUri("file:///test.mp4")).build()))).build()
+    SdrExportListener(targets()!!, run.engine.completions!!, run.engine.failures!!)
+      .onError(composition, ExportResult.Builder().build(), muxerTimeoutException())
+    run.idle()
+    assertEquals(listOf(SdrConversionResult.Failed(SdrConversionFailure.Export)), run.results)
+    assertFalse(run.engine.output!!.exists()); run.assertInputSafe()
+    run.engine.complete(); run.attempt.cancel()
+    assertEquals(1, run.results.size); assertEquals(1, run.engine.cancellations)
+  }
+  @Test fun cancelTerminatesWithoutMedia3CallbackAndSuppressesQueuedCompletion() {
+    val run = Run(); run.idle(); run.engine.complete(); run.attempt.cancel(); run.idle()
+    assertEquals(listOf(SdrConversionResult.Cancelled), run.results)
+    assertFalse(run.engine.output!!.exists()); run.assertInputSafe()
+  }
+  @Test fun cancelBeforeStartAllocatesNothing() {
+    val run = Run(); run.attempt.cancel(); run.idle()
+    assertEquals(listOf(SdrConversionResult.Cancelled), run.results)
+    assertEquals(0, run.engine.starts); run.assertInputSafe()
+  }
+  @Test fun cancelWithoutMedia3CallbackStopsExportAndDeletesPartial() {
+    val run = Run(duringValidation = { fail("Cancelled export must not validate") })
+    run.idle()
+    run.attempt.cancel()
+    run.idle()
+    assertEquals(listOf(SdrConversionResult.Cancelled), run.results)
+    assertEquals(1, run.engine.cancellations)
+    assertFalse(run.engine.output!!.exists())
+    run.engine.complete()
+    run.engine.failures!!(SdrConversionFailure.Export)
+    run.idle()
+    assertEquals(1, run.results.size)
+    run.assertInputSafe()
+  }
+  @Test fun cancellationDuringPreflightDoesNotAllocateOrStartExport() {
+    lateinit var run: Run
+    run = Run(duringPreflight = { run.attempt.cancel() })
+    run.idle()
+    assertEquals(listOf(SdrConversionResult.Cancelled), run.results)
+    assertNull(run.engine.output)
+    assertEquals(0, run.engine.starts)
+    run.assertInputSafe()
+  }
+  @Test fun forbiddenFallbackWinsOverLaterCompletion() {
+    val run = Run(); run.idle(); run.engine.failures!!(SdrConversionFailure.ForbiddenFallback); run.engine.complete(); run.idle()
+    assertEquals(listOf(SdrConversionResult.Failed(SdrConversionFailure.ForbiddenFallback)), run.results)
+    assertFalse(run.engine.output!!.exists())
+  }
+  @Test fun codecChangeAndInvalidOutputCannotProduceCompletedResult() {
+    val changed = Run(); changed.idle(); changed.engine.complete("video/hevc"); changed.idle()
+    assertEquals(SdrConversionResult.Failed(SdrConversionFailure.CodecChanged), changed.results.single())
+    assertFalse(changed.engine.output!!.exists())
+    val invalid = Run(StandardInputOutputValidation.Rejected(OutputRejection.EmptyOrUnreadable))
+    invalid.idle(); invalid.engine.complete(); invalid.idle()
+    assertEquals(SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid), invalid.results.single())
+    assertFalse(invalid.engine.output!!.exists())
+  }
+  @Test fun unavailableCapabilityDoesNotStartOrAllocate() {
+    val run = Run(capability = null); run.idle()
+    assertEquals(SdrConversionResult.Failed(SdrConversionFailure.CapabilityUnavailable), run.results.single())
+    assertEquals(0, run.engine.starts); run.assertInputSafe()
+  }
+  @Test fun sourceChangeDuringValidationRejectsStandardizedBytes() {
+    lateinit var run: Run
+    run = Run(duringValidation = { run.sourceFile.appendText("changed") })
+    run.idle(); run.engine.complete(); run.idle()
+    assertEquals(SdrConversionResult.Failed(SdrConversionFailure.SourceChanged), run.results.single())
+    assertFalse(run.engine.output!!.exists())
+  }
+  @Test fun cancellationDuringValidationWinsOverAcceptedOutput() {
+    lateinit var run: Run
+    run = Run(duringValidation = { run.attempt.cancel() })
+    run.idle(); run.engine.complete(); run.idle()
+    assertEquals(SdrConversionResult.Cancelled, run.results.single())
+    assertFalse(run.engine.output!!.exists()); run.assertInputSafe()
+  }
+  @Test fun wrongProfileOrAudioLayoutRejectsEvenAnAcceptedSharedVerdict() {
+    for (wrong in listOf(facts.copy(videoProfile = known(VideoProfile.H264Baseline)),
+      facts.copy(audioTracks = known(listOf(AudioTrack(known(AudioFormat.Aac(AudioChannelLayout.Mono)))))))) {
+      val run = Run(StandardInputOutputValidation.Accepted(wrong, StandardInputPolicyEvaluator().evaluate(wrong, selection())))
+      run.idle(); run.engine.complete(); run.idle()
+      assertEquals(SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid), run.results.single())
+      assertFalse(run.engine.output!!.exists())
+    }
+  }
+  @Test fun failedDeletionRetainsExactCleanupAuthorityAndCannotSweepCustomerParent() {
+    val run = Run(); run.idle()
+    val path = run.engine.output!!
+    assertTrue(path.delete()); assertTrue(path.mkdir())
+    val obstacle = File(path, "obstacle").apply { writeText("locked") }
+    run.attempt.cancel(); run.idle()
+    assertEquals(SdrConversionResult.Cancelled, run.results.single())
+    assertEquals(path, run.attempt.pendingCleanup!!.file)
+    run.assertInputSafe()
+    assertTrue(obstacle.delete()); assertTrue(run.attempt.pendingCleanup!!.delete())
+  }
+  @Test fun diskEstimateIsBoundedAndOwnershipCannotDeleteOtherFiles() {
+    assertNull(targets()!!.estimatedOutputBytes(Double.POSITIVE_INFINITY))
+    assertNull(SdrStandardizedFile.allocate(context.cacheDir, Long.MAX_VALUE))
+    val customer = File(context.cacheDir, "mux-upload/source.mp4").apply { parentFile!!.mkdirs(); writeText("customer") }
+    val standardized = SdrStandardizedFile.allocate(context.cacheDir, 1)!!
+    assertEquals("standard-input", standardized.file.parentFile!!.name)
+    assertTrue(standardized.delete()); assertTrue(customer.exists())
+  }
+  @Test fun allocationPersistenceFailurePreventsExportAndCleansItsFile() {
+    var allocated: SdrStandardizedFile? = null
+    val run = Run(onAllocated = { allocated = it; throw java.io.IOException("Persistence failed") })
+    run.idle()
+    assertNotNull(allocated); assertFalse(allocated!!.file.exists()); assertEquals(0, run.engine.starts)
+    assertEquals(listOf(SdrConversionResult.Failed(SdrConversionFailure.Export)), run.results)
+    run.assertInputSafe()
+  }
+
+  @Test fun cancellationDuringAllocationPersistencePreventsExportAndCleansItsFile() {
+    var allocated: SdrStandardizedFile? = null
+    lateinit var run: Run
+    run = Run(onAllocated = { allocated = it; run.attempt.cancel() })
+    run.idle()
+    assertNotNull(allocated); assertFalse(allocated!!.file.exists()); assertEquals(0, run.engine.starts)
+    assertEquals(listOf(SdrConversionResult.Cancelled), run.results)
+    run.assertInputSafe()
+  }
+
+
+  @Test fun exportAndValidationUseTheProfileTheSelectedEncoderSupports() {
+    val baseline = SdrEncoderCapability("fake", 1, VideoProfile.H264Baseline,
+      android.media.MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
+    val baselineFacts = facts.copy(videoProfile = known(VideoProfile.H264Baseline))
+    val accepted = Run(StandardInputOutputValidation.Accepted(baselineFacts,
+      StandardInputPolicyEvaluator().evaluate(baselineFacts, selection())), capability = baseline)
+    accepted.idle(); accepted.engine.complete(); accepted.idle()
+    assertEquals(android.media.MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline, accepted.engineTargets!!.platformProfile)
+    assertTrue(accepted.results.single() is SdrConversionResult.Completed)
+    (accepted.results.single() as SdrConversionResult.Completed).output.delete()
+    // Output that does not match the encoder actually used is rejected.
+    val mismatched = Run(capability = baseline)
+    mismatched.idle(); mismatched.engine.complete(); mismatched.idle()
+    assertEquals(SdrConversionResult.Failed(SdrConversionFailure.OutputInvalid), mismatched.results.single())
+  }
+
+  @Test fun planningProbeReportsEachMissingCapabilityAndOnlyProvenPathsConvert() {
+    val input = facts.copy(averageBitrate = known(9_000_000L))
+    fun plan(preflight: SdrPreflight?, scan: MediaSampleInspection = samples(input)): StandardInputAction {
+      var preflights = 0
+      val probe = SdrPlanningCapabilityProbe { _, _, _, _ -> preflights++; preflight!! }
+      val planner = StandardInputPlanner()
+      val proposal = planner.propose(input, options())
+      val capabilities = if (proposal is StandardInputProposal.NeedsCapabilities)
+        probe.capabilities(proposal.conversion, metadata(), scan) { false } else PlanningCapabilities()
+      val action = planner.plan(proposal, capabilities).action
+      if (preflight == null) assertEquals(0, preflights)
+      return action
+    }
+    val encoder = SdrEncoderCapability("c2.fake.avc.encoder", 1, VideoProfile.H264High,
+      android.media.MediaCodecInfo.CodecProfileLevel.AVCProfileHigh)
+    assertTrue(plan(SdrPreflight(true, true, true, encoder)) is StandardInputAction.Convert)
+    fun missing(action: StandardInputAction) =
+      ((action as StandardInputAction.Fallback).reason as FallbackReason.UnsupportedConversion).missingCapabilities
+    assertEquals(setOf(ConversionCapabilityFailure.VideoEncode), missing(plan(SdrPreflight(true, true, true, null))))
+    assertEquals(setOf(ConversionCapabilityFailure.SourceDecode), missing(plan(SdrPreflight(false, true, true, encoder))))
+    assertEquals(setOf(ConversionCapabilityFailure.AacAudioPreparation), missing(plan(SdrPreflight(true, false, true, encoder))))
+    // An incomplete scan cannot prove targets; the device is never queried.
+    assertTrue(ConversionCapabilityFailure.SourceTimeline in missing(plan(null,
+      MediaSampleInspection(input, SampleScanStatus.LimitExceeded, timeline = timeline))))
+  }
+}

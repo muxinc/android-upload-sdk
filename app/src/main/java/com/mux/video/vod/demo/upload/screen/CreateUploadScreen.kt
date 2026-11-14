@@ -147,14 +147,29 @@ private fun BodyContent(
   Column(
     verticalArrangement = Arrangement.SpaceBetween,
     modifier = modifier
+      // Keep the Upload button above the system navigation bar (edge-to-edge on Android 15+)
+      .navigationBarsPadding()
       .padding(top = 64.dp, bottom = 12.dp)
       .fillMaxSize()
   ) {
-    if (state.thumbnail != null) {
-      ChosenThumbnail(
-        thumbnail = state.thumbnail,
-        modifier = Modifier.padding(start = 20.dp, end = 20.dp)
-      )
+    // A video can be uploaded even when the device can't render a preview frame for it
+    if (state.prepareState == CreateUploadViewModel.PrepareState.READY) {
+      if (state.thumbnail != null) {
+        ChosenThumbnail(
+          thumbnail = state.thumbnail,
+          modifier = Modifier.padding(start = 20.dp, end = 20.dp)
+        )
+      } else {
+        Box(
+          modifier = Modifier
+            .padding(start = 20.dp, end = 20.dp)
+            .fillMaxWidth()
+            .height(THUMBNAIL_SIZE),
+          contentAlignment = Alignment.Center
+        ) {
+          Text(text = "Preview unavailable")
+        }
+      }
       DefaultButton(
         onClick = startUpload,
         modifier = Modifier

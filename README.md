@@ -6,9 +6,15 @@ sent to
 an [upload URL created by a backend server](https://docs.mux.com/guides/video/upload-files-directly)
 . **Do not include credentials to create an upload URL from an app.**
 
+## Build requirements
+
+Android API 23+, Kotlin 2.1+, AGP 8.10+, and `compileSdk` 36+.
+
+On Android 6.0 (API 23), the SDK uploads original files without standardization. On-device conversion requires Android 7.0 (API 24)+ and a supported input and device.
+
 ## Usage
 
-To use this SDK, you must first add it as a dependency. The Mux Android Swift Upload SDK is
+To use this SDK, you must first add it as a dependency. The Mux Android Upload SDK is
 available via gradle
 
 ### Add the SDK to your app
@@ -29,7 +35,7 @@ repositories {
 ### Add a dependency on our SDK
 
 ```groovy
-implememntation "com.mux.video:upload:0.3.1"
+implementation "com.mux.video:upload:1.1.0"
 ```
 
 ### Server-Side: Create a Direct Upload
@@ -74,6 +80,28 @@ fun beginUpload(myUploadUrl: String) {
   upl.start()
 }
 ```
+
+### Input standardization
+
+Standardization is enabled by default, with a 1080p maximum generated output and eligible HDR preserved. Compliant H.264 and HEVC inputs upload without re-encoding; supported conversions preserve the codec family and never upscale.
+
+Choose 1440p or 2160p explicitly:
+
+```kotlin
+import com.mux.video.upload.api.HdrHandling
+import com.mux.video.upload.internal.MaximumResolution
+
+val upload = MuxUpload.Builder(uploadUrl, videoFile)
+  .standardizationRequested(true, MaximumResolution.Preset3840x2160)
+  .hdrHandling(HdrHandling.Preserve)
+  .build()
+```
+
+Use `Preset2560x1440` for 1440p. Configure the matching `new_asset_settings.max_resolution_tier` (`"1440p"` or `"2160p"`) separately when creating the Direct Upload on your server.
+
+To request HDR-to-SDR tone mapping, use `HdrHandling.ToneMapToSDR`. Support depends on the input and device; HDR preservation does not guarantee HDR playback. Unsupported or failed preparation uploads the original unless canceled. Files with multiple audio tracks also upload unchanged.
+
+To see why a file was converted or uploaded unchanged, enable SDK logging with `MuxUploadSdk.useLogger(MuxUploadSdk.logcatLogger())`. Decisions are logged under the `MuxUploadStandardization` tag, for example `standard_input event=plan_selected plan=convert ...`.
 
 #### Try it out
 
